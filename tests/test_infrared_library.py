@@ -1,7 +1,6 @@
 """Tests for the Universal Remote infrared library helpers."""
 
 from enum import Enum
-from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -96,9 +95,6 @@ class _FakeLibraryCode(Enum):
     POWER = "power"
 
 
-class _NotAnEnum:
-    """Fake non-enum class for tests."""
-
 class _EmptyTimingsEnum(Enum):
     """Fake infrared library enum that generates empty timings."""
 
@@ -168,29 +164,23 @@ def test_infrared_library_codeset_available_handles_load_errors() -> None:
 
 def test_infrared_library_codeset_options_and_device_types() -> None:
     """Test codeset and device type options."""
-    with patch(
-        "custom_components.universal_remote.infrared_library."
-        "infrared_library_codeset_available",
-        return_value=True,
-    ):
-        codeset_options = infrared_library_codeset_options(
-            device_type=DEVICE_TYPE_TV,
-            include_none=True,
-        )
-        device_type_options = infrared_library_device_type_options(
-            include_generic=False,
-        )
+    codeset_options = infrared_library_codeset_options(
+        device_type=DEVICE_TYPE_TV,
+        include_none=True,
+    )
+    all_codeset_options = infrared_library_codeset_options()
+    device_type_options = infrared_library_device_type_options(
+        include_generic=False,
+    )
 
-    assert codeset_options[0] == {"value": NO_INFRARED_LIBRARY_CODESET, "label": "None"}
-    assert {option["value"] for option in codeset_options[1:]} == {
+    expected_codeset_values = {
         "lg_tv",
         "lg_tv_jp",
         "samsung_tv",
         "sharp_aquos_tv",
         "vizio_tv",
     }
-    assert device_type_options == [{"value": DEVICE_TYPE_TV, "label": "TV"}]
-    assert {option["label"] for option in codeset_options[1:]} == {
+    expected_codeset_labels = {
         "LG TV",
         "LG TV Japan",
         "Samsung TV",
@@ -198,6 +188,39 @@ def test_infrared_library_codeset_options_and_device_types() -> None:
         "Vizio TV",
     }
 
+    assert codeset_options[0] == {"value": NO_INFRARED_LIBRARY_CODESET, "label": "None"}
+    assert {option["value"] for option in codeset_options[1:]} == expected_codeset_values
+    assert {option["label"] for option in codeset_options[1:]} == expected_codeset_labels
+    assert {option["value"] for option in all_codeset_options} == expected_codeset_values
+    assert device_type_options == [{"value": DEVICE_TYPE_TV, "label": "TV"}]
+
+
+def test_infrared_library_device_type_options_include_generic() -> None:
+    """Test device type options can include Generic."""
+    options = infrared_library_device_type_options(include_generic=True)
+
+    assert options[0] == {"value": DEVICE_TYPE_GENERIC, "label": "Generic remote"}
+    assert {"value": DEVICE_TYPE_TV, "label": "TV"} in options
+
+    
+def test_infrared_library_codeset_available_returns_true() -> None:
+    """Test codeset availability returns true when loading succeeds."""
+    with patch(
+        "custom_components.universal_remote.infrared_library."
+        "_load_infrared_library_enum",
+        return_value=_LibraryEnum,
+    ):
+        assert infrared_library_codeset_available("lg_tv")
+
+
+def test_infrared_library_codeset_options_include_none() -> None:
+    """Test infrared library codeset options can include None."""
+    options = infrared_library_codeset_options(include_none=True)
+
+    assert options[0]["value"] == NO_INFRARED_LIBRARY_CODESET
+    assert options[0]["label"] == "None"
+
+    
 def test_infrared_library_labels_and_selection_helpers() -> None:
     """Test labels, selected-codeset checks, and device type lookups."""
     assert infrared_library_codeset_label(NO_INFRARED_LIBRARY_CODESET) == "None"
@@ -212,50 +235,30 @@ def test_infrared_library_labels_and_selection_helpers() -> None:
 def test_validate_infrared_library_device_type() -> None:
     """Test device type validation."""
     assert validate_infrared_library_device_type(DEVICE_TYPE_GENERIC)
-
-    with patch(
-        "custom_components.universal_remote.infrared_library."
-        "infrared_library_codeset_available",
-        return_value=True,
-    ):
-        assert validate_infrared_library_device_type(DEVICE_TYPE_TV)
-        assert not validate_infrared_library_device_type("av_receiver")
-
-    with patch(
-        "custom_components.universal_remote.infrared_library."
-        "infrared_library_codeset_available",
-        return_value=False,
-    ):
-        assert not validate_infrared_library_device_type(DEVICE_TYPE_TV)
+    assert validate_infrared_library_device_type(DEVICE_TYPE_TV)
+    assert not validate_infrared_library_device_type("av_receiver")
 
 
 @pytest.mark.parametrize(
-    ("codeset_id", "device_type", "available", "expected"),
+    ("codeset_id", "device_type", "expected"),
     [
-        (NO_INFRARED_LIBRARY_CODESET, None, False, True),
-        ("lg_tv", None, True, True),
-        ("lg_tv", DEVICE_TYPE_TV, True, True),
-        ("lg_tv", "av_receiver", True, False),
-        ("lg_tv", None, False, False),
-        ("missing", None, True, False),
+        (NO_INFRARED_LIBRARY_CODESET, None, True),
+        ("lg_tv", None, True),
+        ("lg_tv", DEVICE_TYPE_TV, True),
+        ("lg_tv", "av_receiver", False),
+        ("missing", None, False),
     ],
 )
 def test_validate_infrared_library_codeset(
     codeset_id: str,
     device_type: str | None,
-    available: bool,
     expected: bool,
 ) -> None:
     """Test infrared library codeset validation."""
-    with patch(
-        "custom_components.universal_remote.infrared_library."
-        "infrared_library_codeset_available",
-        return_value=available,
-    ):
-        assert (
-            validate_infrared_library_codeset(codeset_id, device_type=device_type)
-            is expected
-        )
+    assert validate_infrared_library_codeset(
+        codeset_id,
+        device_type=device_type,
+    ) is expected
 
 
 def test_infrared_library_command_options() -> None:
@@ -276,14 +279,22 @@ def test_load_infrared_library_enum_success() -> None:
     codesets = {
         "test": InfraredLibraryCodeset(
             label="Test",
-            enum_class=_FakeLibraryCode,
+            module="test.module",
+            enum_class="TestEnum",
         )
     }
+    module = type("TestModule", (), {"TestEnum": _FakeLibraryCode})
 
-    with patch(
-        "custom_components.universal_remote.infrared_library."
-        "INFRARED_LIBRARY_CODESETS",
-        codesets,
+    with (
+        patch(
+            "custom_components.universal_remote.infrared_library."
+            "INFRARED_LIBRARY_CODESETS",
+            codesets,
+        ),
+        patch(
+            "custom_components.universal_remote.infrared_library.import_module",
+            return_value=module,
+        ),
     ):
         assert _load_infrared_library_enum("test") is _FakeLibraryCode
 
@@ -296,7 +307,8 @@ def test_load_infrared_library_enum_errors() -> None:
     bad_codesets = {
         "bad": InfraredLibraryCodeset(
             label="Bad",
-            enum_class=cast(type[Enum], _NotAnEnum),
+            module="bad.module",
+            enum_class="BadEnum",
         )
     }
 
@@ -305,6 +317,26 @@ def test_load_infrared_library_enum_errors() -> None:
             "custom_components.universal_remote.infrared_library."
             "INFRARED_LIBRARY_CODESETS",
             bad_codesets,
+        ),
+        patch(
+            "custom_components.universal_remote.infrared_library.import_module",
+            side_effect=ImportError,
+        ),
+        pytest.raises(InfraredLibraryCommandError),
+    ):
+        _load_infrared_library_enum("bad")
+
+    module = type("BadModule", (), {"BadEnum": object()})
+
+    with (
+        patch(
+            "custom_components.universal_remote.infrared_library."
+            "INFRARED_LIBRARY_CODESETS",
+            bad_codesets,
+        ),
+        patch(
+            "custom_components.universal_remote.infrared_library.import_module",
+            return_value=module,
         ),
         pytest.raises(InfraredLibraryCommandError),
     ):

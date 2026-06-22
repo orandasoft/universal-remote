@@ -2,15 +2,11 @@
 
 from dataclasses import dataclass
 from enum import Enum
+from importlib import import_module
 import logging
 from typing import Final
 
 from homeassistant.helpers import selector
-
-from infrared_protocols.codes.lg.tv import LGTVCode, LGTVCodeJP
-from infrared_protocols.codes.samsung.tv import SamsungTVCode
-from infrared_protocols.codes.sharp.aquos_tv import SharpAquosTVCode
-from infrared_protocols.codes.vizio.tv import VizioTVCode
 
 from .command import CommandParseError, validate_remote_command_payload
 from .const import DEVICE_TYPE_GENERIC, DEVICE_TYPE_TV
@@ -31,34 +27,40 @@ class InfraredLibraryCodeset:
     """Description of an allowed infrared library codeset."""
 
     label: str
-    enum_class: type[Enum]
+    module: str
+    enum_class: str
     device_type: str | None = None
 
 
 INFRARED_LIBRARY_CODESETS: Final[dict[str, InfraredLibraryCodeset]] = {
     "lg_tv": InfraredLibraryCodeset(
         label="LG TV",
-        enum_class=LGTVCode,
+        module="infrared_protocols.codes.lg.tv",
+        enum_class="LGTVCode",
         device_type=DEVICE_TYPE_TV,
     ),
     "lg_tv_jp": InfraredLibraryCodeset(
         label="LG TV Japan",
-        enum_class=LGTVCodeJP,
+        module="infrared_protocols.codes.lg.tv",
+        enum_class="LGTVCodeJP",
         device_type=DEVICE_TYPE_TV,
     ),
     "samsung_tv": InfraredLibraryCodeset(
         label="Samsung TV",
-        enum_class=SamsungTVCode,
+        module="infrared_protocols.codes.samsung.tv",
+        enum_class="SamsungTVCode",
         device_type=DEVICE_TYPE_TV,
     ),
     "sharp_aquos_tv": InfraredLibraryCodeset(
         label="Sharp AQUOS TV",
-        enum_class=SharpAquosTVCode,
+        module="infrared_protocols.codes.sharp.aquos_tv",
+        enum_class="SharpAquosTVCode",
         device_type=DEVICE_TYPE_TV,
     ),
     "vizio_tv": InfraredLibraryCodeset(
         label="Vizio TV",
-        enum_class=VizioTVCode,
+        module="infrared_protocols.codes.vizio.tv",
+        enum_class="VizioTVCode",
         device_type=DEVICE_TYPE_TV,
     ),
 }
@@ -95,8 +97,7 @@ def infrared_library_codeset_options(
     options.extend(
         selector.SelectOptionDict(value=codeset_id, label=codeset.label)
         for codeset_id, codeset in INFRARED_LIBRARY_CODESETS.items()
-        if (device_type is None or codeset.device_type == device_type)
-        and infrared_library_codeset_available(codeset_id)
+        if device_type is None or codeset.device_type == device_type
     )
     return options
 
@@ -109,9 +110,8 @@ def infrared_library_device_type_options(
     device_types = sorted(
         {
             codeset.device_type
-            for codeset_id, codeset in INFRARED_LIBRARY_CODESETS.items()
+            for codeset in INFRARED_LIBRARY_CODESETS.values()
             if codeset.device_type is not None
-            and infrared_library_codeset_available(codeset_id)
         }
     )
 
@@ -146,8 +146,7 @@ def validate_infrared_library_device_type(device_type: str) -> bool:
     """Return whether a device type is supported."""
     return device_type == DEVICE_TYPE_GENERIC or any(
         codeset.device_type == device_type
-        and infrared_library_codeset_available(codeset_id)
-        for codeset_id, codeset in INFRARED_LIBRARY_CODESETS.items()
+        for codeset in INFRARED_LIBRARY_CODESETS.values()
     )
 
 
@@ -193,10 +192,8 @@ def validate_infrared_library_codeset(
         return True
 
     codeset = INFRARED_LIBRARY_CODESETS.get(codeset_id)
-    return (
-        codeset is not None
-        and infrared_library_codeset_available(codeset_id)
-        and (device_type is None or codeset.device_type == device_type)
+    return codeset is not None and (
+        device_type is None or codeset.device_type == device_type
     )
 
 
@@ -206,7 +203,12 @@ def _load_infrared_library_enum(codeset_id: str) -> type[Enum]:
     if codeset is None:
         raise InfraredLibraryCommandError
 
-    enum_cls = codeset.enum_class
+    try:
+        module = import_module(codeset.module)
+        enum_cls = getattr(module, codeset.enum_class)
+    except (ImportError, AttributeError) as err:
+        raise InfraredLibraryCommandError from err
+
     if not isinstance(enum_cls, type) or not issubclass(enum_cls, Enum):
         raise InfraredLibraryCommandError
 

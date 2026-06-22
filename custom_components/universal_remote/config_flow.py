@@ -240,7 +240,10 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if import_mode == IMPORT_COMMANDS_ALL:
                 try:
-                    commands = generate_commands_from_library_codeset(codeset_id)
+                    commands = await self.hass.async_add_executor_job(
+                        generate_commands_from_library_codeset,
+                        codeset_id,
+                    )
                     _validate_generated_commands(commands)
                 except InfraredLibraryCommandError:
                     errors[CONF_IMPORT_COMMANDS] = "invalid_library_command"
@@ -311,7 +314,10 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self._create_entry({})
 
         try:
-            library_command_options = infrared_library_command_options(codeset_id)
+            library_command_options = await self.hass.async_add_executor_job(
+                infrared_library_command_options,
+                codeset_id,
+            )
         except InfraredLibraryCommandError:
             return self.async_abort(reason="invalid_library_codeset")
 
@@ -340,7 +346,8 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not errors:
                 try:
-                    commands = generate_selected_commands_from_library_codeset(
+                    commands = await self.hass.async_add_executor_job(
+                        generate_selected_commands_from_library_codeset,
                         codeset_id,
                         library_commands,
                         repeat_count,

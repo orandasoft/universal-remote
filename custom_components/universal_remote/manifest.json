@@ -9,6 +9,6 @@
   "integration_type": "device",
   "iot_class": "assumed_state",
   "loggers": ["custom_components.universal_remote"],
-  "requirements": ["infrared-protocols"],
+  "requirements": ["infrared-protocols==6.2.0"],
   "version": "0.2.0"
 }

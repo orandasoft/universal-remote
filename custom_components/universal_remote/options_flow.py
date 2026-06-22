@@ -277,7 +277,10 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             return await self.async_step_import_library_commands()
 
         try:
-            library_command_options = infrared_library_command_options(codeset_id)
+            library_command_options = await self.hass.async_add_executor_job(
+                infrared_library_command_options,
+                codeset_id,
+            )
         except InfraredLibraryCommandError:
             return self.async_abort(reason="invalid_library_codeset")
 
@@ -314,12 +317,11 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             generated_commands: dict[str, str] = {}
             if not errors:
                 try:
-                    generated_commands = (
-                        generate_selected_commands_from_library_codeset(
-                            codeset_id,
-                            library_commands,
-                            repeat_count,
-                        )
+                    generated_commands = await self.hass.async_add_executor_job(
+                        generate_selected_commands_from_library_codeset,
+                        codeset_id,
+                        library_commands,
+                        repeat_count,
                     )
                     for command_name, command_data in generated_commands.items():
                         validate_generated_command_payload(command_name, command_data)
@@ -642,7 +644,10 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             return await self.async_step_edit_library_codeset()
 
         try:
-            library_command_options = infrared_library_command_options(codeset_id)
+            library_command_options = await self.hass.async_add_executor_job(
+                infrared_library_command_options,
+                codeset_id,
+            )
         except InfraredLibraryCommandError:
             return self.async_abort(reason="invalid_library_codeset")
 
@@ -666,7 +671,8 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
 
             if not errors:
                 try:
-                    command_data = generate_pronto_from_library_command(
+                    command_data = await self.hass.async_add_executor_job(
+                        generate_pronto_from_library_command,
                         codeset_id,
                         library_command,
                         repeat_count,

@@ -2,12 +2,12 @@
   "config": {
     "abort": {
       "already_configured": "A universal remote with this name is already configured.",
-      "no_available_infrared_emitters": "No infrared entities are available.",
+      "no_available_infrared_emitters": "No infrared emitters are available.",
       "no_universal_remotes": "No universal remotes are configured.",
       "reconfigure_successful": "Reconfiguration was successful."
     },
     "error": {
-      "infrared_entity_unavailable": "Selected infrared entity is unavailable.",
+      "infrared_entity_unavailable": "Selected infrared emitter is unavailable.",
       "invalid_device_type": "Selected device type is invalid.",
       "invalid_import_mode": "Selected import option is invalid.",
       "invalid_library_codeset": "Selected infrared library codeset is invalid.",
@@ -32,12 +32,12 @@
       "reconfigure": {
         "data": {
           "device_type": "Device type",
-          "infrared_entity_id": "Infrared entity",
+          "infrared_emitter_id": "Infrared emitter",
           "name": "Remote name"
         },
         "data_description": {
           "device_type": "Type of device this universal remote represents.",
-          "infrared_entity_id": "Infrared entity that will transmit commands for this universal remote.",
+          "infrared_emitter_id": "Infrared emitter used to send commands for this universal remote.",
           "name": "Name of the universal remote."
         },
         "description": "Update the configured universal remote.",
@@ -80,15 +80,15 @@
       "user": {
         "data": {
           "device_type": "Device type",
-          "infrared_entity_id": "Infrared entity",
+          "infrared_emitter_id": "Infrared emitter",
           "name": "Remote name"
         },
         "data_description": {
           "device_type": "Select the physical device type. TV remotes also create an assumed-state media player entity.",
-          "infrared_entity_id": "Infrared entity that will transmit commands for this universal remote.",
+          "infrared_emitter_id": "Infrared emitter used to send commands for this universal remote.",
           "name": "Name of the universal remote."
         },
-        "description": "Create a universal remote linked to an infrared entity.",
+        "description": "Create a universal remote linked to an infrared emitter.",
         "title": "Create Universal Remote"
       }
     }
@@ -104,7 +104,7 @@
       "message": "Command {command} is not configured and is not a valid raw infrared command."
     },
     "remote_infrared_missing": {
-      "message": "Infrared entity {entity_id} is unavailable or does not exist."
+      "message": "Infrared emitter {entity_id} is unavailable or does not exist."
     },
     "remote_invalid_command": {
       "message": "Invalid infrared command: {error}"
@@ -121,15 +121,15 @@
   },
   "issues": {
     "linked_infrared_entity_missing": {
-      "description": "Universal remote {remote_name} is linked to infrared entity {infrared_entity_id}, but that entity is unavailable or no longer exists. Open the Universal Remote integration options and select a valid infrared entity.",
-      "title": "Linked infrared entity is missing"
+      "description": "Universal remote {remote_name} is linked to infrared emitter {infrared_entity_id}, but that emitter is unavailable or no longer exists. Reconfigure the Universal Remote integration and select a valid infrared emitter.",
+      "title": "Linked infrared emitter is missing"
     }
   },
   "options": {
     "abort": {
       "command_not_found": "The selected command was not found.",
       "invalid_library_codeset": "The selected infrared library codeset is not available.",
-      "no_available_infrared_emitters": "No infrared entities are available.",
+      "no_available_infrared_emitters": "No infrared emitters are available.",
       "no_remote_commands": "No commands are configured.",
       "no_universal_remotes": "No universal remotes are configured."
     },
@@ -137,7 +137,7 @@
       "command_data_required": "Command data is required.",
       "command_name_exists": "A command with this name already exists.",
       "command_name_required": "Command name is required.",
-      "infrared_entity_unavailable": "Selected infrared entity is unavailable.",
+      "infrared_entity_unavailable": "Selected infrared emitter is unavailable.",
       "invalid_command": "Command data is not a supported infrared command format.",
       "invalid_command_source": "Selected command source is invalid.",
       "invalid_device_type": "Selected device type is invalid.",
@@ -207,21 +207,6 @@
         },
         "title": "Edit Raw Command"
       },
-      "edit_remote": {
-        "data": {
-          "codeset": "Infrared library codeset",
-          "device_type": "Device type",
-          "infrared_entity_id": "Infrared entity",
-          "name": "Remote name"
-        },
-        "data_description": {
-          "codeset": "Optional infrared library codeset associated with this universal remote. Use Manage commands to import or refresh commands.",
-          "device_type": "Type of device controlled by this universal remote.",
-          "infrared_entity_id": "Infrared entity that will transmit commands for this universal remote.",
-          "name": "Name of the universal remote."
-        },
-        "title": "Edit Universal Remote"
-      },
       "import_library_command_select": {
         "data": {
           "create_button": "Create button entities",
@@ -247,7 +232,6 @@
       },
       "init": {
         "menu_options": {
-          "edit_remote": "Edit universal remote",
           "manage_commands": "Manage commands"
         },
         "title": "Universal Remote Options"
