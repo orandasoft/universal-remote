@@ -1,6 +1,7 @@
 """Tests for the Universal Remote infrared library helpers."""
 
 from enum import Enum
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -88,6 +89,15 @@ class _LibraryEnum(Enum):
         """Return a fake command."""
         return _LibraryCommand()
 
+
+class _FakeLibraryCode(Enum):
+    """Fake infrared library enum for tests."""
+
+    POWER = "power"
+
+
+class _NotAnEnum:
+    """Fake non-enum class for tests."""
 
 class _EmptyTimingsEnum(Enum):
     """Fake infrared library enum that generates empty timings."""
@@ -266,24 +276,16 @@ def test_load_infrared_library_enum_success() -> None:
     codesets = {
         "test": InfraredLibraryCodeset(
             label="Test",
-            module="test.module",
-            enum_class="TestEnum",
+            enum_class=_FakeLibraryCode,
         )
     }
-    module = type("TestModule", (), {"TestEnum": _LibraryEnum})
 
-    with (
-        patch(
-            "custom_components.universal_remote.infrared_library."
-            "INFRARED_LIBRARY_CODESETS",
-            codesets,
-        ),
-        patch(
-            "custom_components.universal_remote.infrared_library.import_module",
-            return_value=module,
-        ),
+    with patch(
+        "custom_components.universal_remote.infrared_library."
+        "INFRARED_LIBRARY_CODESETS",
+        codesets,
     ):
-        assert _load_infrared_library_enum("test") is _LibraryEnum
+        assert _load_infrared_library_enum("test") is _FakeLibraryCode
 
 
 def test_load_infrared_library_enum_errors() -> None:
@@ -294,8 +296,7 @@ def test_load_infrared_library_enum_errors() -> None:
     bad_codesets = {
         "bad": InfraredLibraryCodeset(
             label="Bad",
-            module="bad.module",
-            enum_class="BadEnum",
+            enum_class=cast(type[Enum], _NotAnEnum),
         )
     }
 
@@ -304,28 +305,6 @@ def test_load_infrared_library_enum_errors() -> None:
             "custom_components.universal_remote.infrared_library."
             "INFRARED_LIBRARY_CODESETS",
             bad_codesets,
-        ),
-        patch(
-            "custom_components.universal_remote.infrared_library.import_module",
-            side_effect=ImportError,
-        ),
-        pytest.raises(InfraredLibraryCommandError),
-    ):
-        _load_infrared_library_enum("bad")
-
-    with (
-        patch(
-            "custom_components.universal_remote.infrared_library."
-            "INFRARED_LIBRARY_CODESETS",
-            bad_codesets,
-        ),
-        patch(
-            "custom_components.universal_remote.infrared_library.import_module",
-            return_value=object(),
-        ),
-        patch(
-            "custom_components.universal_remote.infrared_library.getattr",
-            return_value=object(),
         ),
         pytest.raises(InfraredLibraryCommandError),
     ):

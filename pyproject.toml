@@ -16,5 +16,9 @@ explicit_package_bases = true
 namespace_packages = true
 
 [[tool.mypy.overrides]]
+module = "infrared_protocols.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
 module = "pytest_homeassistant_custom_component.*"
 ignore_missing_imports = true
