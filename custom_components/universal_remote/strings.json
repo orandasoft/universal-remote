@@ -7,14 +7,14 @@
       "reconfigure_successful": "Reconfiguration was successful."
     },
     "error": {
-      "infrared_entity_unavailable": "Selected infrared emitter is unavailable.",
       "invalid_device_type": "Selected device type is invalid.",
       "invalid_import_mode": "Selected import option is invalid.",
       "invalid_library_codeset": "Selected infrared library codeset is invalid.",
       "invalid_library_command": "The selected infrared library codeset could not be imported.",
       "invalid_repeat_count": "Repeat count must be zero or greater.",
       "library_commands_required": "Select at least one infrared library command.",
-      "remote_name_required": "Remote name is required."
+      "remote_name_required": "Remote name is required.",
+      "infrared_emitter_unavailable": "Selected infrared emitter is unavailable."
     },
     "step": {
       "import_commands": {
@@ -120,8 +120,8 @@
     }
   },
   "issues": {
-    "linked_infrared_entity_missing": {
-      "description": "Universal remote {remote_name} is linked to infrared emitter {infrared_entity_id}, but that emitter is unavailable or no longer exists. Reconfigure the Universal Remote integration and select a valid infrared emitter.",
+    "linked_infrared_emitter_missing": {
+      "description": "Universal remote {remote_name} is linked to infrared emitter {infrared_emitter_id}, but that emitter is unavailable or no longer exists. Reconfigure the Universal Remote integration and select a valid infrared emitter.",
       "title": "Linked infrared emitter is missing"
     }
   },
@@ -137,7 +137,6 @@
       "command_data_required": "Command data is required.",
       "command_name_exists": "A command with this name already exists.",
       "command_name_required": "Command name is required.",
-      "infrared_entity_unavailable": "Selected infrared emitter is unavailable.",
       "invalid_command": "Command data is not a supported infrared command format.",
       "invalid_command_source": "Selected command source is invalid.",
       "invalid_device_type": "Selected device type is invalid.",
@@ -146,7 +145,8 @@
       "invalid_repeat_count": "Repeat count must be zero or greater.",
       "library_commands_exist": "These selected library commands already exist: {existing_commands}. Remove them from the selection before submitting.",
       "library_commands_required": "Select at least one infrared library command.",
-      "remote_name_required": "Remote name is required."
+      "remote_name_required": "Remote name is required.",
+      "infrared_emitter_unavailable": "Selected infrared emitter is unavailable."
     },
     "step": {
       "add_raw_command": {

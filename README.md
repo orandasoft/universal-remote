@@ -1,8 +1,8 @@
 # Universal Remote
 
-Universal Remote is a Home Assistant custom integration that creates logical infrared remote devices backed by existing Home Assistant `infrared` entities.
+Universal Remote is a Home Assistant custom integration that creates logical infrared remote devices backed by existing Home Assistant `infrared` emitters.
 
-It does not communicate with infrared hardware directly. Instead, it stores named infrared commands and asks the linked `infrared` entity to transmit them.
+It does not communicate with infrared hardware directly. Instead, it stores named infrared commands and asks the linked infrared emitter to transmit them.
 
 This makes it possible to use one infrared transmitter for multiple logical devices, such as TVs, receivers, projectors, HDMI switches, or other infrared-controlled equipment.
 
@@ -12,12 +12,12 @@ This makes it possible to use one infrared transmitter for multiple logical devi
 
 ## Requirements
 
-- Home Assistant 2026.4.0 or newer
+- Home Assistant 2026.6.0 or newer
 - HACS
-- At least one Home Assistant `infrared` entity from another integration
+- At least one Home Assistant infrared emitter from another integration
 - Compatible infrared transmitter hardware supported by that infrared integration
 
-The linked `infrared` entity is responsible for the actual infrared transmission. Universal Remote only manages the logical remote, command names, optional buttons, and optional TV media player entity.
+The linked infrared emitter is responsible for the actual infrared transmission. Universal Remote only manages the logical remote, command names, optional buttons, and optional TV media player entity.
 
 ---
 
@@ -71,11 +71,11 @@ After installation, add a new Universal Remote from the Home Assistant integrati
 During setup, select:
 
 - a remote name
-- the linked `infrared` entity
+- the linked infrared emitter
 - the device type
 - optional commands or library codeset commands
 
-Multiple Universal Remote config entries may use the same infrared entity. This allows one physical IR blaster to control multiple logical devices.
+Multiple Universal Remote config entries may use the same infrared emitter. This allows one physical IR blaster to control multiple logical devices.
 
 ---
 
@@ -99,6 +99,14 @@ Universal remotes can be configured as a generic remote or as a supported device
 The device type controls which device-oriented entities can be created. For example, TV remotes can create a TV `media_player` entity.
 
 A codeset is an optional infrared command library profile. Codesets are filtered by device type and can be used to import commands during setup or later from the options flow.
+
+Supported TV codesets include:
+
+- LG TV
+- LG TV Japan
+- Samsung TV
+- Sharp AQUOS TV
+- Vizio TV
 
 ---
 
@@ -160,7 +168,7 @@ data:
 
 Command button entities are optional.
 
-When adding or importing commands, the flow can create Home Assistant `button` entities for selected commands. Pressing a button sends the stored infrared command through the linked infrared entity.
+When adding or importing commands, the flow can create Home Assistant `button` entities for selected commands. Pressing a button sends the stored infrared command through the linked infrared emitter.
 
 ---
 
@@ -186,9 +194,9 @@ Because the media player is assumed-state, it sends commands but does not receiv
 
 ## Availability and repairs
 
-Universal Remote entities are available when the linked infrared entity exists and is available.
+Universal Remote entities are available when the linked infrared emitter exists and is available.
 
-If the linked infrared entity is missing or unavailable, the integration creates a repair issue to help update the configuration.
+If the linked infrared emitter is missing or unavailable, the integration creates a repair issue to help update the configuration.
 
 ---
 
@@ -207,7 +215,7 @@ Diagnostics are intended to help troubleshoot configuration issues without expos
 - The linked `infrared` integration is responsible for hardware communication.
 - The TV media player is assumed-state and does not reflect real device state.
 - Existing commands are not deleted automatically when changing device type or codeset.
-- Availability depends on the linked infrared entity.
+- Availability depends on the linked infrared emitter.
 
 ---
 
@@ -230,13 +238,19 @@ pytest
 Run a syntax check:
 
 ```bash
-python3 -m compileall custom_components/universal_remote
+python3 -m compileall -f custom_components/universal_remote tests
 ```
 
 Run Ruff:
 
 ```bash
 ruff check custom_components/universal_remote tests
+```
+
+Run mypy:
+
+```bash
+mypy custom_components/universal_remote tests
 ```
 
 ---

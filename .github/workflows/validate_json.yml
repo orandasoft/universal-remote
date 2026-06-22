@@ -1,0 +1,64 @@
+name: Validate JSON
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  validate-json:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JSON files
+        run: |
+          python -m json.tool hacs.json > /tmp/hacs.json
+          python -m json.tool custom_components/universal_remote/manifest.json > /tmp/manifest.json
+          python -m json.tool custom_components/universal_remote/strings.json > /tmp/strings.json
+          python -m json.tool custom_components/universal_remote/translations/en.json > /tmp/en.json
+
+      - name: Validate translation structure
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          strings_path = Path("custom_components/universal_remote/strings.json")
+          en_path = Path("custom_components/universal_remote/translations/en.json")
+
+          strings = json.loads(strings_path.read_text(encoding="utf-8"))
+          en = json.loads(en_path.read_text(encoding="utf-8"))
+
+          def leaf_paths(obj, prefix=()):
+              if isinstance(obj, dict):
+                  paths = set()
+                  for key, value in obj.items():
+                      paths |= leaf_paths(value, prefix + (key,))
+                  return paths
+              return {prefix}
+
+          strings_paths = leaf_paths(strings)
+          en_paths = leaf_paths(en)
+
+          missing_in_en = sorted(strings_paths - en_paths)
+          extra_in_en = sorted(en_paths - strings_paths)
+
+          if missing_in_en:
+              print("Keys present in strings.json but missing from translations/en.json:")
+              for path in missing_in_en:
+                  print("  " + ".".join(path))
+
+          if extra_in_en:
+              print("Keys present in translations/en.json but missing from strings.json:")
+              for path in extra_in_en:
+                  print("  " + ".".join(path))
+
+          if missing_in_en or extra_in_en:
+              raise SystemExit(1)
+
+          print("Translation structure matches")
+          PY

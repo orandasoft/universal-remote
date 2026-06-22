@@ -39,7 +39,7 @@ async def async_send_infrared_command(
 
     try:
         await infrared.async_send_command(hass, infrared_entity_id, ir_command)
-    except asyncio.CancelledError, HomeAssistantError:
+    except (asyncio.CancelledError, HomeAssistantError):
         raise
     except Exception as err:
         raise HomeAssistantError(
