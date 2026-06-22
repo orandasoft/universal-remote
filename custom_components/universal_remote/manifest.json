@@ -6,9 +6,9 @@
   "dependencies": ["infrared"],
   "documentation": "https://github.com/orandasoft/hacs-universal-remote",
   "issue_tracker": "https://github.com/orandasoft/hacs-universal-remote/issues",
-  "integration_type": "helper",
+  "integration_type": "device",
   "iot_class": "assumed_state",
   "loggers": ["custom_components.universal_remote"],
-  "requirements": [],
-  "version": "0.1.0"
+  "requirements": ["infrared-protocols"],
+  "version": "0.2.0"
 }

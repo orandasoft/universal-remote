@@ -20,7 +20,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .command_ui import command_is_media_player_source, command_label
 from .const import (
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
@@ -103,7 +103,7 @@ async def async_setup_entry(
             UniversalRemoteTvMediaPlayer(
                 remote_id=remote_id,
                 remote_name=str(remote[CONF_REMOTE_NAME]),
-                infrared_entity_id=str(remote[CONF_INFRARED_ENTITY_ID]),
+                infrared_emitter_id=str(remote[CONF_INFRARED_EMITTER_ID]),
                 commands=normalize_command_objects(
                     remote.get(CONF_REMOTE_COMMANDS, {})
                 ),
@@ -130,13 +130,13 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         *,
         remote_id: str,
         remote_name: str,
-        infrared_entity_id: str,
+        infrared_emitter_id: str,
         commands: Mapping[str, Mapping[str, Any]],
         unique_id: str,
     ) -> None:
         """Initialize the Universal Remote TV media player."""
         self._remote_id = remote_id
-        self._infrared_entity_id = infrared_entity_id
+        self._infrared_emitter_id = infrared_emitter_id
         self._commands = normalize_command_objects(commands)
         self._source_commands = _source_commands(self._commands)
         self._role_commands = _role_commands(self._commands)
@@ -162,19 +162,19 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
-                [self._infrared_entity_id],
+                [self._infrared_emitter_id],
                 _handle_infrared_state_change,
             )
         )
 
     @property
     def available(self) -> bool:
-        """Return whether the backing infrared entity is available."""
+        """Return whether the backing infrared emitter is available."""
         hass = getattr(self, "hass", None)
         if hass is None:
             return True
 
-        state = hass.states.get(self._infrared_entity_id)
+        state = hass.states.get(self._infrared_emitter_id)
         return state is not None and state.state != STATE_UNAVAILABLE
 
     async def async_turn_on(self) -> None:
@@ -260,7 +260,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
 
         await async_send_infrared_command(
             self.hass,
-            self._infrared_entity_id,
+            self._infrared_emitter_id,
             command_data,
         )
 

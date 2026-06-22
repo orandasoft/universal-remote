@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from custom_components.universal_remote.const import (
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
@@ -19,7 +19,7 @@ from homeassistant.helpers import entity_registry as er
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-INFRARED_ENTITY_ID = "infrared.test_ir"
+INFRARED_EMITTER_ID = "infrared.test_ir"
 REMOTE_ID = "living_room_tv"
 REMOTE_NAME = "Living Room TV"
 RAW_COMMAND = "38000:9000,4500,560,560"
@@ -52,8 +52,8 @@ def mock_reload() -> Generator:
 
 
 @pytest.fixture
-def infrared_entity(hass: HomeAssistant) -> str:
-    """Register an infrared entity."""
+def infrared_emitter(hass: HomeAssistant) -> str:
+    """Register an infrared emitter."""
     registry = er.async_get(hass)
     registry.async_get_or_create(
         "infrared",
@@ -62,12 +62,12 @@ def infrared_entity(hass: HomeAssistant) -> str:
         suggested_object_id="test_ir",
         original_name="Test IR",
     )
-    hass.states.async_set(INFRARED_ENTITY_ID, "on")
-    return INFRARED_ENTITY_ID
+    hass.states.async_set(INFRARED_EMITTER_ID, "on")
+    return INFRARED_EMITTER_ID
 
 
 @pytest.fixture
-def config_entry(hass: HomeAssistant, infrared_entity: str) -> MockConfigEntry:
+def config_entry(hass: HomeAssistant, infrared_emitter: str) -> MockConfigEntry:
     """Create a universal remote config entry."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -75,7 +75,7 @@ def config_entry(hass: HomeAssistant, infrared_entity: str) -> MockConfigEntry:
         data={
             CONF_REMOTE_ID: REMOTE_ID,
             CONF_REMOTE_NAME: REMOTE_NAME,
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
         },
         options={

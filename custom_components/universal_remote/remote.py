@@ -16,7 +16,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
@@ -26,9 +26,9 @@ from .const import (
 )
 from .helpers import normalize_command_mapping, universal_remotes_from_config_entry
 from .repairs import (
-    async_create_linked_infrared_entity_missing_issue,
-    async_delete_linked_infrared_entity_missing_issue,
-    async_delete_stale_linked_infrared_entity_missing_issues,
+    async_create_linked_infrared_emitter_missing_issue,
+    async_delete_linked_infrared_emitter_missing_issue,
+    async_delete_stale_linked_infrared_emitter_missing_issues,
 )
 from .send import async_send_infrared_command
 
@@ -92,20 +92,20 @@ def _create_missing_issue(
     hass: HomeAssistant,
     remote_id: str,
     remote_name: str,
-    infrared_entity_id: str,
+    infrared_emitter_id: str,
 ) -> None:
     """Create a standalone Universal Remote missing infrared repair issue."""
-    async_create_linked_infrared_entity_missing_issue(
+    async_create_linked_infrared_emitter_missing_issue(
         hass,
         remote_id=remote_id,
         remote_name=remote_name,
-        infrared_entity_id=infrared_entity_id,
+        infrared_emitter_id=infrared_emitter_id,
     )
 
 
 def _delete_missing_issue(hass: HomeAssistant, remote_id: str) -> None:
     """Delete a standalone Universal Remote missing infrared repair issue."""
-    async_delete_linked_infrared_entity_missing_issue(hass, remote_id=remote_id)
+    async_delete_linked_infrared_emitter_missing_issue(hass, remote_id=remote_id)
 
 
 @callback
@@ -183,7 +183,7 @@ def cleanup_stale_missing_infrared_issues(
     if not cleanup_stale_issues:
         return
 
-    async_delete_stale_linked_infrared_entity_missing_issues(
+    async_delete_stale_linked_infrared_emitter_missing_issues(
         hass, configured_remote_ids=configured_remote_ids
     )
 
@@ -222,7 +222,7 @@ async def async_setup_universal_remote_entities(
     for remote_config in configured_remote_definitions(entry):
         remote_id = remote_config.get(CONF_REMOTE_ID)
         name = remote_config.get(CONF_REMOTE_NAME)
-        infrared_entity_id = remote_config.get(CONF_INFRARED_ENTITY_ID)
+        infrared_emitter_id = remote_config.get(CONF_INFRARED_EMITTER_ID)
         commands = _as_str_mapping(remote_config.get(CONF_REMOTE_COMMANDS, {}))
 
         if (
@@ -230,8 +230,8 @@ async def async_setup_universal_remote_entities(
             or not remote_id
             or not isinstance(name, str)
             or not name
-            or not isinstance(infrared_entity_id, str)
-            or not infrared_entity_id
+            or not isinstance(infrared_emitter_id, str)
+            or not infrared_emitter_id
             or commands is None
         ):
             _LOGGER.debug("Skipping malformed universal remote entry")
@@ -246,7 +246,7 @@ async def async_setup_universal_remote_entities(
             InfraredRemoteEntity(
                 remote_id=remote_id,
                 name=name,
-                infrared_entity_id=infrared_entity_id,
+                infrared_emitter_id=infrared_emitter_id,
                 commands=commands,
                 unique_id_prefix=entry.entry_id,
                 device_info=device_info_factory(remote_id, name, remote_config),
@@ -307,7 +307,7 @@ class InfraredRemoteEntity(RemoteEntity):
         *,
         remote_id: str,
         name: str,
-        infrared_entity_id: str,
+        infrared_emitter_id: str,
         commands: dict[str, str] | None,
         unique_id_prefix: str,
         device_info: DeviceInfo,
@@ -325,7 +325,7 @@ class InfraredRemoteEntity(RemoteEntity):
         self._attr_has_entity_name = has_entity_name
         self._attr_unique_id = remote_unique_id(unique_id_prefix, remote_id)
         self._attr_device_info = device_info
-        self._infrared_entity_id = infrared_entity_id
+        self._infrared_emitter_id = infrared_emitter_id
         self._commands = commands or {}
         self._translation_domain = translation_domain
         self._missing_infrared_issue_handler = missing_infrared_issue_handler
@@ -345,7 +345,7 @@ class InfraredRemoteEntity(RemoteEntity):
         if hass is None:
             return True
 
-        state = hass.states.get(self._infrared_entity_id)
+        state = hass.states.get(self._infrared_emitter_id)
         return state is not None and state.state != STATE_UNAVAILABLE
 
     async def async_added_to_hass(self) -> None:
@@ -360,7 +360,7 @@ class InfraredRemoteEntity(RemoteEntity):
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
-                [self._infrared_entity_id],
+                [self._infrared_emitter_id],
                 _handle_infrared_state_change,
             )
         )
@@ -497,7 +497,7 @@ class InfraredRemoteEntity(RemoteEntity):
             command_is_configured = False
             raw_command = command
 
-        entity_id = self._resolve_infrared_entity_id()
+        entity_id = self._resolve_infrared_emitter_id()
 
         hass = getattr(self, "hass", None)
         if hass is None:
@@ -525,27 +525,27 @@ class InfraredRemoteEntity(RemoteEntity):
                 ) from err
             raise
 
-    def _resolve_infrared_entity_id(self) -> str:
-        """Return the configured backing infrared entity id."""
+    def _resolve_infrared_emitter_id(self) -> str:
+        """Return the configured backing infrared emitter id."""
         hass = getattr(self, "hass", None)
         if hass is None:
-            return self._infrared_entity_id
+            return self._infrared_emitter_id
 
-        state = hass.states.get(self._infrared_entity_id)
+        state = hass.states.get(self._infrared_emitter_id)
         if state is None or state.state == STATE_UNAVAILABLE:
             self._update_missing_infrared_repair_issue()
             raise HomeAssistantError(
                 translation_domain=self._translation_domain,
                 translation_key="remote_infrared_missing",
-                translation_placeholders={"entity_id": self._infrared_entity_id},
+                translation_placeholders={"entity_id": self._infrared_emitter_id},
             )
 
         self._update_missing_infrared_repair_issue()
-        return self._infrared_entity_id
+        return self._infrared_emitter_id
 
     @callback
     def _update_missing_infrared_repair_issue(self) -> None:
-        """Create or clear a repair issue for the linked infrared entity."""
+        """Create or clear a repair issue for the linked infrared emitter."""
         hass = getattr(self, "hass", None)
         if hass is None:
             return
@@ -566,5 +566,5 @@ class InfraredRemoteEntity(RemoteEntity):
                 hass,
                 self._remote_id,
                 self._remote_name,
-                self._infrared_entity_id,
+                self._infrared_emitter_id,
             )

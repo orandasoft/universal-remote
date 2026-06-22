@@ -14,7 +14,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 
 from .command_ui import command_icon, command_label
 from .const import (
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
@@ -85,7 +85,7 @@ async def async_setup_entry(
     for remote in universal_remotes_from_config_entry(entry):
         remote_id = str(remote[CONF_REMOTE_ID])
         remote_name = str(remote[CONF_REMOTE_NAME])
-        infrared_entity_id = str(remote[CONF_INFRARED_ENTITY_ID])
+        infrared_emitter_id = str(remote[CONF_INFRARED_EMITTER_ID])
         commands = normalize_command_objects(remote.get(CONF_REMOTE_COMMANDS, {}))
 
         for command_name, command in commands.items():
@@ -102,7 +102,7 @@ async def async_setup_entry(
                 UniversalRemoteButton(
                     remote_id=remote_id,
                     remote_name=remote_name,
-                    infrared_entity_id=infrared_entity_id,
+                    infrared_emitter_id=infrared_emitter_id,
                     unique_id=unique_id,
                     description=UniversalRemoteButtonEntityDescription(
                         key=normalize_command_name(command_name).lower(),
@@ -130,13 +130,13 @@ class UniversalRemoteButton(ButtonEntity):
         *,
         remote_id: str,
         remote_name: str,
-        infrared_entity_id: str,
+        infrared_emitter_id: str,
         unique_id: str,
         description: UniversalRemoteButtonEntityDescription,
     ) -> None:
         """Initialize a Universal Remote button."""
         self.entity_description = description
-        self._infrared_entity_id = infrared_entity_id
+        self._infrared_emitter_id = infrared_emitter_id
         self._attr_unique_id = unique_id
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, remote_id)},
@@ -154,25 +154,25 @@ class UniversalRemoteButton(ButtonEntity):
         self.async_on_remove(
             async_track_state_change_event(
                 self.hass,
-                [self._infrared_entity_id],
+                [self._infrared_emitter_id],
                 _handle_infrared_state_change,
             )
         )
 
     @property
     def available(self) -> bool:
-        """Return whether the backing infrared entity is available."""
+        """Return whether the backing infrared emitter is available."""
         hass = getattr(self, "hass", None)
         if hass is None:
             return True
 
-        state = hass.states.get(self._infrared_entity_id)
+        state = hass.states.get(self._infrared_emitter_id)
         return state is not None and state.state != STATE_UNAVAILABLE
 
     async def async_press(self) -> None:
         """Send the configured command."""
         await async_send_infrared_command(
             self.hass,
-            self._infrared_entity_id,
+            self._infrared_emitter_id,
             self.entity_description.command_data,
         )

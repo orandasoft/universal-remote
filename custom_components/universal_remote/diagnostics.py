@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 
 from .command_ui import command_is_media_player_source
 from .const import (
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -54,10 +54,10 @@ async def async_get_config_entry_diagnostics(
             "media_player_count": sum(
                 1 for remote in remote_diagnostics if remote["media_player_expected"]
             ),
-            "missing_infrared_entity_count": sum(
+            "missing_infrared_emitter_count": sum(
                 1
                 for remote in remote_diagnostics
-                if not remote["infrared_entity_available"]
+                if not remote["infrared_emitter_available"]
             ),
         },
     }
@@ -87,7 +87,7 @@ def _diagnostic_remotes(
     """Return sanitized universal remote diagnostics."""
     diagnostics: list[dict[str, Any]] = []
     for item in universal_remotes_from_config_entry(entry):
-        infrared_entity_id = item.get(CONF_INFRARED_ENTITY_ID)
+        infrared_emitter_id = item.get(CONF_INFRARED_EMITTER_ID)
         commands = item.get(CONF_REMOTE_COMMANDS, {})
         command_names = sorted(commands) if isinstance(commands, dict) else []
         button_count = (
@@ -102,17 +102,17 @@ def _diagnostic_remotes(
         )
         device_type = str(item.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
         infrared_state = (
-            hass.states.get(infrared_entity_id)
-            if isinstance(infrared_entity_id, str)
+            hass.states.get(infrared_emitter_id)
+            if isinstance(infrared_emitter_id, str)
             else None
         )
         diagnostics.append(
             {
                 "id": item.get(CONF_REMOTE_ID),
                 "name": item.get(CONF_REMOTE_NAME),
-                "infrared_entity_id": infrared_entity_id,
-                "infrared_entity_exists": infrared_state is not None,
-                "infrared_entity_available": (
+                "infrared_emitter_id": infrared_emitter_id,
+                "infrared_emitter_exists": infrared_state is not None,
+                "infrared_emitter_available": (
                     infrared_state is not None
                     and infrared_state.state != STATE_UNAVAILABLE
                 ),

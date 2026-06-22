@@ -7,7 +7,7 @@ import pytest
 from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
@@ -86,7 +86,7 @@ async def _init_options_flow(
     )
 
 
-def _single_entry(hass: HomeAssistant, infrared_entity: str) -> MockConfigEntry:
+def _single_entry(hass: HomeAssistant, infrared_emitter: str) -> MockConfigEntry:
     """Create a one-remote config entry."""
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -94,7 +94,7 @@ def _single_entry(hass: HomeAssistant, infrared_entity: str) -> MockConfigEntry:
         data={
             CONF_REMOTE_ID: "living_room_tv",
             CONF_REMOTE_NAME: "Living Room TV",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
         },
         options={CONF_REMOTE_COMMANDS: {"POWER_ON": RAW_COMMAND}},
@@ -105,7 +105,7 @@ def _single_entry(hass: HomeAssistant, infrared_entity: str) -> MockConfigEntry:
 
 
 def _single_entry_without_commands(
-    hass: HomeAssistant, infrared_entity: str
+    hass: HomeAssistant, infrared_emitter: str
 ) -> MockConfigEntry:
     """Create a one-remote config entry without commands."""
     entry = MockConfigEntry(
@@ -114,7 +114,7 @@ def _single_entry_without_commands(
         data={
             CONF_REMOTE_ID: "living_room_tv",
             CONF_REMOTE_NAME: "Living Room TV",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
         },
         options={},
@@ -155,10 +155,10 @@ async def _start_edit_command(
 
 async def test_options_menu(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test options menu for a single remote entry."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _init_options_flow(hass, entry)
 
@@ -179,10 +179,10 @@ async def test_options_menu_without_remote_aborts(hass: HomeAssistant) -> None:
 
 async def test_manage_commands_menu_with_commands(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test manage commands menu includes edit/remove when commands exist."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
 
@@ -198,10 +198,10 @@ async def test_manage_commands_menu_with_commands(
 
 async def test_manage_commands_menu_without_commands(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test manage commands menu only includes add when no commands exist."""
-    entry = _single_entry_without_commands(hass, infrared_entity)
+    entry = _single_entry_without_commands(hass, infrared_emitter)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
 
@@ -214,7 +214,7 @@ async def test_manage_commands_menu_without_commands(
 
 async def test_manage_commands_menu_generic_remote_hides_library_import(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test generic remotes do not show library import in normal options flow."""
     entry = MockConfigEntry(
@@ -223,7 +223,7 @@ async def test_manage_commands_menu_generic_remote_hides_library_import(
         data={
             CONF_REMOTE_ID: "generic_remote",
             CONF_REMOTE_NAME: "Generic Remote",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
         },
         options={},
@@ -253,10 +253,10 @@ async def test_manage_commands_without_remote_aborts(hass: HomeAssistant) -> Non
 
 async def test_add_command_success(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test adding a raw command."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _start_add_command(hass, entry)
     assert result["type"] is FlowResultType.FORM
@@ -291,12 +291,12 @@ async def test_add_command_success(
 )
 async def test_add_command_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     user_input: dict[str, str],
     errors: dict[str, str],
 ) -> None:
     """Test adding raw command validation errors."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _start_add_command(hass, entry)
     result = await hass.config_entries.options.async_configure(
@@ -318,12 +318,12 @@ async def test_add_command_errors(
 )
 async def test_add_raw_command_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     command_data: str,
     errors: dict[str, str],
 ) -> None:
     """Test adding raw command validation errors."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _start_add_command(hass, entry)
     result = await hass.config_entries.options.async_configure(
@@ -338,10 +338,10 @@ async def test_add_raw_command_errors(
 
 async def test_import_library_command_success(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test importing commands using an infrared library codeset."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
     result = await hass.config_entries.options.async_configure(
@@ -386,10 +386,10 @@ async def test_import_library_command_success(
 
 async def test_import_library_command_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test importing infrared library commands handles generation errors."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
     result = await hass.config_entries.options.async_configure(
@@ -441,10 +441,10 @@ async def test_add_raw_command_without_remote_aborts(hass: HomeAssistant) -> Non
 
 async def test_select_command_for_edit_form(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test selecting a command for edit."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
     result = await hass.config_entries.options.async_configure(
@@ -458,10 +458,10 @@ async def test_select_command_for_edit_form(
 
 async def test_select_command_for_edit_without_commands_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test selecting command for edit aborts without commands."""
-    entry = _single_entry_without_commands(hass, infrared_entity)
+    entry = _single_entry_without_commands(hass, infrared_emitter)
 
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -474,10 +474,10 @@ async def test_select_command_for_edit_without_commands_aborts(
 
 async def test_edit_command_success(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test editing a command with raw command data."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _start_edit_command(hass, entry)
     assert result["step_id"] == SOURCE_EDIT_COMMAND
@@ -513,12 +513,12 @@ async def test_edit_command_success(
 )
 async def test_edit_raw_command_name_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     user_input: dict[str, str],
     errors: dict[str, str],
 ) -> None:
     """Test editing raw command validation errors for command name."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -533,10 +533,10 @@ async def test_edit_raw_command_name_errors(
 
 async def test_edit_command_invalid_source_direct(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit command rejects an invalid source when called directly."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "POWER_ON"
@@ -557,12 +557,12 @@ async def test_edit_command_invalid_source_direct(
 )
 async def test_edit_raw_command_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     command_data: str,
     errors: dict[str, str],
 ) -> None:
     """Test editing raw command validation errors."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -582,10 +582,10 @@ async def test_edit_raw_command_errors(
 
 async def test_edit_command_duplicate_name(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test editing command rejects another existing command name."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     hass.config_entries.async_update_entry(
         entry,
         options={
@@ -612,10 +612,10 @@ async def test_edit_command_duplicate_name(
 
 async def test_edit_library_command_success(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test editing a command using an infrared library command."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _start_edit_command(hass, entry)
     result = await hass.config_entries.options.async_configure(
@@ -662,10 +662,10 @@ async def test_edit_library_command_success(
 
 async def test_edit_library_command_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test editing an infrared library command handles generation errors."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "POWER_ON"
@@ -706,10 +706,10 @@ async def test_edit_library_command_errors(
 
 async def test_edit_library_codeset_without_pending_name_returns_edit_form(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit library codeset returns edit form without pending command name."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "POWER_ON"
@@ -722,10 +722,10 @@ async def test_edit_library_codeset_without_pending_name_returns_edit_form(
 
 async def test_edit_command_missing_selection_shows_select_form(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit command redirects to selection form when no command is selected."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -738,10 +738,10 @@ async def test_edit_command_missing_selection_shows_select_form(
 
 async def test_edit_command_missing_selection_submit_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit command aborts when submitted selected command is gone."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -760,7 +760,7 @@ async def test_edit_command_missing_selection_submit_aborts(
 
 async def test_edit_command_without_remote_or_commands_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit command abort conditions."""
     entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
@@ -773,7 +773,7 @@ async def test_edit_command_without_remote_or_commands_aborts(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_universal_remotes"
 
-    entry = _single_entry_without_commands(hass, infrared_entity)
+    entry = _single_entry_without_commands(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
 
@@ -785,10 +785,10 @@ async def test_edit_command_without_remote_or_commands_aborts(
 
 async def test_edit_raw_command_without_pending_name_returns_edit_form(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit raw command returns edit form without pending command name."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "POWER_ON"
@@ -801,10 +801,10 @@ async def test_edit_raw_command_without_pending_name_returns_edit_form(
 
 async def test_remove_command_success(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test removing a command."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
     result = await hass.config_entries.options.async_configure(
@@ -825,10 +825,10 @@ async def test_remove_command_success(
 
 async def test_remove_command_without_commands_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test removing command aborts without commands."""
-    entry = _single_entry_without_commands(hass, infrared_entity)
+    entry = _single_entry_without_commands(hass, infrared_emitter)
 
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -841,10 +841,10 @@ async def test_remove_command_without_commands_aborts(
 
 async def test_remove_command_missing_command_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test removing stale command aborts."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
 
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -886,10 +886,10 @@ async def test_select_command_for_edit_without_remote_aborts(
 
 async def test_remove_command_keeps_remaining_commands(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test removing one command keeps the remaining commands."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     hass.config_entries.async_update_entry(
         entry,
         options={
@@ -964,7 +964,7 @@ async def test_import_library_commands_without_remote_aborts(
 
 async def test_import_library_commands_generic_remote_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test library import aborts for generic remotes."""
     entry = MockConfigEntry(
@@ -973,7 +973,7 @@ async def test_import_library_commands_generic_remote_aborts(
         data={
             CONF_REMOTE_ID: "generic_remote",
             CONF_REMOTE_NAME: "Generic Remote",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
         },
         options={},
@@ -991,10 +991,10 @@ async def test_import_library_commands_generic_remote_aborts(
 
 async def test_import_library_commands_without_codesets_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test library import aborts when no codesets are available."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
 
@@ -1011,10 +1011,10 @@ async def test_import_library_commands_without_codesets_aborts(
 
 async def test_import_library_commands_rejects_invalid_codeset(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test library import rejects a codeset that is not offered."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
 
@@ -1050,10 +1050,10 @@ async def test_import_library_command_select_without_remote_aborts(
 
 async def test_import_library_command_select_without_codeset_returns_codeset_step(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test selected library import returns to codeset selection without a codeset."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
 
@@ -1071,11 +1071,11 @@ async def test_import_library_command_select_without_codeset_returns_codeset_ste
 @pytest.mark.parametrize("options", [None, []])
 async def test_import_library_command_select_invalid_codeset_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     options: list[dict[str, str]] | None,
 ) -> None:
     """Test selected library import aborts for invalid command options."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_library_codeset = "lg_tv"
@@ -1095,10 +1095,10 @@ async def test_import_library_command_select_invalid_codeset_aborts(
 
 async def test_import_library_command_select_string_selection_success(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test selected library import accepts a single string command selection."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_library_codeset = "lg_tv"
@@ -1146,12 +1146,12 @@ async def test_import_library_command_select_string_selection_success(
 )
 async def test_import_library_command_select_validation_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     user_input: dict[str, object],
     errors: dict[str, str],
 ) -> None:
     """Test selected library import validation errors."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_library_codeset = "lg_tv"
@@ -1170,10 +1170,10 @@ async def test_import_library_command_select_validation_errors(
 
 async def test_import_library_command_select_existing_command_error(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test selected library import rejects existing command names."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_library_codeset = "lg_tv"
@@ -1211,10 +1211,10 @@ async def test_edit_raw_command_without_remote_aborts(hass: HomeAssistant) -> No
 
 async def test_edit_raw_command_missing_selected_command_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit raw command aborts when the selected command is gone."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "MISSING"
@@ -1241,10 +1241,10 @@ async def test_edit_library_codeset_without_remote_aborts(hass: HomeAssistant) -
 
 async def test_edit_library_codeset_without_selected_command_returns_select_form(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit library codeset returns command selection without selected command."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
 
@@ -1256,7 +1256,7 @@ async def test_edit_library_codeset_without_selected_command_returns_select_form
 
 async def test_edit_library_codeset_generic_remote_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit library codeset aborts for generic remotes."""
     entry = MockConfigEntry(
@@ -1265,7 +1265,7 @@ async def test_edit_library_codeset_generic_remote_aborts(
         data={
             CONF_REMOTE_ID: "generic_remote",
             CONF_REMOTE_NAME: "Generic Remote",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
         },
         options={CONF_REMOTE_COMMANDS: {"POWER_ON": RAW_COMMAND}},
@@ -1284,10 +1284,10 @@ async def test_edit_library_codeset_generic_remote_aborts(
 
 async def test_edit_library_codeset_without_codesets_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit library codeset aborts when no codesets are available."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "POWER_ON"
@@ -1305,10 +1305,10 @@ async def test_edit_library_codeset_without_codesets_aborts(
 
 async def test_edit_library_codeset_rejects_invalid_codeset(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit library codeset rejects a codeset that is not offered."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "POWER_ON"
@@ -1344,10 +1344,10 @@ async def test_edit_library_command_without_remote_aborts(hass: HomeAssistant) -
 
 async def test_edit_library_command_missing_selected_command_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit library command aborts when the selected command is gone."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "MISSING"
@@ -1361,10 +1361,10 @@ async def test_edit_library_command_missing_selected_command_aborts(
 
 async def test_edit_library_command_without_codeset_returns_codeset_step(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test edit library command returns to codeset selection without a codeset."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "POWER_ON"
@@ -1383,11 +1383,11 @@ async def test_edit_library_command_without_codeset_returns_codeset_step(
 @pytest.mark.parametrize("options", [None, []])
 async def test_edit_library_command_invalid_codeset_aborts(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     options: list[dict[str, str]] | None,
 ) -> None:
     """Test edit library command aborts for invalid command options."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._selected_command_name = "POWER_ON"
@@ -1421,12 +1421,12 @@ async def test_edit_library_command_invalid_codeset_aborts(
 )
 async def test_edit_library_command_validation_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     user_input: dict[str, object],
     errors: dict[str, str],
 ) -> None:
     """Test edit library command validation errors."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     hass.config_entries.async_update_entry(
         entry,
         options={
@@ -1459,10 +1459,10 @@ async def test_edit_library_command_validation_errors(
 
 async def test_remove_command_string_selection_success(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test removing a command accepts a single string selection."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     hass.config_entries.async_update_entry(
         entry,
         options={
@@ -1486,10 +1486,10 @@ async def test_remove_command_string_selection_success(
 
 async def test_remove_command_requires_selection(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test removing commands requires at least one selection."""
-    entry = _single_entry(hass, infrared_entity)
+    entry = _single_entry(hass, infrared_emitter)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
 

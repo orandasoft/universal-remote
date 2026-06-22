@@ -9,7 +9,7 @@ import voluptuous as vol
 from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -19,15 +19,15 @@ from custom_components.universal_remote.const import (
     DEVICE_TYPE_TV,
 )
 from custom_components.universal_remote.helpers import (
-    available_infrared_entities,
+    available_infrared_emitters,
     command_create_button,
     command_object,
     command_options,
     command_payload,
     find_command_key,
-    infrared_entity_field,
-    infrared_entity_field_with_current,
-    infrared_entity_selector,
+    infrared_emitter_field,
+    infrared_emitter_field_with_current,
+    infrared_emitter_selector,
     normalize_command_mapping,
     normalize_command_name,
     normalize_command_objects,
@@ -51,8 +51,8 @@ def _field_default(field: vol.Required) -> Any:
         return None
 
 
-def test_available_infrared_entities(hass: HomeAssistant) -> None:
-    """Test available infrared entity selector options."""
+def test_available_infrared_emitters(hass: HomeAssistant) -> None:
+    """Test available infrared emitter selector options."""
     registry = er.async_get(hass)
     registry.async_get_or_create(
         "infrared",
@@ -84,14 +84,27 @@ def test_available_infrared_entities(hass: HomeAssistant) -> None:
         original_name="Ignored",
     )
 
-    options = available_infrared_entities(hass)
+    with patch(
+        "custom_components.universal_remote.helpers.infrared.async_get_emitters",
+        return_value=[
+            "infrared.ir_b",
+            "infrared.ir_a",
+            "infrared.ir_disabled",
+        ],
+    ):
+        options = available_infrared_emitters(hass)
 
     assert list(options) == ["infrared.ir_a", "infrared.ir_b"]
+    assert options["infrared.ir_a"]["value"] == "infrared.ir_a"
     assert options["infrared.ir_a"]["label"] == "IR A"
+    assert options["infrared.ir_b"]["value"] == "infrared.ir_b"
+    assert options["infrared.ir_b"]["label"] == "IR B"
+    assert "infrared.ir_disabled" not in options
+    assert "light.ignored" not in options
 
 
-def test_infrared_entity_selector_includes_current_missing_entity() -> None:
-    """Test selector includes stale current entity."""
+def test_infrared_emitter_selector_includes_current_missing_emitter() -> None:
+    """Test selector includes stale current emitter."""
     available: dict[str, selector.SelectOptionDict] = {
         "infrared.valid": selector.SelectOptionDict(
             value="infrared.valid",
@@ -99,9 +112,9 @@ def test_infrared_entity_selector_includes_current_missing_entity() -> None:
         )
     }
 
-    selector_obj = infrared_entity_selector(
+    selector_obj = infrared_emitter_selector(
         available,
-        current_entity_id="infrared.missing",
+        current_emitter_id="infrared.missing",
     )
 
     options = cast(list[selector.SelectOptionDict], selector_obj.config["options"])
@@ -109,7 +122,7 @@ def test_infrared_entity_selector_includes_current_missing_entity() -> None:
     assert values == ["infrared.valid", "infrared.missing"]
 
 
-def test_infrared_entity_field_defaults() -> None:
+def test_infrared_emitter_field_defaults() -> None:
     """Test selector field defaults."""
     available: dict[str, selector.SelectOptionDict] = {
         "infrared.valid": selector.SelectOptionDict(
@@ -119,13 +132,13 @@ def test_infrared_entity_field_defaults() -> None:
     }
 
     assert (
-        _field_default(infrared_entity_field("infrared.valid", available))
+        _field_default(infrared_emitter_field("infrared.valid", available))
         == "infrared.valid"
     )
-    assert _field_default(infrared_entity_field("infrared.missing", available)) is None
+    assert _field_default(infrared_emitter_field("infrared.missing", available)) is None
     assert (
         _field_default(
-            infrared_entity_field_with_current(
+            infrared_emitter_field_with_current(
                 "infrared.missing",
                 available,
             )
@@ -222,14 +235,14 @@ def test_universal_remote_infers_device_type_from_codeset() -> None:
         {
             CONF_REMOTE_ID: "tv",
             CONF_REMOTE_NAME: "TV",
-            CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+            CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
             CONF_REMOTE_CODESET: "lg_tv",
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
         }
     ) == {
         CONF_REMOTE_ID: "tv",
         CONF_REMOTE_NAME: "TV",
-        CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+        CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
         CONF_REMOTE_CODESET: "lg_tv",
         CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
     }
@@ -241,14 +254,14 @@ def test_universal_remote_preserves_matching_codeset_device_type() -> None:
         {
             CONF_REMOTE_ID: "tv",
             CONF_REMOTE_NAME: "TV",
-            CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+            CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
             CONF_REMOTE_CODESET: "lg_tv",
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
         }
     ) == {
         CONF_REMOTE_ID: "tv",
         CONF_REMOTE_NAME: "TV",
-        CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+        CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
         CONF_REMOTE_CODESET: "lg_tv",
         CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
     }
@@ -265,21 +278,21 @@ def test_universal_remote_drops_codeset_when_device_type_conflicts() -> None:
             {
                 CONF_REMOTE_ID: "projector",
                 CONF_REMOTE_NAME: "Projector",
-                CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+                CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
                 CONF_REMOTE_CODESET: "lg_tv",
                 CONF_REMOTE_DEVICE_TYPE: "projector",
             }
         ) == {
             CONF_REMOTE_ID: "projector",
             CONF_REMOTE_NAME: "Projector",
-            CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+            CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
             CONF_REMOTE_DEVICE_TYPE: "projector",
         }
 
 
-def test_infrared_entity_field_omits_unavailable_default() -> None:
+def test_infrared_emitter_field_omits_unavailable_default() -> None:
     """Test infrared field omits defaults that are not available."""
-    field = infrared_entity_field(
+    field = infrared_emitter_field(
         "infrared.missing",
         {
             "infrared.available": selector.SelectOptionDict(
@@ -297,9 +310,9 @@ def test_command_options_ignores_malformed_command_mapping() -> None:
     assert command_options(cast(Mapping[str, Any], "not-a-mapping")) == []
 
 
-def test_infrared_entity_field_without_default_uses_required_field() -> None:
-    """Test infrared entity field has no default when no valid default is provided."""
-    field = infrared_entity_field(
+def test_infrared_emitter_field_without_default_uses_required_field() -> None:
+    """Test infrared emitter field has no default when no valid default is provided."""
+    field = infrared_emitter_field(
         "",
         {
             "infrared.available": selector.SelectOptionDict(
@@ -312,11 +325,11 @@ def test_infrared_entity_field_without_default_uses_required_field() -> None:
     assert field.default is vol.UNDEFINED
 
 
-def test_infrared_entity_field_with_current_without_default_uses_required_field() -> (
+def test_infrared_emitter_field_with_current_without_default_uses_required_field() -> (
     None
 ):
-    """Test current infrared entity field has no default when no current value exists."""
-    field = infrared_entity_field_with_current(
+    """Test current infrared emitter field has no default when no current value exists."""
+    field = infrared_emitter_field_with_current(
         "",
         {
             "infrared.available": selector.SelectOptionDict(
@@ -335,14 +348,14 @@ def test_universal_remote_from_config_entry_data() -> None:
         {
             CONF_REMOTE_ID: "tv",
             CONF_REMOTE_NAME: "TV",
-            CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+            CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
             CONF_REMOTE_COMMANDS: {"POWER_ON": "38000:1,2", 1: "bad"},
         }
     ) == {
         CONF_REMOTE_ID: "tv",
         CONF_REMOTE_NAME: "TV",
-        CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+        CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
         CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
         CONF_REMOTE_COMMANDS: {
             "POWER_ON": {
@@ -360,7 +373,7 @@ def test_universal_remote_from_config_entry_data_rejects_malformed_data() -> Non
             {
                 CONF_REMOTE_ID: "tv",
                 CONF_REMOTE_NAME: "",
-                CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+                CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
             }
         )
         is None
@@ -374,7 +387,7 @@ def test_universal_remotes_from_config_entry_supports_single_entry_data() -> Non
         data={
             CONF_REMOTE_ID: "tv",
             CONF_REMOTE_NAME: "TV",
-            CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+            CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
         },
         options={CONF_REMOTE_COMMANDS: {"POWER_ON": "38000:1,2"}},
     )
@@ -383,7 +396,7 @@ def test_universal_remotes_from_config_entry_supports_single_entry_data() -> Non
         {
             CONF_REMOTE_ID: "tv",
             CONF_REMOTE_NAME: "TV",
-            CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+            CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
             CONF_REMOTE_COMMANDS: {
                 "POWER_ON": {
@@ -404,7 +417,7 @@ def test_universal_remotes_from_config_entry_rejects_malformed_single_entry_data
         data={
             CONF_REMOTE_ID: "tv",
             CONF_REMOTE_NAME: "",
-            CONF_INFRARED_ENTITY_ID: "infrared.test_ir",
+            CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
         },
         options={},
     )

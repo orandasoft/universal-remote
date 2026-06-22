@@ -45,6 +45,24 @@ INFRARED_LIBRARY_CODESETS: Final[dict[str, InfraredLibraryCodeset]] = {
         enum_class="LGTVCodeJP",
         device_type=DEVICE_TYPE_TV,
     ),
+    "samsung_tv": InfraredLibraryCodeset(
+        label="Samsung TV",
+        module="infrared_protocols.codes.samsung.tv",
+        enum_class="SamsungTVCode",
+        device_type=DEVICE_TYPE_TV,
+    ),
+    "sharp_aquos_tv": InfraredLibraryCodeset(
+        label="Sharp AQUOS TV",
+        module="infrared_protocols.codes.sharp.aquos_tv",
+        enum_class="SharpAquosTVCode",
+        device_type=DEVICE_TYPE_TV,
+    ),
+    "vizio_tv": InfraredLibraryCodeset(
+        label="Vizio TV",
+        module="infrared_protocols.codes.vizio.tv",
+        enum_class="VizioTVCode",
+        device_type=DEVICE_TYPE_TV,
+    ),
 }
 
 

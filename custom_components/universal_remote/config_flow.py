@@ -9,7 +9,7 @@ from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.helpers import selector
 
 from .const import (
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -19,11 +19,11 @@ from .const import (
     DOMAIN,
 )
 from .helpers import (
-    available_infrared_entities,
+    available_infrared_emitters,
     command_object,
-    infrared_entity_field,
-    infrared_entity_field_with_current,
-    infrared_entity_selector,
+    infrared_emitter_field,
+    infrared_emitter_field_with_current,
+    infrared_emitter_selector,
     unique_remote_id,
     universal_remote_from_config_entry_data,
 )
@@ -63,7 +63,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._name: str | None = None
-        self._infrared_entity_id: str | None = None
+        self._infrared_emitter_id: str | None = None
         self._device_type: str = DEVICE_TYPE_GENERIC
         self._codeset_id: str = NO_INFRARED_LIBRARY_CODESET
         self._create_button = False
@@ -82,14 +82,14 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Handle manual setup."""
         errors: dict[str, str] = {}
-        infrared_entities = available_infrared_entities(self.hass)
+        infrared_emitters = available_infrared_emitters(self.hass)
 
-        if not infrared_entities:
-            return self.async_abort(reason="no_available_infrared_entities")
+        if not infrared_emitters:
+            return self.async_abort(reason="no_available_infrared_emitters")
 
         if user_input is not None:
             name = str(user_input[CONF_REMOTE_NAME]).strip()
-            infrared_entity_id = str(user_input[CONF_INFRARED_ENTITY_ID]).strip()
+            infrared_emitter_id = str(user_input[CONF_INFRARED_EMITTER_ID]).strip()
             device_type = str(
                 user_input.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC)
             )
@@ -97,8 +97,8 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if not name:
                 errors[CONF_REMOTE_NAME] = "remote_name_required"
 
-            if infrared_entity_id not in infrared_entities:
-                errors[CONF_INFRARED_ENTITY_ID] = "infrared_entity_unavailable"
+            if infrared_emitter_id not in infrared_emitters:
+                errors[CONF_INFRARED_EMITTER_ID] = "infrared_emitter_unavailable"
 
             if not validate_infrared_library_device_type(device_type):
                 errors[CONF_REMOTE_DEVICE_TYPE] = "invalid_device_type"
@@ -110,7 +110,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured()
 
                 self._name = name
-                self._infrared_entity_id = infrared_entity_id
+                self._infrared_emitter_id = infrared_emitter_id
                 self._device_type = device_type
 
                 if device_type == DEVICE_TYPE_GENERIC:
@@ -121,8 +121,8 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         remote_name_default = (
             str(user_input.get(CONF_REMOTE_NAME, "")) if user_input else ""
         )
-        infrared_entity_default = (
-            str(user_input.get(CONF_INFRARED_ENTITY_ID, "")) if user_input else ""
+        infrared_emitter_default = (
+            str(user_input.get(CONF_INFRARED_EMITTER_ID, "")) if user_input else ""
         )
         device_type_default = (
             str(user_input.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
@@ -138,10 +138,10 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_REMOTE_NAME,
                         default=remote_name_default,
                     ): str,
-                    infrared_entity_field(
-                        infrared_entity_default,
-                        infrared_entities,
-                    ): infrared_entity_selector(infrared_entities),
+                    infrared_emitter_field(
+                        infrared_emitter_default,
+                        infrared_emitters,
+                    ): infrared_emitter_selector(infrared_emitters),
                     vol.Required(
                         CONF_REMOTE_DEVICE_TYPE,
                         default=device_type_default,
@@ -164,7 +164,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         device_type = self._device_type
 
-        if self._name is None or self._infrared_entity_id is None:
+        if self._name is None or self._infrared_emitter_id is None:
             return await self.async_step_user()
 
         if device_type == DEVICE_TYPE_GENERIC:
@@ -225,7 +225,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         codeset_id = self._codeset_id
 
-        if self._name is None or self._infrared_entity_id is None:
+        if self._name is None or self._infrared_emitter_id is None:
             return await self.async_step_user()
 
         if not is_infrared_library_codeset_selected(codeset_id):
@@ -304,7 +304,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         codeset_id = self._codeset_id
 
-        if self._name is None or self._infrared_entity_id is None:
+        if self._name is None or self._infrared_emitter_id is None:
             return await self.async_step_user()
 
         if not is_infrared_library_codeset_selected(codeset_id):
@@ -405,24 +405,24 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle reconfiguration of the universal remote."""
         entry = self._get_reconfigure_entry()
         remote = universal_remote_from_config_entry_data({**entry.data, **entry.options})
-        infrared_entities = available_infrared_entities(self.hass)
+        infrared_emitters = available_infrared_emitters(self.hass)
 
         if remote is None:
             return self.async_abort(reason="no_universal_remotes")
 
-        if not infrared_entities:
-            return self.async_abort(reason="no_available_infrared_entities")
+        if not infrared_emitters:
+            return self.async_abort(reason="no_available_infrared_emitters")
 
         errors: dict[str, str] = {}
         current_name = str(remote[CONF_REMOTE_NAME])
-        current_entity_id = str(remote[CONF_INFRARED_ENTITY_ID])
+        current_emitter_id = str(remote[CONF_INFRARED_EMITTER_ID])
         current_device_type = str(
             remote.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC)
         )
 
         if user_input is not None:
             name = str(user_input[CONF_REMOTE_NAME]).strip()
-            infrared_entity_id = str(user_input[CONF_INFRARED_ENTITY_ID]).strip()
+            infrared_emitter_id = str(user_input[CONF_INFRARED_EMITTER_ID]).strip()
             device_type = str(
                 user_input.get(CONF_REMOTE_DEVICE_TYPE, current_device_type)
             )
@@ -431,17 +431,17 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors[CONF_REMOTE_NAME] = "remote_name_required"
 
             if (
-                infrared_entity_id not in infrared_entities
-                and infrared_entity_id != current_entity_id
+                infrared_emitter_id not in infrared_emitters
+                and infrared_emitter_id != current_emitter_id
             ):
-                errors[CONF_INFRARED_ENTITY_ID] = "infrared_entity_unavailable"
+                errors[CONF_INFRARED_EMITTER_ID] = "infrared_emitter_unavailable"
 
             if not validate_infrared_library_device_type(device_type):
                 errors[CONF_REMOTE_DEVICE_TYPE] = "invalid_device_type"
 
             if not errors:
                 remote[CONF_REMOTE_NAME] = name
-                remote[CONF_INFRARED_ENTITY_ID] = infrared_entity_id
+                remote[CONF_INFRARED_EMITTER_ID] = infrared_emitter_id
                 remote[CONF_REMOTE_DEVICE_TYPE] = device_type
                 self._device_type = device_type
                 self._codeset_id = str(
@@ -468,14 +468,14 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         if user_input
                         else current_name,
                     ): str,
-                    infrared_entity_field_with_current(
-                        str(user_input.get(CONF_INFRARED_ENTITY_ID, current_entity_id))
+                    infrared_emitter_field_with_current(
+                        str(user_input.get(CONF_INFRARED_EMITTER_ID, current_emitter_id))
                         if user_input
-                        else current_entity_id,
-                        infrared_entities,
-                    ): infrared_entity_selector(
-                        infrared_entities,
-                        current_entity_id=current_entity_id,
+                        else current_emitter_id,
+                        infrared_emitters,
+                    ): infrared_emitter_selector(
+                        infrared_emitters,
+                        current_emitter_id=current_emitter_id,
                     ),
                     vol.Required(
                         CONF_REMOTE_DEVICE_TYPE,
@@ -570,7 +570,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
         data = dict(entry.data)
         data[CONF_REMOTE_NAME] = remote[CONF_REMOTE_NAME]
-        data[CONF_INFRARED_ENTITY_ID] = remote[CONF_INFRARED_ENTITY_ID]
+        data[CONF_INFRARED_EMITTER_ID] = remote[CONF_INFRARED_EMITTER_ID]
         data[CONF_REMOTE_DEVICE_TYPE] = remote.get(
             CONF_REMOTE_DEVICE_TYPE,
             DEVICE_TYPE_GENERIC,
@@ -592,7 +592,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     def _create_entry(self, commands: dict[str, Any]) -> ConfigFlowResult:
         """Create the config entry from pending user input."""
-        if self._name is None or self._infrared_entity_id is None:
+        if self._name is None or self._infrared_emitter_id is None:
             return self.async_abort(reason="no_universal_remotes")
 
         codeset_device_type = infrared_library_codeset_device_type(self._codeset_id)
@@ -606,7 +606,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data: dict[str, Any] = {
             CONF_REMOTE_ID: remote_id,
             CONF_REMOTE_NAME: self._name,
-            CONF_INFRARED_ENTITY_ID: self._infrared_entity_id,
+            CONF_INFRARED_EMITTER_ID: self._infrared_emitter_id,
             CONF_REMOTE_DEVICE_TYPE: self._device_type,
         }
         if is_infrared_library_codeset_selected(self._codeset_id):

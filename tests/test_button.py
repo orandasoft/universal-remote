@@ -11,7 +11,7 @@ from custom_components.universal_remote.button import (
 from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
@@ -34,14 +34,14 @@ def _command_object(command_data: str, *, create_button: bool) -> dict[str, obje
     }
 
 
-def _button_entry(hass: HomeAssistant, infrared_entity: str) -> MockConfigEntry:
+def _button_entry(hass: HomeAssistant, infrared_emitter: str) -> MockConfigEntry:
     """Create a config entry with one command button enabled."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={
             CONF_REMOTE_ID: REMOTE_ID,
             CONF_REMOTE_NAME: REMOTE_NAME,
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
         },
         options={
             CONF_REMOTE_COMMANDS: {
@@ -62,10 +62,10 @@ def _button_entry(hass: HomeAssistant, infrared_entity: str) -> MockConfigEntry:
 
 async def test_async_setup_entry_adds_enabled_command_buttons(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test setup creates buttons only for commands with create_button enabled."""
-    entry = _button_entry(hass, infrared_entity)
+    entry = _button_entry(hass, infrared_emitter)
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -89,13 +89,13 @@ async def test_async_setup_entry_adds_enabled_command_buttons(
 
 async def test_button_press_sends_command(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test pressing a command button sends the stored command."""
     entity = UniversalRemoteButton(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
-        infrared_entity_id=infrared_entity,
+        infrared_emitter_id=infrared_emitter,
         unique_id="entry_button_living_room_tv_power_on",
         description=UniversalRemoteButtonEntityDescription(
             key="power_on",
@@ -113,18 +113,18 @@ async def test_button_press_sends_command(
     ) as mock_send:
         await entity.async_press()
 
-    mock_send.assert_awaited_once_with(hass, infrared_entity, RAW_COMMAND)
+    mock_send.assert_awaited_once_with(hass, infrared_emitter, RAW_COMMAND)
 
 
 async def test_button_availability_tracks_infrared_state(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test command button availability follows the linked infrared entity."""
     entity = UniversalRemoteButton(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
-        infrared_entity_id=infrared_entity,
+        infrared_emitter_id=infrared_emitter,
         unique_id="entry_button_living_room_tv_power_on",
         description=UniversalRemoteButtonEntityDescription(
             key="power_on",
@@ -139,7 +139,7 @@ async def test_button_availability_tracks_infrared_state(
 
     with patch.object(entity, "async_write_ha_state") as write_state:
         await entity.async_added_to_hass()
-        hass.states.async_set(infrared_entity, STATE_UNAVAILABLE)
+        hass.states.async_set(infrared_emitter, STATE_UNAVAILABLE)
         await hass.async_block_till_done()
 
     assert not entity.available
@@ -148,10 +148,10 @@ async def test_button_availability_tracks_infrared_state(
 
 def test_cleanup_stale_button_entities_removes_only_matching_stale_entries(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test stale command button registry entries are removed."""
-    entry = _button_entry(hass, infrared_entity)
+    entry = _button_entry(hass, infrared_emitter)
     expected_unique_id = button_unique_id(entry.entry_id, REMOTE_ID, "POWER_ON")
     stale_unique_id = button_unique_id(entry.entry_id, REMOTE_ID, "OLD_COMMAND")
     registry = MagicMock()
@@ -198,10 +198,10 @@ def test_cleanup_stale_button_entities_removes_only_matching_stale_entries(
 
 async def test_async_setup_entry_skips_button_command_without_payload(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test setup skips button-enabled commands with no command payload."""
-    entry = _button_entry(hass, infrared_entity)
+    entry = _button_entry(hass, infrared_emitter)
 
     with patch(
         "custom_components.universal_remote.button.normalize_command_objects",
@@ -221,12 +221,12 @@ async def test_async_setup_entry_skips_button_command_without_payload(
     )
 
 
-def test_button_available_without_hass_returns_true(infrared_entity: str) -> None:
+def test_button_available_without_hass_returns_true(infrared_emitter: str) -> None:
     """Test a button is available before Home Assistant is attached."""
     entity = UniversalRemoteButton(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
-        infrared_entity_id=infrared_entity,
+        infrared_emitter_id=infrared_emitter,
         unique_id="entry_button_living_room_tv_power_on",
         description=UniversalRemoteButtonEntityDescription(
             key="power_on",

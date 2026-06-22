@@ -13,7 +13,7 @@ from homeassistant.components.media_player import (
 from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
@@ -48,7 +48,7 @@ def _command_object(command_data: str) -> dict[str, object]:
 
 def _media_player_entry(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     *,
     device_type: str = DEVICE_TYPE_TV,
 ) -> MockConfigEntry:
@@ -58,7 +58,7 @@ def _media_player_entry(
         data={
             CONF_REMOTE_ID: REMOTE_ID,
             CONF_REMOTE_NAME: REMOTE_NAME,
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: device_type,
         },
         options={
@@ -85,14 +85,14 @@ def _media_player_entry(
 
 def _media_player_entity(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     commands: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> UniversalRemoteTvMediaPlayer:
     """Create a media player entity for behavior tests."""
     entity = UniversalRemoteTvMediaPlayer(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
-        infrared_entity_id=infrared_entity,
+        infrared_emitter_id=infrared_emitter,
         commands=commands
         or {
             "POWER_ON": _command_object(RAW_COMMAND),
@@ -116,13 +116,13 @@ def _media_player_entity(
 
 
 def _media_player_entity_without_hass(
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> UniversalRemoteTvMediaPlayer:
     """Create a media player entity that has not been added to Home Assistant."""
     return UniversalRemoteTvMediaPlayer(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
-        infrared_entity_id=infrared_entity,
+        infrared_emitter_id=infrared_emitter,
         commands={"POWER_ON": _command_object(RAW_COMMAND)},
         unique_id="entry_media_player_living_room_tv",
     )
@@ -130,10 +130,10 @@ def _media_player_entity_without_hass(
 
 async def test_async_setup_entry_adds_tv_media_player(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test setup creates a media player for TV universal remotes."""
-    entry = _media_player_entry(hass, infrared_entity)
+    entry = _media_player_entry(hass, infrared_emitter)
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
@@ -148,7 +148,7 @@ async def test_async_setup_entry_adds_tv_media_player(
     assert entity_id is not None
     assert hass.states.get(entity_id) is not None
 
-    entity = _media_player_entity(hass, infrared_entity)
+    entity = _media_player_entity(hass, infrared_emitter)
     assert entity.device_info == DeviceInfo(
         identifiers={(DOMAIN, REMOTE_ID)},
         name=REMOTE_NAME,
@@ -170,12 +170,12 @@ async def test_async_setup_entry_adds_tv_media_player(
 
 async def test_async_setup_entry_skips_generic_remote(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test setup does not create a media player for generic remotes."""
     entry = _media_player_entry(
         hass,
-        infrared_entity,
+        infrared_emitter,
         device_type=DEVICE_TYPE_GENERIC,
     )
 
@@ -194,10 +194,10 @@ async def test_async_setup_entry_skips_generic_remote(
 
 async def test_setup_entry_cleans_stale_media_player_entity(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test setup removes stale media player entity registry entries."""
-    entry = _media_player_entry(hass, infrared_entity)
+    entry = _media_player_entry(hass, infrared_emitter)
     entity_registry = er.async_get(hass)
     stale_entry = entity_registry.async_get_or_create(
         "media_player",
@@ -218,10 +218,10 @@ async def test_setup_entry_cleans_stale_media_player_entity(
 
 async def test_media_player_commands_send_infrared_command(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test media-player actions send the matching command."""
-    entity = _media_player_entity(hass, infrared_entity)
+    entity = _media_player_entity(hass, infrared_emitter)
 
     with patch(
         "custom_components.universal_remote.media_player."
@@ -231,16 +231,16 @@ async def test_media_player_commands_send_infrared_command(
         await entity.async_volume_up()
         await entity.async_select_source("HDMI 1")
 
-    assert mock_send.await_args_list[0].args == (hass, infrared_entity, RAW_COMMAND)
-    assert mock_send.await_args_list[1].args == (hass, infrared_entity, RAW_COMMAND)
+    assert mock_send.await_args_list[0].args == (hass, infrared_emitter, RAW_COMMAND)
+    assert mock_send.await_args_list[1].args == (hass, infrared_emitter, RAW_COMMAND)
 
 
 async def test_media_player_role_actions_send_infrared_command(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test media-player role actions send their mapped commands."""
-    entity = _media_player_entity(hass, infrared_entity)
+    entity = _media_player_entity(hass, infrared_emitter)
 
     with patch(
         "custom_components.universal_remote.media_player."
@@ -257,17 +257,17 @@ async def test_media_player_role_actions_send_infrared_command(
 
     assert mock_send.await_count == 7
     assert all(
-        call_args.args == (hass, infrared_entity, RAW_COMMAND)
+        call_args.args == (hass, infrared_emitter, RAW_COMMAND)
         for call_args in mock_send.await_args_list
     )
 
 
 async def test_media_player_turn_on_and_off_update_assumed_state(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test power actions update the assumed media player state."""
-    entity = _media_player_entity(hass, infrared_entity)
+    entity = _media_player_entity(hass, infrared_emitter)
 
     with (
         patch(
@@ -288,12 +288,12 @@ async def test_media_player_turn_on_and_off_update_assumed_state(
 
 def test_media_player_power_toggle_command_does_not_create_on_off_features(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test POWER toggle commands are not exposed as discrete on/off actions."""
     entity = _media_player_entity(
         hass,
-        infrared_entity,
+        infrared_emitter,
         commands={"POWER": _command_object(RAW_COMMAND)},
     )
 
@@ -303,10 +303,10 @@ def test_media_player_power_toggle_command_does_not_create_on_off_features(
 
 async def test_media_player_invalid_source_raises(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test selecting an invalid source raises HomeAssistantError."""
-    entity = _media_player_entity(hass, infrared_entity)
+    entity = _media_player_entity(hass, infrared_emitter)
 
     with pytest.raises(HomeAssistantError) as err:
         await entity.async_select_source("Input")
@@ -316,12 +316,12 @@ async def test_media_player_invalid_source_raises(
 
 async def test_media_player_missing_role_raises(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test sending an unavailable role raises HomeAssistantError."""
     entity = _media_player_entity(
         hass,
-        infrared_entity,
+        infrared_emitter,
         commands={"HDMI_1": _command_object(RAW_COMMAND)},
     )
 
@@ -334,10 +334,10 @@ async def test_media_player_missing_role_raises(
 
 async def test_media_player_missing_command_raises(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test sending a stale command name raises HomeAssistantError."""
-    entity = _media_player_entity(hass, infrared_entity)
+    entity = _media_player_entity(hass, infrared_emitter)
 
     with pytest.raises(HomeAssistantError) as err:
         await entity._send_command_name("MISSING")
@@ -348,12 +348,12 @@ async def test_media_player_missing_command_raises(
 
 async def test_media_player_missing_command_payload_raises(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test sending a command without command data raises HomeAssistantError."""
     entity = _media_player_entity(
         hass,
-        infrared_entity,
+        infrared_emitter,
         commands={"POWER_ON": _command_object(RAW_COMMAND)},
     )
     entity._commands["POWER_ON"] = {CONF_COMMAND_CREATE_BUTTON: False}
@@ -367,23 +367,23 @@ async def test_media_player_missing_command_payload_raises(
 
 async def test_media_player_availability_tracks_infrared_state(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test media player availability follows the linked infrared entity."""
-    entity = _media_player_entity(hass, infrared_entity)
+    entity = _media_player_entity(hass, infrared_emitter)
     assert entity.available
 
     with patch.object(entity, "async_write_ha_state") as write_state:
         await entity.async_added_to_hass()
-        hass.states.async_set(infrared_entity, STATE_UNAVAILABLE)
+        hass.states.async_set(infrared_emitter, STATE_UNAVAILABLE)
         await hass.async_block_till_done()
 
     assert not entity.available
     write_state.assert_called_once()
 
 
-def test_media_player_available_before_added_to_hass(infrared_entity: str) -> None:
+def test_media_player_available_before_added_to_hass(infrared_emitter: str) -> None:
     """Test media player is available before it is added to Home Assistant."""
-    entity = _media_player_entity_without_hass(infrared_entity)
+    entity = _media_player_entity_without_hass(infrared_emitter)
 
     assert entity.available

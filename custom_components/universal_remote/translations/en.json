@@ -2,7 +2,7 @@
   "config": {
     "abort": {
       "already_configured": "A universal remote with this name is already configured.",
-      "no_available_infrared_entities": "No infrared entities are available.",
+      "no_available_infrared_emitters": "No infrared entities are available.",
       "no_universal_remotes": "No universal remotes are configured.",
       "reconfigure_successful": "Reconfiguration was successful."
     },
@@ -129,7 +129,7 @@
     "abort": {
       "command_not_found": "The selected command was not found.",
       "invalid_library_codeset": "The selected infrared library codeset is not available.",
-      "no_available_infrared_entities": "No infrared entities are available.",
+      "no_available_infrared_emitters": "No infrared entities are available.",
       "no_remote_commands": "No commands are configured.",
       "no_universal_remotes": "No universal remotes are configured."
     },

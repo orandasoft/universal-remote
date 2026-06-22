@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from homeassistant import config_entries
+from homeassistant.helpers import selector
 from custom_components.universal_remote.config_flow import (
     CONF_CREATE_BUTTON,
     CONF_IMPORT_COMMANDS,
@@ -19,7 +20,7 @@ from custom_components.universal_remote.config_flow import (
     _validate_generated_commands,
 )
 from custom_components.universal_remote.const import (
-    CONF_INFRARED_ENTITY_ID,
+    CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -36,10 +37,19 @@ from custom_components.universal_remote.infrared_library import (
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
-from .conftest import INFRARED_ENTITY_ID, RAW_COMMAND
+from .conftest import INFRARED_EMITTER_ID, RAW_COMMAND
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+
+def _emitter_options(entity_id: str) -> dict[str, selector.SelectOptionDict]:
+    """Return infrared emitter selector options for tests."""
+    return {
+        entity_id: selector.SelectOptionDict(
+            value=entity_id,
+            label="Test IR",
+        )
+    }
 
 async def test_user_flow_no_infrared_entities(hass: HomeAssistant) -> None:
     """Test abort when no infrared entities exist."""
@@ -49,26 +59,33 @@ async def test_user_flow_no_infrared_entities(hass: HomeAssistant) -> None:
     )
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_available_infrared_entities"
+    assert result["reason"] == "no_available_infrared_emitters"
 
 
-async def test_user_flow_success(hass: HomeAssistant, infrared_entity: str) -> None:
+async def test_user_flow_success(hass: HomeAssistant, infrared_emitter: str) -> None:
     """Test successful setup."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": config_entries.SOURCE_USER},
-    )
-    assert result["type"] is FlowResultType.FORM
+    with (
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value=_emitter_options(infrared_emitter),
+        ),
+        patch(
+            "custom_components.universal_remote.async_setup_entry",
+            return_value=True,
+        ) as mock_setup,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+        )
 
-    with patch(
-        "custom_components.universal_remote.async_setup_entry",
-        return_value=True,
-    ) as mock_setup:
+        assert result["type"] is FlowResultType.FORM
+
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"],
             {
                 CONF_REMOTE_NAME: "Living Room TV",
-                CONF_INFRARED_ENTITY_ID: infrared_entity,
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
             },
         )
         await hass.async_block_till_done()
@@ -78,7 +95,7 @@ async def test_user_flow_success(hass: HomeAssistant, infrared_entity: str) -> N
     assert result["data"] == {
         CONF_REMOTE_ID: "living_room_tv",
         CONF_REMOTE_NAME: "Living Room TV",
-        CONF_INFRARED_ENTITY_ID: infrared_entity,
+        CONF_INFRARED_EMITTER_ID: infrared_emitter,
         CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
     }
     assert result["options"] == {}
@@ -91,7 +108,7 @@ async def test_user_flow_success(hass: HomeAssistant, infrared_entity: str) -> N
         (
             {
                 CONF_REMOTE_NAME: "",
-                CONF_INFRARED_ENTITY_ID: INFRARED_ENTITY_ID,
+                CONF_INFRARED_EMITTER_ID: INFRARED_EMITTER_ID,
             },
             {CONF_REMOTE_NAME: "remote_name_required"},
         ),
@@ -99,40 +116,34 @@ async def test_user_flow_success(hass: HomeAssistant, infrared_entity: str) -> N
 )
 async def test_user_flow_validation_errors(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
     user_input: dict[str, str],
     errors: dict[str, str],
 ) -> None:
     """Test setup validation errors."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": config_entries.SOURCE_USER},
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input,
-    )
+    with patch(
+        "custom_components.universal_remote.config_flow.available_infrared_emitters",
+        return_value=_emitter_options(infrared_emitter),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+        )
+
+        assert result["type"] is FlowResultType.FORM
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input,
+        )
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == errors
 
 
-async def test_user_flow_allows_multiple_config_entries(
-    hass: HomeAssistant,
-    config_entry: MockConfigEntry,
-) -> None:
-    """Test additional universal remote config entries are allowed."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": config_entries.SOURCE_USER},
-    )
-
-    assert result["type"] is FlowResultType.FORM
-
-
 async def test_user_flow_aborts_duplicate_remote_id(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test setup aborts when a remote with the same normalized name exists."""
     entry = MockConfigEntry(
@@ -141,7 +152,7 @@ async def test_user_flow_aborts_duplicate_remote_id(
         data={
             CONF_REMOTE_ID: "living_room_tv",
             CONF_REMOTE_NAME: "Living Room TV",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
         },
         options={},
@@ -149,19 +160,24 @@ async def test_user_flow_aborts_duplicate_remote_id(
     )
     entry.add_to_hass(hass)
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={"source": config_entries.SOURCE_USER},
-    )
-    assert result["type"] is FlowResultType.FORM
+    with patch(
+        "custom_components.universal_remote.config_flow.available_infrared_emitters",
+        return_value=_emitter_options(infrared_emitter),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+        )
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_REMOTE_NAME: "Living Room TV",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
-        },
-    )
+        assert result["type"] is FlowResultType.FORM
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            },
+        )
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
@@ -169,7 +185,7 @@ async def test_user_flow_aborts_duplicate_remote_id(
 
 async def test_reconfigure_success_single_entry_storage(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test reconfiguring a single-remote config entry."""
     entry = MockConfigEntry(
@@ -178,7 +194,7 @@ async def test_reconfigure_success_single_entry_storage(
         data={
             CONF_REMOTE_ID: "living_room_tv",
             CONF_REMOTE_NAME: "Living Room TV",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
         },
         options={},
@@ -186,29 +202,37 @@ async def test_reconfigure_success_single_entry_storage(
     )
     entry.add_to_hass(hass)
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": entry.entry_id,
-        },
-    )
-    assert result["type"] is FlowResultType.FORM
+    with patch(
+        "custom_components.universal_remote.config_flow.available_infrared_emitters",
+        return_value=_emitter_options(infrared_emitter),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": entry.entry_id,
+            },
+        )
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_REMOTE_NAME: "Bedroom TV",
-            CONF_INFRARED_ENTITY_ID: infrared_entity,
-        },
-    )
-    await hass.async_block_till_done()
+        assert result["type"] is FlowResultType.FORM
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_REMOTE_NAME: "Bedroom TV",
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            },
+        )
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
-    assert entry.title == "Bedroom TV"
-    assert entry.data[CONF_REMOTE_NAME] == "Bedroom TV"
-    assert entry.data[CONF_INFRARED_ENTITY_ID] == infrared_entity
+    assert entry.data == {
+        CONF_REMOTE_ID: "living_room_tv",
+        CONF_REMOTE_NAME: "Bedroom TV",
+        CONF_INFRARED_EMITTER_ID: infrared_emitter,
+        CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+    }
 
 
 async def test_reconfigure_validation_errors(
@@ -216,28 +240,36 @@ async def test_reconfigure_validation_errors(
     config_entry: MockConfigEntry,
 ) -> None:
     """Test reconfigure validation errors."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN,
-        context={
-            "source": config_entries.SOURCE_RECONFIGURE,
-            "entry_id": config_entry.entry_id,
-        },
-    )
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        {
-            CONF_REMOTE_NAME: "",
-            CONF_INFRARED_ENTITY_ID: INFRARED_ENTITY_ID,
-        },
-    )
+    with patch(
+        "custom_components.universal_remote.config_flow.available_infrared_emitters",
+        return_value=_emitter_options(INFRARED_EMITTER_ID),
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={
+                "source": config_entries.SOURCE_RECONFIGURE,
+                "entry_id": config_entry.entry_id,
+            },
+        )
+
+        assert result["type"] is FlowResultType.FORM
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_REMOTE_NAME: "",
+                CONF_INFRARED_EMITTER_ID: INFRARED_EMITTER_ID,
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            },
+        )
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {CONF_REMOTE_NAME: "remote_name_required"}
 
 
-async def test_direct_user_step_rejects_unavailable_infrared_entity(
+async def test_direct_user_step_rejects_unavailable_infrared_emitter(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test user step handles unavailable selected infrared entity."""
     flow = UniversalRemoteConfigFlow()
@@ -245,7 +277,7 @@ async def test_direct_user_step_rejects_unavailable_infrared_entity(
 
     with (
         patch(
-            "custom_components.universal_remote.config_flow.available_infrared_entities",
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
             return_value={"infrared.test_ir": "Test IR"},
         ),
         patch.object(flow, "async_set_unique_id", AsyncMock(return_value=None)),
@@ -254,20 +286,20 @@ async def test_direct_user_step_rejects_unavailable_infrared_entity(
         result = await flow.async_step_user(
             {
                 CONF_REMOTE_NAME: "Living Room TV",
-                CONF_INFRARED_ENTITY_ID: "infrared.missing",
+                CONF_INFRARED_EMITTER_ID: "infrared.missing",
             }
         )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_INFRARED_ENTITY_ID: "infrared_entity_unavailable"}
+    assert result["errors"] == {CONF_INFRARED_EMITTER_ID: "infrared_emitter_unavailable"}
 
 
-async def test_direct_reconfigure_step_rejects_unavailable_infrared_entity(
+async def test_direct_reconfigure_step_rejects_unavailable_infrared_emitter(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
-    """Test reconfigure step handles unavailable selected infrared entity."""
+    """Test reconfigure step handles unavailable selected infrared emitter."""
     config_entry.add_to_hass(hass)
 
     flow = UniversalRemoteConfigFlow()
@@ -276,19 +308,19 @@ async def test_direct_reconfigure_step_rejects_unavailable_infrared_entity(
     with (
         patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
         patch(
-            "custom_components.universal_remote.config_flow.available_infrared_entities",
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
             return_value={"infrared.test_ir": "Test IR"},
         ),
     ):
         result = await flow.async_step_reconfigure(
             {
                 CONF_REMOTE_NAME: "Bedroom TV",
-                CONF_INFRARED_ENTITY_ID: "infrared.missing",
+                CONF_INFRARED_EMITTER_ID: "infrared.missing",
             }
         )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_INFRARED_ENTITY_ID: "infrared_entity_unavailable"}
+    assert result["errors"] == {CONF_INFRARED_EMITTER_ID: "infrared_emitter_unavailable"}
 
 
 def _direct_flow(hass: HomeAssistant) -> UniversalRemoteConfigFlow:
@@ -302,7 +334,7 @@ def _prepared_flow(hass: HomeAssistant) -> UniversalRemoteConfigFlow:
     """Return a direct flow with pending base entry data."""
     flow = _direct_flow(hass)
     flow._name = "Living Room TV"
-    flow._infrared_entity_id = INFRARED_ENTITY_ID
+    flow._infrared_emitter_id = INFRARED_EMITTER_ID
     flow._device_type = DEVICE_TYPE_TV
     flow._codeset_id = "lg_tv"
     return flow
@@ -310,19 +342,19 @@ def _prepared_flow(hass: HomeAssistant) -> UniversalRemoteConfigFlow:
 
 async def test_user_flow_rejects_invalid_device_type(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test setup handles an invalid selected device type."""
     flow = _direct_flow(hass)
 
     with patch(
-        "custom_components.universal_remote.config_flow.available_infrared_entities",
-        return_value={infrared_entity: "Test IR"},
+        "custom_components.universal_remote.config_flow.available_infrared_emitters",
+        return_value={infrared_emitter: "Test IR"},
     ):
         result = await flow.async_step_user(
             {
                 CONF_REMOTE_NAME: "Living Room TV",
-                CONF_INFRARED_ENTITY_ID: infrared_entity,
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
                 CONF_REMOTE_DEVICE_TYPE: "invalid",
             }
         )
@@ -333,15 +365,15 @@ async def test_user_flow_rejects_invalid_device_type(
 
 async def test_user_flow_tv_device_type_shows_codeset_step(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test selecting a TV device type continues to codeset selection."""
     flow = _direct_flow(hass)
 
     with (
         patch(
-            "custom_components.universal_remote.config_flow.available_infrared_entities",
-            return_value={infrared_entity: "Test IR"},
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value={infrared_emitter: "Test IR"},
         ),
         patch(
             "custom_components.universal_remote.config_flow."
@@ -362,7 +394,7 @@ async def test_user_flow_tv_device_type_shows_codeset_step(
         result = await flow.async_step_user(
             {
                 CONF_REMOTE_NAME: "Living Room TV",
-                CONF_INFRARED_ENTITY_ID: infrared_entity,
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
                 CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
             }
         )
@@ -373,14 +405,14 @@ async def test_user_flow_tv_device_type_shows_codeset_step(
 
 async def test_select_codeset_without_pending_data_returns_user_step(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test codeset selection restarts when setup state is incomplete."""
     flow = _direct_flow(hass)
 
     with patch(
-        "custom_components.universal_remote.config_flow.available_infrared_entities",
-        return_value={infrared_entity: "Test IR"},
+        "custom_components.universal_remote.config_flow.available_infrared_emitters",
+        return_value={infrared_emitter: "Test IR"},
     ):
         result = await flow.async_step_select_codeset()
 
@@ -446,15 +478,15 @@ async def test_select_codeset_valid_codeset_shows_import_step(
 
 async def test_import_commands_without_pending_data_returns_user_step(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test import step restarts when setup state is incomplete."""
     flow = _direct_flow(hass)
     flow._codeset_id = "lg_tv"
 
     with patch(
-        "custom_components.universal_remote.config_flow.available_infrared_entities",
-        return_value={infrared_entity: "Test IR"},
+        "custom_components.universal_remote.config_flow.available_infrared_emitters",
+        return_value={infrared_emitter: "Test IR"},
     ):
         result = await flow.async_step_import_commands()
 
@@ -559,15 +591,15 @@ async def test_import_select_commands_shows_selection_step(
 
 async def test_select_library_commands_without_pending_data_returns_user_step(
     hass: HomeAssistant,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test command selection restarts when setup state is incomplete."""
     flow = _direct_flow(hass)
     flow._codeset_id = "lg_tv"
 
     with patch(
-        "custom_components.universal_remote.config_flow.available_infrared_entities",
-        return_value={infrared_entity: "Test IR"},
+        "custom_components.universal_remote.config_flow.available_infrared_emitters",
+        return_value={infrared_emitter: "Test IR"},
     ):
         result = await flow.async_step_select_library_commands()
 
@@ -725,20 +757,20 @@ async def test_reconfigure_without_infrared_entities_aborts(
     with (
         patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
         patch(
-            "custom_components.universal_remote.config_flow.available_infrared_entities",
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
             return_value={},
         ),
     ):
         result = await flow.async_step_reconfigure()
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_available_infrared_entities"
+    assert result["reason"] == "no_available_infrared_emitters"
 
 
 async def test_reconfigure_rejects_invalid_device_type(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test reconfigure validates the selected device type."""
     flow = _direct_flow(hass)
@@ -746,8 +778,8 @@ async def test_reconfigure_rejects_invalid_device_type(
     with (
         patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
         patch(
-            "custom_components.universal_remote.config_flow.available_infrared_entities",
-            return_value={infrared_entity: "Test IR"},
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value={infrared_emitter: "Test IR"},
         ),
         patch(
             "custom_components.universal_remote.config_flow."
@@ -758,7 +790,7 @@ async def test_reconfigure_rejects_invalid_device_type(
         result = await flow.async_step_reconfigure(
             {
                 CONF_REMOTE_NAME: "Living Room TV",
-                CONF_INFRARED_ENTITY_ID: infrared_entity,
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
                 CONF_REMOTE_DEVICE_TYPE: "invalid",
             }
         )
@@ -770,7 +802,7 @@ async def test_reconfigure_rejects_invalid_device_type(
 async def test_reconfigure_tv_device_type_shows_codeset_step(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
-    infrared_entity: str,
+    infrared_emitter: str,
 ) -> None:
     """Test reconfigure continues to codeset selection for TV remotes."""
     flow = _direct_flow(hass)
@@ -778,8 +810,8 @@ async def test_reconfigure_tv_device_type_shows_codeset_step(
     with (
         patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
         patch(
-            "custom_components.universal_remote.config_flow.available_infrared_entities",
-            return_value={infrared_entity: "Test IR"},
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value={infrared_emitter: "Test IR"},
         ),
         patch(
             "custom_components.universal_remote.config_flow."
@@ -798,7 +830,7 @@ async def test_reconfigure_tv_device_type_shows_codeset_step(
         result = await flow.async_step_reconfigure(
             {
                 CONF_REMOTE_NAME: "Living Room TV",
-                CONF_INFRARED_ENTITY_ID: infrared_entity,
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
                 CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
             }
         )

@@ -175,9 +175,18 @@ def test_infrared_library_codeset_options_and_device_types() -> None:
     assert {option["value"] for option in codeset_options[1:]} == {
         "lg_tv",
         "lg_tv_jp",
+        "samsung_tv",
+        "sharp_aquos_tv",
+        "vizio_tv",
     }
     assert device_type_options == [{"value": DEVICE_TYPE_TV, "label": "TV"}]
-
+    assert {option["label"] for option in codeset_options[1:]} == {
+        "LG TV",
+        "LG TV Japan",
+        "Samsung TV",
+        "Sharp AQUOS TV",
+        "Vizio TV",
+    }
 
 def test_infrared_library_labels_and_selection_helpers() -> None:
     """Test labels, selected-codeset checks, and device type lookups."""
