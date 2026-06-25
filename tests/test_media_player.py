@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -24,6 +24,7 @@ from custom_components.universal_remote.const import (
 )
 from custom_components.universal_remote.media_player import (
     UniversalRemoteTvMediaPlayer,
+    async_setup_entry,
     cleanup_stale_media_player_entities,
     media_player_unique_id,
 )
@@ -411,3 +412,58 @@ def test_media_player_available_before_added_to_hass(infrared_emitter: str) -> N
     entity = _media_player_entity_without_hass(infrared_emitter)
 
     assert entity.available
+
+async def test_async_setup_entry_skips_tv_remote_without_emitter(
+    hass: HomeAssistant,
+) -> None:
+    """Test media player platform skips TV remotes without an emitter."""
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.add_to_hass(hass)
+    async_add_entities = Mock()
+
+    with patch(
+        "custom_components.universal_remote.media_player."
+        "universal_remotes_from_config_entry",
+        return_value=[
+            {
+                CONF_REMOTE_ID: REMOTE_ID,
+                CONF_REMOTE_NAME: REMOTE_NAME,
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+                CONF_REMOTE_COMMANDS: {
+                    "POWER_ON": _command_object(RAW_COMMAND),
+                },
+            }
+        ],
+    ):
+        await async_setup_entry(hass, entry, async_add_entities)
+
+    async_add_entities.assert_called_once_with([])
+
+
+async def test_async_setup_entry_directly_skips_generic_remote(
+    hass: HomeAssistant,
+) -> None:
+    """Test media player platform defensively skips generic remotes."""
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.add_to_hass(hass)
+    async_add_entities = Mock()
+
+    with patch(
+        "custom_components.universal_remote.media_player."
+        "universal_remotes_from_config_entry",
+        return_value=[
+            {
+                CONF_REMOTE_ID: REMOTE_ID,
+                CONF_REMOTE_NAME: REMOTE_NAME,
+                CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+                CONF_REMOTE_COMMANDS: {
+                    "POWER_ON": _command_object(RAW_COMMAND),
+                },
+            }
+        ],
+    ):
+        await async_setup_entry(hass, entry, async_add_entities)
+
+    async_add_entities.assert_called_once_with([])
+

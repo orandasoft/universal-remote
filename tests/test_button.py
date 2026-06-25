@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from custom_components.universal_remote.button import (
     UniversalRemoteButton,
     UniversalRemoteButtonEntityDescription,
+    async_setup_entry,
     button_unique_id,
     cleanup_stale_button_entities,
 )
@@ -238,3 +239,65 @@ def test_button_available_without_hass_returns_true(infrared_emitter: str) -> No
     )
 
     assert entity.available
+
+async def test_async_setup_entry_ignores_receiver_only_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test button platform ignores receiver-only universal remote entries."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_REMOTE_ID: REMOTE_ID,
+            CONF_REMOTE_NAME: REMOTE_NAME,
+            "infrared_receiver_id": "infrared.test_receiver",
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "POWER_ON": _command_object(
+                    RAW_COMMAND,
+                    create_button=True,
+                ),
+            },
+        },
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    entity_registry = er.async_get(hass)
+    assert (
+        entity_registry.async_get_entity_id(
+            "button",
+            DOMAIN,
+            button_unique_id(entry.entry_id, REMOTE_ID, "POWER_ON"),
+        )
+        is None
+    )
+    
+async def test_async_setup_entry_directly_skips_receiver_only_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test button platform defensively skips receiver-only entries."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_REMOTE_ID: REMOTE_ID,
+            CONF_REMOTE_NAME: REMOTE_NAME,
+            "infrared_receiver_id": "infrared.test_receiver",
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "POWER_ON": _command_object(
+                    RAW_COMMAND,
+                    create_button=True,
+                ),
+            },
+        },
+    )
+    entry.add_to_hass(hass)
+    async_add_entities = Mock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    async_add_entities.assert_called_once_with([])

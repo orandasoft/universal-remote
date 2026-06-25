@@ -15,6 +15,7 @@ from .const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
     CONF_INFRARED_EMITTER_ID,
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -65,6 +66,35 @@ def available_infrared_emitters(
     return dict(sorted(options.items()))
 
 
+def available_infrared_receivers(
+    hass: HomeAssistant,
+) -> dict[str, selector.SelectOptionDict]:
+    """Return available infrared receivers."""
+    registry = er.async_get(hass)
+    options: dict[str, selector.SelectOptionDict] = {}
+
+    for entity_id in infrared.async_get_receivers(hass):
+        registry_entry = registry.async_get(entity_id)
+
+        if registry_entry is not None and registry_entry.disabled_by is not None:
+            continue
+
+        label = entity_id
+        if registry_entry is not None:
+            label = (
+                registry_entry.name
+                or registry_entry.original_name
+                or registry_entry.entity_id
+            )
+
+        options[entity_id] = selector.SelectOptionDict(
+            value=entity_id,
+            label=label,
+        )
+
+    return dict(sorted(options.items()))
+
+
 def infrared_emitter_selector(
     available_emitters: dict[str, selector.SelectOptionDict],
     *,
@@ -87,26 +117,70 @@ def infrared_emitter_selector(
     )
 
 
+def infrared_receiver_selector(
+    available_receivers: dict[str, selector.SelectOptionDict],
+    *,
+    current_receiver_id: str | None = None,
+) -> selector.SelectSelector:
+    """Return an infrared receiver selector."""
+    options = dict(available_receivers)
+
+    if current_receiver_id and current_receiver_id not in options:
+        options[current_receiver_id] = selector.SelectOptionDict(
+            value=current_receiver_id,
+            label=f"{current_receiver_id} (unavailable)",
+        )
+
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=list(options.values()),
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
 def infrared_emitter_field(
     default_emitter_id: str,
     available_emitters: dict[str, selector.SelectOptionDict],
-) -> vol.Required:
-    """Return a required infrared emitter field with a valid default if possible."""
+) -> vol.Optional:
+    """Return an optional infrared emitter field with a valid default if possible."""
     if default_emitter_id and default_emitter_id in available_emitters:
-        return vol.Required(CONF_INFRARED_EMITTER_ID, default=default_emitter_id)
+        return vol.Optional(CONF_INFRARED_EMITTER_ID, default=default_emitter_id)
 
-    return vol.Required(CONF_INFRARED_EMITTER_ID)
+    return vol.Optional(CONF_INFRARED_EMITTER_ID)
 
 
 def infrared_emitter_field_with_current(
     default_emitter_id: str,
     _available_emitters: dict[str, selector.SelectOptionDict],
-) -> vol.Required:
+) -> vol.Optional:
     """Return an infrared emitter field allowing a stale current emitter default."""
     if default_emitter_id:
-        return vol.Required(CONF_INFRARED_EMITTER_ID, default=default_emitter_id)
+        return vol.Optional(CONF_INFRARED_EMITTER_ID, default=default_emitter_id)
 
-    return vol.Required(CONF_INFRARED_EMITTER_ID)
+    return vol.Optional(CONF_INFRARED_EMITTER_ID)
+
+
+def infrared_receiver_field(
+    default_receiver_id: str,
+    available_receivers: dict[str, selector.SelectOptionDict],
+) -> vol.Optional:
+    """Return an optional infrared receiver field with a valid default if possible."""
+    if default_receiver_id and default_receiver_id in available_receivers:
+        return vol.Optional(CONF_INFRARED_RECEIVER_ID, default=default_receiver_id)
+
+    return vol.Optional(CONF_INFRARED_RECEIVER_ID)
+
+
+def infrared_receiver_field_with_current(
+    default_receiver_id: str,
+    _available_receivers: dict[str, selector.SelectOptionDict],
+) -> vol.Optional:
+    """Return an infrared receiver field allowing a stale current receiver default."""
+    if default_receiver_id:
+        return vol.Optional(CONF_INFRARED_RECEIVER_ID, default=default_receiver_id)
+
+    return vol.Optional(CONF_INFRARED_RECEIVER_ID)
 
 
 def normalize_remote_id(name: str) -> str:
@@ -197,22 +271,32 @@ def universal_remote_from_config_entry_data(
     remote_id = value.get(CONF_REMOTE_ID)
     name = value.get(CONF_REMOTE_NAME)
     infrared_emitter_id = value.get(CONF_INFRARED_EMITTER_ID)
+    infrared_receiver_id = value.get(CONF_INFRARED_RECEIVER_ID)
 
     if (
         not isinstance(remote_id, str)
         or not remote_id
         or not isinstance(name, str)
         or not name
-        or not isinstance(infrared_emitter_id, str)
-        or not infrared_emitter_id
     ):
+        return None
+
+    has_emitter = isinstance(infrared_emitter_id, str) and bool(infrared_emitter_id)
+    has_receiver = isinstance(infrared_receiver_id, str) and bool(infrared_receiver_id)
+
+    if not has_emitter and not has_receiver:
         return None
 
     remote: dict[str, Any] = {
         CONF_REMOTE_ID: remote_id,
         CONF_REMOTE_NAME: name,
-        CONF_INFRARED_EMITTER_ID: infrared_emitter_id,
     }
+
+    if has_emitter:
+        remote[CONF_INFRARED_EMITTER_ID] = infrared_emitter_id
+
+    if has_receiver:
+        remote[CONF_INFRARED_RECEIVER_ID] = infrared_receiver_id
 
     _copy_optional_codeset(value, remote)
     _copy_optional_device_type(value, remote)

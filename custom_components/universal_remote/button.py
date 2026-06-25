@@ -83,9 +83,18 @@ async def async_setup_entry(
     expected_unique_ids: set[str] = set()
 
     for remote in universal_remotes_from_config_entry(entry):
-        remote_id = str(remote[CONF_REMOTE_ID])
-        remote_name = str(remote[CONF_REMOTE_NAME])
-        infrared_emitter_id = str(remote[CONF_INFRARED_EMITTER_ID])
+        remote_id = remote.get(CONF_REMOTE_ID)
+        remote_name = remote.get(CONF_REMOTE_NAME)
+        infrared_emitter_id = remote.get(CONF_INFRARED_EMITTER_ID)
+        if (
+            not isinstance(remote_id, str)
+            or not remote_id
+            or not isinstance(remote_name, str)
+            or not remote_name
+            or not isinstance(infrared_emitter_id, str)
+            or not infrared_emitter_id
+        ):
+            continue
         commands = normalize_command_objects(remote.get(CONF_REMOTE_COMMANDS, {}))
 
         for command_name, command in commands.items():

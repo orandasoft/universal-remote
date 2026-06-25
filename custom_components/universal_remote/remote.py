@@ -219,7 +219,16 @@ async def async_setup_universal_remote_entities(
 
     entities: list[InfraredRemoteEntity] = []
     configured_remote_ids: set[str] = set()
-    for remote_config in configured_remote_definitions(entry):
+    configured_device_ids: set[str] = set()
+    remote_definitions = configured_remote_definitions(entry)
+
+    for remote_config in remote_definitions:
+        remote_id = remote_config.get(CONF_REMOTE_ID)
+        name = remote_config.get(CONF_REMOTE_NAME)
+        if isinstance(remote_id, str) and remote_id and isinstance(name, str) and name:
+            configured_device_ids.add(remote_id)
+
+    for remote_config in remote_definitions:
         remote_id = remote_config.get(CONF_REMOTE_ID)
         name = remote_config.get(CONF_REMOTE_NAME)
         infrared_emitter_id = remote_config.get(CONF_INFRARED_EMITTER_ID)
@@ -269,7 +278,7 @@ async def async_setup_universal_remote_entities(
         cleanup_stale_universal_remote_devices(
             hass,
             entry,
-            configured_remote_ids,
+            configured_device_ids,
             identifier_domain=device_identifier_domain,
         )
 

@@ -12,6 +12,7 @@ from custom_components.universal_remote.const import (
 from custom_components.universal_remote.diagnostics import (
     async_get_config_entry_diagnostics,
 )
+from custom_components.universal_remote.infrared_library import NO_INFRARED_LIBRARY_CODESET
 from homeassistant.core import HomeAssistant
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -42,6 +43,7 @@ async def test_diagnostics_supports_single_entry_remote(
         "button_count": 0,
         "media_player_count": 0,
         "missing_infrared_emitter_count": 0,
+        "missing_infrared_receiver_count": 0,
     }
     assert diagnostics["universal_remote"] == {
         "id": "tv",
@@ -49,12 +51,14 @@ async def test_diagnostics_supports_single_entry_remote(
         "infrared_emitter_id": infrared_emitter,
         "infrared_emitter_exists": True,
         "infrared_emitter_available": True,
+        "infrared_receiver_id": None,
+        "infrared_receiver_exists": False,
+        "infrared_receiver_available": False,
         "device_type": DEVICE_TYPE_GENERIC,
-        "codeset": "__none__",
+        "codeset": NO_INFRARED_LIBRARY_CODESET,
         "media_player_expected": False,
         "button_count": 0,
         "source_count": 0,
         "command_count": 1,
         "commands": ["POWER_ON"],
     }
-    assert "universal_remotes" not in diagnostics

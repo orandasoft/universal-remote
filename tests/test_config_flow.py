@@ -21,6 +21,7 @@ from custom_components.universal_remote.config_flow import (
 )
 from custom_components.universal_remote.const import (
     CONF_INFRARED_EMITTER_ID,
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -51,6 +52,17 @@ def _emitter_options(entity_id: str) -> dict[str, selector.SelectOptionDict]:
         )
     }
 
+
+def _receiver_options(entity_id: str) -> dict[str, selector.SelectOptionDict]:
+    """Return infrared receiver selector options for tests."""
+    return {
+        entity_id: selector.SelectOptionDict(
+            value=entity_id,
+            label="Test IR Receiver",
+        )
+    }
+
+
 async def test_user_flow_no_infrared_entities(hass: HomeAssistant) -> None:
     """Test abort when no infrared entities exist."""
     result = await hass.config_entries.flow.async_init(
@@ -59,7 +71,7 @@ async def test_user_flow_no_infrared_entities(hass: HomeAssistant) -> None:
     )
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_available_infrared_emitters"
+    assert result["reason"] == "no_available_infrared_devices"
 
 
 async def test_user_flow_success(hass: HomeAssistant, infrared_emitter: str) -> None:
@@ -760,11 +772,15 @@ async def test_reconfigure_without_infrared_entities_aborts(
             "custom_components.universal_remote.config_flow.available_infrared_emitters",
             return_value={},
         ),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_receivers",
+            return_value={},
+        ),
     ):
         result = await flow.async_step_reconfigure()
 
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_available_infrared_emitters"
+    assert result["reason"] == "no_available_infrared_devices"
 
 
 async def test_reconfigure_rejects_invalid_device_type(
@@ -965,6 +981,384 @@ def test_create_entry_with_codeset_infers_device_type(hass: HomeAssistant) -> No
     assert result["options"][CONF_REMOTE_COMMANDS] == {"POWER": {"data": RAW_COMMAND}}
 
 
+def test_options_flow_factory(config_entry: MockConfigEntry) -> None:
+    """Test the config flow creates the options flow."""
+    options_flow = UniversalRemoteConfigFlow.async_get_options_flow(config_entry)
+
+    assert options_flow is not None
+
+
+async def test_direct_user_step_rejects_unavailable_infrared_receiver(
+    hass: HomeAssistant,
+) -> None:
+    """Test user step handles unavailable selected infrared receiver."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value={},
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_receivers",
+            return_value=_receiver_options("infrared.receiver"),
+        ),
+    ):
+        result = await flow.async_step_user(
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_INFRARED_RECEIVER_ID: "infrared.missing",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_INFRARED_RECEIVER_ID: "infrared_receiver_unavailable"
+    }
+
+
+async def test_reconfigure_requires_infrared_target(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    infrared_emitter: str,
+) -> None:
+    """Test reconfigure requires at least one infrared target."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value=_emitter_options(infrared_emitter),
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_receivers",
+            return_value={},
+        ),
+    ):
+        result = await flow.async_step_reconfigure(
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_INFRARED_EMITTER_ID: "",
+                CONF_INFRARED_RECEIVER_ID: "",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "infrared_target_required"}
+
+
+async def test_reconfigure_rejects_unavailable_infrared_receiver(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    infrared_emitter: str,
+) -> None:
+    """Test reconfigure handles unavailable selected infrared receiver."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value=_emitter_options(infrared_emitter),
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_receivers",
+            return_value=_receiver_options("infrared.receiver"),
+        ),
+    ):
+        result = await flow.async_step_reconfigure(
+            {
+                CONF_REMOTE_NAME: "Bedroom TV",
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
+                CONF_INFRARED_RECEIVER_ID: "infrared.missing",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_INFRARED_RECEIVER_ID: "infrared_receiver_unavailable"
+    }
+
+
+def test_update_reconfigure_entry_supports_receiver_only(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Test reconfigure update stores receiver-only target data."""
+    flow = _direct_flow(hass)
+    flow.context = {
+        "source": config_entries.SOURCE_RECONFIGURE,
+        "entry_id": config_entry.entry_id,
+    }
+    remote = dict(config_entry.data)
+    remote.pop(CONF_INFRARED_EMITTER_ID, None)
+    remote[CONF_INFRARED_RECEIVER_ID] = "infrared.receiver"
+
+    with patch.object(flow, "_get_reconfigure_entry", return_value=config_entry):
+        result = flow._update_reconfigure_entry(remote)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert CONF_INFRARED_EMITTER_ID not in config_entry.data
+    assert config_entry.data[CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
+
+
+async def test_reconfigure_codeset_receiver_requires_codeset(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Test receiver reconfigure requires a real codeset."""
+    flow = _direct_flow(hass)
+    flow.context = {
+        "source": config_entries.SOURCE_RECONFIGURE,
+        "entry_id": config_entry.entry_id,
+    }
+    remote = dict(config_entry.data)
+    remote[CONF_INFRARED_RECEIVER_ID] = "infrared.receiver"
+    remote[CONF_REMOTE_DEVICE_TYPE] = DEVICE_TYPE_TV
+    flow._reconfigure_remote = remote
+
+    with patch.object(flow, "_get_reconfigure_entry", return_value=config_entry):
+        result = await flow.async_step_reconfigure_codeset(
+            {CONF_REMOTE_CODESET: NO_INFRARED_LIBRARY_CODESET}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_REMOTE_CODESET: "receiver_codeset_required"}
+
+
+async def test_reconfigure_codeset_receiver_rejects_unsupported_codeset(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Test receiver reconfigure rejects codesets without receiver decoding."""
+    flow = _direct_flow(hass)
+    flow.context = {
+        "source": config_entries.SOURCE_RECONFIGURE,
+        "entry_id": config_entry.entry_id,
+    }
+    remote = dict(config_entry.data)
+    remote[CONF_INFRARED_RECEIVER_ID] = "infrared.receiver"
+    remote[CONF_REMOTE_DEVICE_TYPE] = DEVICE_TYPE_TV
+    flow._reconfigure_remote = remote
+
+    with (
+        patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "validate_infrared_library_codeset",
+            return_value=True,
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "infrared_library_codeset_supports_receiver",
+            return_value=False,
+        ),
+    ):
+        result = await flow.async_step_reconfigure_codeset(
+            {CONF_REMOTE_CODESET: "samsung_tv"}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_REMOTE_CODESET: "receiver_codeset_unsupported"}
+
+
+
+async def test_user_flow_rejects_missing_infrared_target_direct(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test user flow requires at least one infrared target."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_emitters",
+            return_value=_emitter_options(infrared_emitter),
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_receivers",
+            return_value=_receiver_options("infrared.receiver"),
+        ),
+    ):
+        result = await flow.async_step_user(
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "infrared_target_required"}
+
+
+async def test_user_flow_rejects_unavailable_receiver_direct(
+    hass: HomeAssistant,
+) -> None:
+    """Test user flow rejects an unavailable selected receiver."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_emitters",
+            return_value={},
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_receivers",
+            return_value=_receiver_options("infrared.receiver"),
+        ),
+    ):
+        result = await flow.async_step_user(
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_INFRARED_RECEIVER_ID: "infrared.missing",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_INFRARED_RECEIVER_ID: "infrared_receiver_unavailable"
+    }
+
+
+async def test_select_codeset_receiver_requires_real_codeset_direct(
+    hass: HomeAssistant,
+) -> None:
+    """Test receiver setup cannot continue without a real codeset."""
+    flow = _direct_flow(hass)
+    flow._name = "Living Room TV"
+    flow._infrared_receiver_id = "infrared.receiver"
+    flow._device_type = DEVICE_TYPE_TV
+
+    result = await flow.async_step_select_codeset(
+        {CONF_REMOTE_CODESET: NO_INFRARED_LIBRARY_CODESET}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_REMOTE_CODESET: "receiver_codeset_required"}
+
+
+async def test_select_codeset_receiver_rejects_unsupported_codeset_direct(
+    hass: HomeAssistant,
+) -> None:
+    """Test receiver setup rejects a codeset without receiver decoding."""
+    flow = _direct_flow(hass)
+    flow._name = "Living Room TV"
+    flow._infrared_receiver_id = "infrared.receiver"
+    flow._device_type = DEVICE_TYPE_TV
+
+    with patch(
+        "custom_components.universal_remote.config_flow."
+        "validate_infrared_library_codeset",
+        return_value=True,
+    ):
+        result = await flow.async_step_select_codeset(
+            {CONF_REMOTE_CODESET: "samsung_tv"}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {CONF_REMOTE_CODESET: "receiver_codeset_unsupported"}
+
+
+async def test_reconfigure_rejects_unavailable_receiver_direct(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    infrared_emitter: str,
+) -> None:
+    """Test reconfigure rejects an unavailable selected receiver."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_emitters",
+            return_value=_emitter_options(infrared_emitter),
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_receivers",
+            return_value=_receiver_options("infrared.receiver"),
+        ),
+    ):
+        result = await flow.async_step_reconfigure(
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
+                CONF_INFRARED_RECEIVER_ID: "infrared.missing",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_INFRARED_RECEIVER_ID: "infrared_receiver_unavailable"
+    }
+
+
+async def test_reconfigure_can_replace_emitter_with_receiver_direct(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    infrared_emitter: str,
+) -> None:
+    """Test reconfigure can remove an emitter and store a receiver."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_emitters",
+            return_value=_emitter_options(infrared_emitter),
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_receivers",
+            return_value=_receiver_options("infrared.receiver"),
+        ),
+    ):
+        result = await flow.async_step_reconfigure(
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_INFRARED_EMITTER_ID: "",
+                CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "reconfigure_codeset"
+    assert flow._reconfigure_remote is not None
+    assert CONF_INFRARED_EMITTER_ID not in flow._reconfigure_remote
+    assert flow._reconfigure_remote[CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
+
+
+def test_create_entry_receiver_only_stores_receiver_direct(
+    hass: HomeAssistant,
+) -> None:
+    """Test create entry stores a receiver-only setup."""
+    flow = _direct_flow(hass)
+    flow._name = "Living Room TV"
+    flow._infrared_receiver_id = "infrared.receiver"
+    flow._device_type = DEVICE_TYPE_TV
+    flow._codeset_id = "lg_tv"
+
+    result = flow._create_entry({})
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert CONF_INFRARED_EMITTER_ID not in result["data"]
+    assert result["data"][CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
+
+
 def test_validate_generated_commands_raises_for_invalid_payload() -> None:
     """Test generated command validation raises library errors."""
     with pytest.raises(InfraredLibraryCommandError):
@@ -975,4 +1369,72 @@ def test_command_objects_sets_create_button_flag() -> None:
     """Test generated command data is stored as command objects."""
     assert _command_objects({"POWER": RAW_COMMAND}, create_button=True) == {
         "POWER": {"data": RAW_COMMAND, "create_button": True}
+    }
+
+
+async def test_user_flow_rejects_receiver_with_generic_device_type_direct(
+    hass: HomeAssistant,
+) -> None:
+    """Test receiver setup requires a specific supported device type."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_emitters",
+            return_value={},
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_receivers",
+            return_value=_receiver_options("infrared.receiver"),
+        ),
+    ):
+        result = await flow.async_step_user(
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_REMOTE_DEVICE_TYPE: "receiver_device_type_required"
+    }
+
+
+async def test_reconfigure_rejects_receiver_with_generic_device_type_direct(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    infrared_emitter: str,
+) -> None:
+    """Test receiver reconfigure requires a specific supported device type."""
+    flow = _direct_flow(hass)
+
+    with (
+        patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_emitters",
+            return_value=_emitter_options(infrared_emitter),
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow."
+            "available_infrared_receivers",
+            return_value=_receiver_options("infrared.receiver"),
+        ),
+    ):
+        result = await flow.async_step_reconfigure(
+            {
+                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
+                CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            }
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_REMOTE_DEVICE_TYPE: "receiver_device_type_required"
     }
