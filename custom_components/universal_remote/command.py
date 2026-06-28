@@ -1,6 +1,5 @@
 """Command parsing helpers for remote platform Universal Remotes."""
 
-from dataclasses import dataclass
 import json
 import re
 from typing import Any
@@ -12,14 +11,6 @@ from .const import DOMAIN
 DEFAULT_CARRIER_FREQUENCY = 38_000
 # Pronto learned-code timing unit in microseconds.
 PRONTO_FREQUENCY_REFERENCE_US = 0.241246
-
-
-@dataclass(frozen=True, slots=True)
-class RawTiming:
-    """One raw IR mark/space timing pair in microseconds."""
-
-    high_us: int
-    low_us: int
 
 
 class CommandParseError(ValueError):
@@ -38,17 +29,21 @@ class RawInfraredCommand:
     def __init__(self, *, modulation: int, timings: list[int]) -> None:
         """Initialize raw command."""
         self.modulation = modulation
-        self._timings = timings
+        self._timings = list(timings)
 
-    def get_raw_timings(self) -> list[RawTiming]:
-        """Return raw timings as mark/space pairs."""
+    def get_raw_timings(self) -> list[int]:
+        """Return raw timings in microseconds.
+
+        Home Assistant infrared emitters expect command objects compatible with
+        ``infrared_protocols.commands.Command``. That API returns a flat list of
+        integer timings where marks are positive and spaces are negative.
+        Universal Remote stores learned/raw command payloads as positive
+        mark/space durations, so convert every odd timing to a negative space at
+        the infrared API boundary.
+        """
         return [
-            RawTiming(high_us=high_us, low_us=low_us)
-            for high_us, low_us in zip(
-                self._timings[::2],
-                self._timings[1::2],
-                strict=True,
-            )
+            timing if index % 2 == 0 else -timing
+            for index, timing in enumerate(self._timings)
         ]
 
 

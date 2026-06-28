@@ -33,7 +33,7 @@ Depending on the configured infrared targets, Universal Remote can create:
 
 The TV media player is assumed-state. It does not know the real power, volume, channel, source, or playback state of the physical device, although it may update assumed power and source state after commands are sent through Universal Remote.
 
-The received-command event entity emits events when the linked infrared receiver receives a supported and matched command. Unknown or unmatched signals may be reported as `unknown`.
+The received-command event entity emits events when the linked infrared receiver receives a signal. Matched codeset commands use friendly event types such as `power` or `volume_up`. Decoded NEC commands that do not match the selected codeset are reported as `nec` with decoded address and command data. Signals that cannot be decoded are reported as `unknown`.
 
 ---
 
@@ -100,11 +100,23 @@ volume_up
 hdmi_1
 ```
 
-Signals that cannot be decoded or matched may be reported as:
+Matched events also include decoded receiver data such as protocol, decoder, address, command, matched status, and command name.
+
+Decoded NEC commands that do not match the selected codeset are reported with the stable event type:
+
+```text
+nec
+```
+
+The `nec` event type includes decoded address and command data. This allows automations to react to NEC commands from a physical universal remote even when those commands are not part of the selected TV codeset.
+
+Signals that cannot be decoded are reported as:
 
 ```text
 unknown
 ```
+
+The event entity also exposes a small `recent_events` history attribute with the most recent received event summaries. This is intended for debugging receiver behavior, repeat frames, and unmatched decoded commands. Raw timings are not stored in this history.
 
 Universal Remote does not learn and save new commands from received infrared signals. Received signals are used only for event reporting.
 
@@ -158,7 +170,7 @@ If a configured infrared receiver is missing, the integration creates a repair i
 
 Diagnostics are available from the Home Assistant device/integration diagnostics UI.
 
-Diagnostics are intended to help troubleshoot configuration issues without exposing full infrared command payloads.
+Diagnostics are intended to help troubleshoot configuration issues without exposing full infrared command payloads. Receiver diagnostics include whether a receiver event entity is expected, whether the selected codeset supports receiver decoding, the receiver decoder id, and the number of exposed receiver event types.
 
 ---
 
@@ -168,6 +180,7 @@ Diagnostics are intended to help troubleshoot configuration issues without expos
 - Existing commands are not deleted automatically when changing device type or codeset.
 - Infrared transmission and receiving are handled by the linked infrared integration.
 - Universal Remote does not learn or store new infrared commands from received signals.
+- Received command history is capped and stores decoded summaries only, not raw timings.
 - Sending commands requires a linked infrared emitter.
 - Receiving command events requires a linked infrared receiver and a supported codeset.
 - Receiver decoding is currently limited to supported codesets.

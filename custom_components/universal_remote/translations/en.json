@@ -131,12 +131,62 @@
   },
   "issues": {
     "linked_infrared_emitter_missing": {
-      "description": "Universal remote {remote_name} is linked to infrared emitter {infrared_emitter_id}, but that emitter is unavailable or no longer exists. Reconfigure the Universal Remote integration and select a valid infrared emitter.",
-      "title": "Linked infrared emitter is missing"
+      "description": "Universal remote {remote_name} is linked to infrared emitter {infrared_emitter_id}, but that emitter is unavailable or no longer exists. Repair the issue by selecting a replacement infrared emitter or disabling send support for this universal remote.",
+      "title": "Linked infrared emitter is missing",
+      "fix_flow": {
+        "abort": {
+          "not_fixable": "This repair issue cannot be fixed from this flow.",
+          "remote_not_found": "The universal remote linked to this repair issue is no longer configured."
+        },
+        "error": {
+          "infrared_emitter_required": "Select a replacement infrared emitter or disable send support.",
+          "infrared_emitter_unavailable": "Selected infrared emitter is unavailable.",
+          "infrared_target_required": "This universal remote must keep at least one infrared emitter or receiver configured."
+        },
+        "step": {
+          "init": {
+            "data": {
+              "infrared_emitter_id": "Replacement infrared emitter",
+              "disable_emitter": "Disable send support"
+            },
+            "data_description": {
+              "infrared_emitter_id": "Infrared emitter to use for sending commands.",
+              "disable_emitter": "Remove the linked infrared emitter from this universal remote."
+            },
+            "description": "Universal remote {remote_name} is linked to infrared emitter {infrared_emitter_id}, but that emitter is unavailable or no longer exists. Select a replacement infrared emitter, or disable send support for this universal remote.",
+            "title": "Repair missing infrared emitter"
+          }
+        }
+      }
     },
     "linked_infrared_receiver_missing": {
-      "description": "Universal remote {remote_name} is linked to infrared receiver {infrared_receiver_id}, but that receiver is unavailable or no longer exists. Reconfigure the Universal Remote integration and select a valid infrared receiver.",
-      "title": "Linked infrared receiver is missing"
+      "description": "Universal remote {remote_name} is linked to infrared receiver {infrared_receiver_id}, but that receiver is unavailable or no longer exists. Repair the issue by selecting a replacement infrared receiver or disabling receive support for this universal remote.",
+      "title": "Linked infrared receiver is missing",
+      "fix_flow": {
+        "abort": {
+          "not_fixable": "This repair issue cannot be fixed from this flow.",
+          "remote_not_found": "The universal remote linked to this repair issue is no longer configured."
+        },
+        "error": {
+          "infrared_receiver_required": "Select a replacement infrared receiver or disable receive support.",
+          "infrared_receiver_unavailable": "Selected infrared receiver is unavailable.",
+          "infrared_target_required": "This universal remote must keep at least one infrared emitter or receiver configured."
+        },
+        "step": {
+          "init": {
+            "data": {
+              "infrared_receiver_id": "Replacement infrared receiver",
+              "disable_receiver": "Disable receive support"
+            },
+            "data_description": {
+              "infrared_receiver_id": "Infrared receiver to use for received-command events.",
+              "disable_receiver": "Remove the linked infrared receiver from this universal remote."
+            },
+            "description": "Universal remote {remote_name} is linked to infrared receiver {infrared_receiver_id}, but that receiver is unavailable or no longer exists. Select a replacement infrared receiver, or disable receive support for this universal remote.",
+            "title": "Repair missing infrared receiver"
+          }
+        }
+      }
     }
   },
   "options": {

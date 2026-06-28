@@ -43,7 +43,7 @@ INFRARED_LIBRARY_CODESETS: Final[dict[str, InfraredLibraryCodeset]] = {
     ),
     "lg_tv_jp": InfraredLibraryCodeset(
         label="LG TV Japan",
-        module="infrared_protocols.codes.lg.tv",
+        module="custom_components.universal_remote.lg_tv_jp",
         enum_class="LGTVCodeJP",
         device_type=DEVICE_TYPE_TV,
         receiver_decoder_id="nec",

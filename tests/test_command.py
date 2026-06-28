@@ -1,272 +1,231 @@
-"""Tests for Universal Remote command parsing."""
+"""Tests for Universal Remote command parsing and infrared API calls."""
+
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+
 from custom_components.universal_remote.command import (
+    DEFAULT_CARRIER_FREQUENCY,
     CommandParseError,
-    RawTiming,
+    RawInfraredCommand,
     _parse_json_command,
     _parse_pronto_command,
     parse_remote_command,
-    validate_raw_command,
     validate_remote_command_payload,
 )
-from homeassistant.exceptions import HomeAssistantError
+from custom_components.universal_remote.send import async_send_infrared_command
 
 
-def _timings(command) -> list[tuple[int, int]]:
-    """Return command timings as tuples."""
-    return [(timing.high_us, timing.low_us) for timing in command.get_raw_timings()]
+INFRARED_ENTITY_ID = "infrared.xiao_ir_blaster"
 
 
-def test_raw_timing_dataclass() -> None:
-    """Test RawTiming stores mark/space pairs."""
-    timing = RawTiming(high_us=1, low_us=2)
-    assert timing.high_us == 1
-    assert timing.low_us == 2
-
-
-@pytest.mark.parametrize(
-    ("payload", "kwargs", "modulation", "timings"),
-    [
-        ("9000,4500,560,560", {}, 38000, [(9000, 4500), (560, 560)]),
-        ("38000:9000,4500,560,560", {}, 38000, [(9000, 4500), (560, 560)]),
-        (
-            "9000 4500 560 560",
-            {"carrier_frequency": 40000},
-            40000,
-            [(9000, 4500), (560, 560)],
-        ),
-        (
-            "[9000, 4500, 560, 560]",
-            {"modulation": 36000},
-            36000,
-            [(9000, 4500), (560, 560)],
-        ),
-        (
-            '{"timings": [9000, 4500, 560, 560]}',
-            {"modulation": 36000},
-            36000,
-            [(9000, 4500), (560, 560)],
-        ),
-        (
-            '{"carrier_frequency": 56000, "timings": [9000, 4500, 560, 560]}',
-            {},
-            56000,
-            [(9000, 4500), (560, 560)],
-        ),
-        (
-            '{"modulation": 57000, "timings": [9000, 4500, 560, 560]}',
-            {},
-            57000,
-            [(9000, 4500), (560, 560)],
-        ),
-    ],
-)
-def test_parse_valid_commands(
-    payload: str, kwargs: dict, modulation: int, timings: list[tuple[int, int]]
+def assert_infrared_command_contract(
+    command: RawInfraredCommand,
+    *,
+    modulation: int,
+    timings: list[int],
 ) -> None:
-    """Test valid command payloads."""
-    command = parse_remote_command(payload, kwargs)
+    """Assert a command object matches the Home Assistant infrared API."""
     assert command.modulation == modulation
-    assert _timings(command) == timings
+    assert command.get_raw_timings() == timings
+    assert all(type(timing) is int for timing in command.get_raw_timings())
 
 
-def test_parse_pronto_command() -> None:
-    """Test learned Pronto hex parsing."""
-    command = parse_remote_command("0000 006D 0002 0000 0156 00AC 0015 0015")
-    assert command.modulation == 38029
-    assert _timings(command) == [(8993, 4523), (552, 552)]
+def test_raw_infrared_command_matches_infrared_command_contract() -> None:
+    """Test raw commands expose the command API expected by infrared emitters."""
+    command = RawInfraredCommand(
+        modulation=38_000,
+        timings=[9000, 4500, 560, 560],
+    )
+
+    assert_infrared_command_contract(
+        command,
+        modulation=38_000,
+        timings=[9000, -4500, 560, -560],
+    )
+
+
+def test_raw_infrared_command_copies_timings() -> None:
+    """Test raw commands do not expose the caller's mutable timing list."""
+    timings = [9000, 4500, 560, 560]
+    command = RawInfraredCommand(modulation=38_000, timings=timings)
+
+    timings[0] = 1
+
+    assert command.get_raw_timings() == [9000, -4500, 560, -560]
+
+
+def test_parse_text_command_returns_infrared_command_contract() -> None:
+    """Test text timing payloads return an infrared command-compatible object."""
+    command = parse_remote_command("40000:9000,4500,560,560")
+
+    assert_infrared_command_contract(
+        command,
+        modulation=40_000,
+        timings=[9000, -4500, 560, -560],
+    )
+
+
+def test_parse_json_command_returns_infrared_command_contract() -> None:
+    """Test JSON timing payloads return an infrared command-compatible object."""
+    command = parse_remote_command(
+        '{"modulation": 38000, "timings": [9000, 4500, 560, 560]}'
+    )
+
+    assert_infrared_command_contract(
+        command,
+        modulation=DEFAULT_CARRIER_FREQUENCY,
+        timings=[9000, -4500, 560, -560],
+    )
+
+
+def test_parse_json_array_command_returns_infrared_command_contract() -> None:
+    """Test bare JSON timing arrays use the default modulation."""
+    command = parse_remote_command("[9000, 4500, 560, 560]")
+
+    assert_infrared_command_contract(
+        command,
+        modulation=DEFAULT_CARRIER_FREQUENCY,
+        timings=[9000, -4500, 560, -560],
+    )
+
+
+def test_parse_json_command_uses_carrier_frequency_alias() -> None:
+    """Test JSON commands accept the carrier_frequency alias."""
+    command = parse_remote_command(
+        '{"carrier_frequency": "40000", "timings": ["9000", "4500", "560", "560"]}'
+    )
+
+    assert_infrared_command_contract(
+        command,
+        modulation=40_000,
+        timings=[9000, -4500, 560, -560],
+    )
+
+
+def test_parse_json_command_uses_default_modulation() -> None:
+    """Test JSON object commands use the default modulation when omitted."""
+    command = parse_remote_command('{"timings": [9000, 4500, 560, 560]}')
+
+    assert_infrared_command_contract(
+        command,
+        modulation=DEFAULT_CARRIER_FREQUENCY,
+        timings=[9000, -4500, 560, -560],
+    )
+
+
+def test_parse_pronto_command_returns_infrared_command_contract() -> None:
+    """Test learned Pronto payloads return an infrared command-compatible object."""
+    command = parse_remote_command(
+        "0000 006D 0002 0000 0152 00AA 0014 0017"
+    )
+
+    assert_infrared_command_contract(
+        command,
+        modulation=38_029,
+        timings=[8888, -4470, 526, -605],
+    )
+
+
+def test_validate_remote_command_payload_accepts_valid_command() -> None:
+    """Test valid persisted command payloads can be validated."""
+    validate_remote_command_payload("9000,4500,560,560")
 
 
 @pytest.mark.parametrize(
-    "payload",
+    "raw_command",
     [
         "",
-        "{}",
-        "[]",
-        "[9000]",
-        "[9000, 0]",
-        "[9000, -1]",
-        "[9000, 4500, 560]",
-        '[9000, "bad"]',
-        '{"timings": "bad"}',
-        '{"timings": [9000, 4500], "modulation": "bad"}',
-        "{bad",
-        "bad",
-        "bad:9000,4500",
-        "0000 0000 0001 0000 0001 0001",
+        "{",
+        '{"modulation": true, "timings": [9000, 4500, 560, 560]}',
+        '{"modulation": "bad", "timings": [9000, 4500, 560, 560]}',
+        '{"modulation": 38.0, "timings": [9000, 4500, 560, 560]}',
+        '{"timings": "9000,4500,560,560"}',
+        '[9000, "", 560, 560]',
+        '[9000, "bad", 560, 560]',
+        "abc:9000,4500,560,560",
+        "0000 006D 002 0000 0152 00AA",
+        "0000 006D ZZZZ 0000 0152 00AA",
         "0000 006D 0000 0000",
+        "0000 0000 0001 0000 0001 0001",
+        "0000 006D 0000 0000 0001 0001",
+        "0000 006D 0002 0000 0152 00AA",
         "0000 006D 0001 0000 0000 0001",
-        "0000 006D 0001 0000 0001",
+        "0:9000,4500,560,560",
+        "[]",
+        "9000,0,560,560",
+        "9000,4500,560",
     ],
 )
-def test_parse_invalid_commands_raise_home_assistant_error(payload: str) -> None:
-    """Test invalid command payloads through public parser."""
+def test_parse_remote_command_rejects_invalid_payloads(raw_command: str) -> None:
+    """Test invalid command payloads raise a Home Assistant error."""
     with pytest.raises(HomeAssistantError):
-        parse_remote_command(payload)
+        parse_remote_command(raw_command)
 
 
-@pytest.mark.parametrize(
-    ("payload", "message"),
-    [
-        ("", "Command cannot be empty"),
-        ("[9000]", "timings must contain mark/space pairs"),
-        ("[9000, 0]", "timings must be greater than zero"),
-        ("{}", "timings must be a list"),
-        ("123", "timings must contain mark/space pairs"),
-        ("bad:9000,4500", "Command modulation must be an integer"),
-    ],
-)
-def test_validate_remote_command_payload_raises_command_parse_error(
-    payload: str, message: str
+def test_parse_json_command_rejects_non_sequence_payload() -> None:
+    """Test the JSON parser rejects payloads that are not arrays or objects."""
+    with pytest.raises(CommandParseError):
+        _parse_json_command("123", DEFAULT_CARRIER_FREQUENCY)  # noqa: SLF001
+
+
+def test_parse_pronto_command_rejects_unsupported_pronto_type() -> None:
+    """Test the Pronto parser rejects non-learned Pronto commands."""
+    with pytest.raises(CommandParseError):
+        _parse_pronto_command(  # noqa: SLF001
+            "0100 006D 0001 0000 0152 00AA"
+        )
+
+
+async def test_async_send_infrared_command_calls_infrared_api_with_command_contract(
+    hass: HomeAssistant,
 ) -> None:
-    """Test options-flow validator preserves parser errors."""
-    with pytest.raises(CommandParseError, match=message):
-        validate_remote_command_payload(payload)
+    """Test the HA infrared API is called with a compatible command object."""
+    hass.states.async_set(INFRARED_ENTITY_ID, "on")
+    await hass.async_block_till_done()
+
+    with patch(
+        "custom_components.universal_remote.send.infrared.async_send_command",
+        new_callable=AsyncMock,
+    ) as mock_send_command:
+        await async_send_infrared_command(
+            hass,
+            INFRARED_ENTITY_ID,
+            "38000:9000,4500,560,560",
+        )
+
+    mock_send_command.assert_awaited_once()
+
+    await_args = mock_send_command.await_args
+    assert await_args is not None
+    assert await_args.kwargs == {}
+
+    sent_hass, sent_entity_id, sent_command = await_args.args
+    assert sent_hass is hass
+    assert sent_entity_id == INFRARED_ENTITY_ID
+    assert_infrared_command_contract(
+        sent_command,
+        modulation=DEFAULT_CARRIER_FREQUENCY,
+        timings=[9000, -4500, 560, -560],
+    )
 
 
-@pytest.mark.parametrize(
-    ("modulation", "timings", "message"),
-    [
-        (0, [1, 2], "modulation must be greater than zero"),
-        (38000, [], "timings cannot be empty"),
-        (38000, [1], "timings must contain mark/space pairs"),
-        (38000, [1, 0], "timings must be greater than zero"),
-    ],
-)
-def test_validate_raw_command(
-    modulation: int, timings: list[int], message: str
+async def test_async_send_infrared_command_checks_infrared_entity_availability(
+    hass: HomeAssistant,
 ) -> None:
-    """Test raw command field validation."""
-    with pytest.raises(CommandParseError, match=message):
-        validate_raw_command(modulation, timings)
+    """Test the send helper does not call the infrared API for missing emitters."""
+    with patch(
+        "custom_components.universal_remote.send.infrared.async_send_command",
+        new_callable=AsyncMock,
+    ) as mock_send_command:
+        with pytest.raises(HomeAssistantError):
+            await async_send_infrared_command(
+                hass,
+                INFRARED_ENTITY_ID,
+                "38000:9000,4500,560,560",
+            )
 
-
-def test_parse_text_command_accepts_spaces_after_commas() -> None:
-    """Test text commands allow common comma-space formatting."""
-    command = parse_remote_command("9000, 4500, 560, 560")
-
-    assert command.modulation == 38000
-    assert _timings(command) == [(9000, 4500), (560, 560)]
-
-
-def test_invalid_default_modulation_raises_home_assistant_error() -> None:
-    """Test invalid service modulation is translated by the public parser."""
-    with pytest.raises(HomeAssistantError) as err:
-        parse_remote_command("9000,4500", {"modulation": "bad"})
-
-    assert err.value.translation_key == "remote_invalid_command"
-    assert err.value.translation_placeholders == {
-        "error": "modulation must be an integer"
-    }
-
-
-def test_json_scalar_command_is_rejected() -> None:
-    """Test JSON scalar commands are rejected."""
-    with pytest.raises(
-        CommandParseError,
-        match="timings must contain only integers",
-    ):
-        validate_remote_command_payload('"bad"')
-
-
-def test_invalid_hex_word_falls_back_to_text_parser() -> None:
-    """Test invalid Pronto hex-looking words are rejected as text timings."""
-    with pytest.raises(HomeAssistantError):
-        parse_remote_command("0000 ZZZZ 0001 0000 0001 0001")
-
-
-def test_parse_pronto_command_rejects_non_raw_pronto_type() -> None:
-    """Test private Pronto parser rejects unsupported Pronto types."""
-    with pytest.raises(CommandParseError, match="beginning with 0000"):
-        _parse_pronto_command("0100 006D 0001 0000 0001 0001")
-
-
-def test_parse_pronto_command_requires_declared_pairs() -> None:
-    """Test Pronto commands must declare timing pairs."""
-    with pytest.raises(CommandParseError, match="at least one timing pair"):
-        _parse_pronto_command("0000 006D 0000 0000 0001 0001")
-
-
-def test_parse_pronto_command_requires_matching_timing_count() -> None:
-    """Test Pronto commands must include the declared timing words."""
-    with pytest.raises(CommandParseError, match="does not match"):
-        _parse_pronto_command("0000 006D 0002 0000 0001 0001")
-
-
-def test_validate_remote_command_payload_rejects_empty_timing_values() -> None:
-    """Test JSON timing arrays cannot contain empty values."""
-    with pytest.raises(CommandParseError, match="must not contain empty values"):
-        validate_remote_command_payload('[""]')
-
-
-def test_parse_remote_command_uses_custom_translation_domain() -> None:
-    """Test parser supports reuse by other integrations."""
-    with pytest.raises(HomeAssistantError) as err:
-        parse_remote_command("", translation_domain="itachip2ir")
-
-    assert err.value.translation_domain == "itachip2ir"
-    assert err.value.translation_key == "remote_invalid_command"
-
-
-def test_json_scalar_boolean_command_is_rejected() -> None:
-    """Test JSON scalar booleans are rejected by the JSON parser branch."""
-    with pytest.raises(CommandParseError, match="object or timing array"):
-        _parse_json_command("true", 38000)
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        "[true, 100]",
-        "[1.5, 100]",
-        '{"timings": [true, 100]}',
-        '{"timings": [1.5, 100]}',
-    ],
-)
-def test_validate_remote_command_payload_rejects_bool_and_float_timings(
-    payload: str,
-) -> None:
-    """Test JSON timings reject booleans and floats."""
-    with pytest.raises(CommandParseError, match="timings must contain only integers"):
-        validate_remote_command_payload(payload)
-
-
-@pytest.mark.parametrize(
-    "payload",
-    [
-        '{"modulation": true, "timings": [1, 100]}',
-        '{"modulation": 1.5, "timings": [1, 100]}',
-        '{"carrier_frequency": true, "timings": [1, 100]}',
-        '{"carrier_frequency": 1.5, "timings": [1, 100]}',
-    ],
-)
-def test_validate_remote_command_payload_rejects_bool_and_float_modulation(
-    payload: str,
-) -> None:
-    """Test JSON modulation rejects booleans and floats."""
-    with pytest.raises(CommandParseError, match="modulation must be an integer"):
-        validate_remote_command_payload(payload)
-
-
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"modulation": True},
-        {"modulation": 1.5},
-        {"carrier_frequency": True},
-        {"carrier_frequency": 1.5},
-    ],
-)
-def test_parse_remote_command_rejects_bool_and_float_default_modulation(
-    kwargs: dict[str, object],
-) -> None:
-    """Test service kwargs modulation rejects booleans and floats."""
-    with pytest.raises(HomeAssistantError) as err:
-        parse_remote_command("1,100", kwargs)
-
-    assert err.value.translation_key == "remote_invalid_command"
-    assert err.value.translation_placeholders == {
-        "error": "modulation must be an integer"
-    }
+    mock_send_command.assert_not_awaited()

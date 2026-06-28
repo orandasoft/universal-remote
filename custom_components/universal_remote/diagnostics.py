@@ -20,8 +20,13 @@ from .const import (
     DEVICE_TYPE_GENERIC,
     DEVICE_TYPE_TV,
 )
+from .event import receiver_event_types_for_codeset
 from .helpers import command_create_button, universal_remotes_from_config_entry
-from .infrared_library import NO_INFRARED_LIBRARY_CODESET
+from .infrared_library import (
+    NO_INFRARED_LIBRARY_CODESET,
+    infrared_library_codeset_receiver_decoder_id,
+    infrared_library_codeset_supports_receiver,
+)
 
 TO_REDACT = {"device_id", "unique_id", "uuid"}
 
@@ -110,6 +115,12 @@ def _diagnostic_remotes(
             if command_is_media_player_source(command_name)
         )
         device_type = str(item.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
+        codeset_id = str(item.get(CONF_REMOTE_CODESET, NO_INFRARED_LIBRARY_CODESET))
+        receiver_event_expected = isinstance(infrared_receiver_id, str)
+        receiver_decoder = infrared_library_codeset_receiver_decoder_id(codeset_id)
+        receiver_codeset_supported = infrared_library_codeset_supports_receiver(
+            codeset_id,
+        )
         infrared_emitter_state = (
             hass.states.get(infrared_emitter_id)
             if isinstance(infrared_emitter_id, str)
@@ -136,8 +147,16 @@ def _diagnostic_remotes(
                     infrared_receiver_state is not None
                     and infrared_receiver_state.state != STATE_UNAVAILABLE
                 ),
+                "receiver_event_expected": receiver_event_expected,
+                "receiver_decoder": receiver_decoder,
+                "receiver_codeset_supported": receiver_codeset_supported,
+                "receiver_event_type_count": (
+                    len(receiver_event_types_for_codeset(codeset_id))
+                    if receiver_event_expected
+                    else 0
+                ),
                 "device_type": device_type,
-                "codeset": item.get(CONF_REMOTE_CODESET, NO_INFRARED_LIBRARY_CODESET),
+                "codeset": codeset_id,
                 "media_player_expected": (
                     device_type == DEVICE_TYPE_TV
                     and isinstance(infrared_emitter_id, str)

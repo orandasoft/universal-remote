@@ -1,312 +1,480 @@
-"""Tests for Universal Remote event entities."""
+"""Tests for Universal Remote received-command event helpers."""
 
-from collections.abc import Iterable
+from __future__ import annotations
+
+from collections.abc import Generator
+from contextlib import contextmanager
 from enum import Enum
 from types import SimpleNamespace
-from typing import cast
-from unittest.mock import patch
+from typing import Any, cast
+from unittest.mock import Mock, patch
+
+import pytest
+from homeassistant.helpers.device_registry import DeviceInfo
+from infrared_protocols.commands import Command
 
 from custom_components.universal_remote import event as event_platform
 from custom_components.universal_remote.const import (
-    CONF_INFRARED_EMITTER_ID,
     CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
-    CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
-    DEVICE_TYPE_TV,
-    DOMAIN,
-    ISSUE_LINKED_INFRARED_RECEIVER_MISSING,
 )
-from homeassistant.components.infrared import InfraredReceivedSignal
-from infrared_protocols.commands.nec import NECCommand
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers import issue_registry as ir
-from homeassistant.helpers.entity import Entity
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-INFRARED_RECEIVER_ID = "infrared.test_receiver"
-REMOTE_ID = "living_room_receiver"
-REMOTE_NAME = "Living Room Receiver"
+from custom_components.universal_remote.infrared_library import (
+    NO_INFRARED_LIBRARY_CODESET,
+)
+from custom_components.universal_remote.nec1_f16 import NEC1F16Command
 
 
 class FakeCommand:
-    """Fake infrared protocol command."""
+    """Fake NEC command object."""
 
     def __init__(self, address: int, command: int) -> None:
-        """Initialize a fake command."""
+        """Initialize fake command."""
         self.address = address
         self.command = command
 
 
 class FakeCode(Enum):
-    """Fake infrared library enum."""
+    """Fake library codeset enum."""
 
     POWER = (1, 2)
-    VOLUME_UP = (1, 3)
+    VOLUME_UP = (3, 4)
 
-    def to_command(self) -> FakeCommand:
-        """Return the fake protocol command for this enum member."""
-        return FakeCommand(*self.value)
-
-
-class RepeatCode(Enum):
-    """Fake enum whose to_command requires a repeat_count."""
-
-    POWER = (1, 2)
-
-    def to_command(self, repeat_count: int) -> FakeCommand:
-        """Return the fake protocol command for this enum member."""
-        return FakeCommand(*self.value)
+    def to_command(self) -> Command:
+        """Return a fake command object."""
+        address, command = self.value
+        return cast(Command, FakeCommand(address, command))
 
 
-class TypeErrorCode(Enum):
-    """Fake enum whose to_command is not usable."""
+class FakeNEC1F16Code(Enum):
+    """Fake library codeset enum with NEC1-f16 commands."""
 
-    BROKEN = "broken"
+    DTV_NUM_2 = (0xFB04, 0xDB, 0x32)
 
-    def to_command(self, repeat_count: int | None = None) -> FakeCommand:
-        """Raise TypeError for every call style."""
-        raise TypeError
+    def to_command(self) -> Command:
+        """Return an NEC1-f16 command object."""
+        address, function, subfunction = self.value
+        return cast(
+            Command,
+            NEC1F16Command(
+                address=address,
+                function=function,
+                subfunction=subfunction,
+            ),
+        )
 
 
 class BrokenCode(Enum):
-    """Fake enum without a to_command method."""
+    """Fake library codeset enum with unusable members."""
 
     BROKEN = "broken"
 
 
-def _receiver_entry(*, codeset_id: str = "lg_tv") -> MockConfigEntry:
-    """Create a receiver-only config entry."""
-    return MockConfigEntry(
-        domain=DOMAIN,
-        title=REMOTE_NAME,
-        data={
-            CONF_REMOTE_ID: REMOTE_ID,
-            CONF_REMOTE_NAME: REMOTE_NAME,
-            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
-            CONF_INFRARED_RECEIVER_ID: INFRARED_RECEIVER_ID,
-            CONF_REMOTE_CODESET: codeset_id,
-        },
-        options={},
-        unique_id=REMOTE_ID,
+class RepeatOnlyCode(Enum):
+    """Fake library code whose to_command requires repeat_count."""
+
+    POWER = (1, 2)
+
+    def to_command(self, *, repeat_count: int) -> Command:
+        """Return a fake command object."""
+        assert repeat_count == 0
+        address, command = self.value
+        return cast(Command, FakeCommand(address, command))
+
+
+class BadToCommandCode(Enum):
+    """Fake library code whose to_command cannot be called by the matcher."""
+
+    POWER = (1, 2)
+
+    def to_command(self, *, required: int) -> Command:
+        """Return a fake command object."""
+        address, command = self.value
+        return cast(Command, FakeCommand(address + required, command))
+
+
+class NotEnum:
+    """Object used to test invalid loaded codeset classes."""
+
+
+class FakeEntityRegistry:
+    """Fake entity registry."""
+
+    def __init__(self) -> None:
+        """Initialize the fake registry."""
+        self.removed_entity_ids: list[str] = []
+
+    def async_remove(self, entity_id: str) -> None:
+        """Record a removed entity id."""
+        self.removed_entity_ids.append(entity_id)
+
+
+def _signal(
+    timings: list[int] | None = None,
+    *,
+    modulation: int | None = None,
+) -> Any:
+    """Return a fake InfraredReceivedSignal-like object."""
+    return SimpleNamespace(
+        timings=timings or [243, -10000],
+        modulation=modulation,
     )
 
 
-def _register_receiver_entity(hass: HomeAssistant) -> None:
-    """Register the linked infrared receiver entity."""
-    entity_registry = er.async_get(hass)
-    receiver_entry = entity_registry.async_get_or_create(
-        "infrared",
-        "test",
-        "test_receiver",
-        suggested_object_id="test_receiver",
-    )
-    assert receiver_entry.entity_id == INFRARED_RECEIVER_ID
-
-
-def test_cleanup_stale_received_command_event_entities(
-    hass: HomeAssistant,
+def _assert_event_subset(
+    event_data: dict[str, Any],
+    expected: dict[str, Any],
 ) -> None:
-    """Test stale received-command event registry entries are removed."""
-    entry = _receiver_entry()
-    entry.add_to_hass(hass)
-    entity_registry = er.async_get(hass)
-    stale_entry = entity_registry.async_get_or_create(
-        "event",
-        DOMAIN,
-        event_platform.event_unique_id("stale_receiver"),
-        suggested_object_id="stale_received_command",
-        config_entry=entry,
+    """Assert the event data includes expected values."""
+    for key, value in expected.items():
+        assert event_data[key] == value
+
+
+def _nec1_f16_timings() -> list[int]:
+    """Return valid NEC1-f16 timings for LG Japan DTV digit 2."""
+    return NEC1F16Command(
+        address=0xFB04,
+        function=0xDB,
+        subfunction=0x32,
+    ).get_raw_timings()
+
+
+@pytest.fixture(autouse=True)
+def clear_codeset_match_map_cache() -> Generator[None, None, None]:
+    """Clear cached codeset match maps between tests."""
+    event_platform._codeset_match_map.cache_clear()
+    yield
+    event_platform._codeset_match_map.cache_clear()
+
+
+@contextmanager
+def _patched_nec_protocol_specs(
+    *,
+    nec_decode_result: Any,
+    nec1_f16_decode_result: Any = None,
+) -> Generator[None, None, None]:
+    """Temporarily replace NEC-family protocol decoders for event tests."""
+
+    def decode_nec(_signal_value: Any) -> Command | None:
+        return cast(Command | None, nec_decode_result)
+
+    def decode_nec1_f16(_signal_value: Any) -> Command | None:
+        return cast(Command | None, nec1_f16_decode_result)
+
+    nec_spec = event_platform.ProtocolSpec(
+        protocol=event_platform.PROTOCOL_NEC,
+        event_type=event_platform.EVENT_NEC,
+        decode=decode_nec,
+        normalize=event_platform._normalize_nec_command,
+        event_data_builder=event_platform._nec_command_event_data,
+        decode_repeat=event_platform._decode_nec_repeat_signal_event,
+        repeat_event_type=event_platform.EVENT_NEC_REPEAT,
+    )
+    nec1_f16_spec = event_platform.ProtocolSpec(
+        protocol=event_platform.PROTOCOL_NEC1_F16,
+        event_type=event_platform.EVENT_NEC1_F16,
+        decode=decode_nec1_f16,
+        normalize=event_platform._normalize_nec1_f16_command,
+        event_data_builder=event_platform._nec1_f16_command_event_data,
+    )
+    decoder_specs = {
+        event_platform.PROTOCOL_NEC: (nec_spec, nec1_f16_spec),
+    }
+    protocol_specs = {
+        spec.protocol: spec
+        for specs in decoder_specs.values()
+        for spec in specs
+    }
+
+    with (
+        patch.object(event_platform, "_DECODER_PROTOCOL_SPECS", decoder_specs),
+        patch.object(event_platform, "_PROTOCOL_SPECS_BY_PROTOCOL", protocol_specs),
+    ):
+        event_platform._codeset_match_map.cache_clear()
+        yield
+        event_platform._codeset_match_map.cache_clear()
+
+
+def test_event_unique_id() -> None:
+    """Test event unique id generation."""
+    assert event_platform.event_unique_id("living_room_tv") == (
+        "living_room_tv_received_command"
     )
 
-    event_platform.cleanup_stale_received_command_event_entities(
-        hass,
-        cast(ConfigEntry, entry),
-        {event_platform.event_unique_id(REMOTE_ID)},
-    )
 
-    assert entity_registry.async_get(stale_entry.entity_id) is None
+def test_cleanup_stale_received_command_events_remove_only_stale() -> None:
+    """Test stale received-command event entities are removed from the registry."""
+    registry = FakeEntityRegistry()
+    entry = SimpleNamespace(entry_id="entry-id")
+    entries = [
+        SimpleNamespace(
+            domain="sensor",
+            unique_id="stale_received_command",
+            entity_id="sensor.stale",
+        ),
+        SimpleNamespace(
+            domain="event",
+            unique_id=event_platform.event_unique_id("keep"),
+            entity_id="event.keep",
+        ),
+        SimpleNamespace(
+            domain="event",
+            unique_id="old_received_command",
+            entity_id="event.old",
+        ),
+        SimpleNamespace(
+            domain="event",
+            unique_id=None,
+            entity_id="event.none",
+        ),
+    ]
+
+    with (
+        patch.object(event_platform.er, "async_get", return_value=registry),
+        patch.object(
+            event_platform.er,
+            "async_entries_for_config_entry",
+            return_value=entries,
+        ),
+    ):
+        event_platform.cleanup_stale_received_command_event_entities(
+            cast(Any, object()),
+            cast(Any, entry),
+            {event_platform.event_unique_id("keep")},
+        )
+
+    assert registry.removed_entity_ids == ["event.old"]
 
 
-async def test_async_setup_entry_adds_event_entity(
-    hass: HomeAssistant,
+async def test_async_setup_entry_adds_event_entity_for_available_receiver(
+    hass: Any,
 ) -> None:
-    """Test setup adds a received command event entity."""
-    entry = _receiver_entry()
-    _register_receiver_entity(hass)
-    added_entities: list[Entity] = []
+    """Test setup creates an event entity when the receiver is available."""
+    entry: Any = SimpleNamespace(data={}, options={}, entry_id="entry-id")
+    remote = {
+        CONF_REMOTE_ID: "living_room_tv",
+        CONF_REMOTE_NAME: "Living room TV",
+        CONF_INFRARED_RECEIVER_ID: "infrared.xiao_receiver",
+        CONF_REMOTE_CODESET: "lg_tv",
+    }
+    added_entities: list[Any] = []
 
-    def add_entities(
-        entities: Iterable[Entity],
-        update_before_add: bool = False,
-    ) -> None:
-        """Add entities to the test list."""
+    def async_add_entities(entities: list[Any]) -> None:
         added_entities.extend(entities)
+
+    delete_missing_issue = Mock()
+    delete_stale_issues = Mock()
+    cleanup_entities = Mock()
 
     with (
         patch.object(
             event_platform,
-            "_event_types_for_codeset",
-            return_value=["power", "unknown", "volume_up"],
+            "universal_remote_from_config_entry_data",
+            return_value=remote,
         ),
-        patch(
-            "custom_components.universal_remote.event."
-            "infrared.async_get_receivers",
-            return_value=[INFRARED_RECEIVER_ID],
+        patch.object(
+            event_platform.infrared,
+            "async_get_receivers",
+            return_value={"infrared.xiao_receiver"},
+        ),
+        patch.object(
+            event_platform,
+            "async_delete_linked_infrared_receiver_missing_issue",
+            delete_missing_issue,
+        ),
+        patch.object(
+            event_platform,
+            "async_delete_stale_linked_infrared_receiver_missing_issues",
+            delete_stale_issues,
+        ),
+        patch.object(
+            event_platform,
+            "cleanup_stale_received_command_event_entities",
+            cleanup_entities,
         ),
     ):
         await event_platform.async_setup_entry(
             hass,
-            cast(ConfigEntry, entry),
-            cast(AddEntitiesCallback, add_entities),
+            entry,
+            cast(Any, async_add_entities),
         )
 
     assert len(added_entities) == 1
     entity = added_entities[0]
-    assert isinstance(entity, event_platform.UniversalRemoteReceivedCommandEventEntity)
-    assert entity.unique_id == f"{REMOTE_ID}_received_command"
-    assert entity.event_types == ["power", "unknown", "volume_up"]
-
-
-async def test_async_setup_entry_creates_repair_issue_when_receiver_missing(
-    hass: HomeAssistant,
-) -> None:
-    """Test setup creates a repair issue when the receiver is missing."""
-    entry = _receiver_entry()
-    added_entities: list[Entity] = []
-
-    def add_entities(
-        entities: Iterable[Entity],
-        update_before_add: bool = False,
-    ) -> None:
-        """Add entities to the test list."""
-        added_entities.extend(entities)
-
-    await event_platform.async_setup_entry(
+    assert entity._attr_unique_id == "living_room_tv_received_command"
+    assert entity._infrared_receiver_entity_id == "infrared.xiao_receiver"
+    assert entity._codeset_id == "lg_tv"
+    assert entity._attr_event_types == event_platform._event_types_for_codeset("lg_tv")
+    delete_missing_issue.assert_called_once_with(
         hass,
-        cast(ConfigEntry, entry),
-        cast(AddEntitiesCallback, add_entities),
+        remote_id="living_room_tv",
+    )
+    delete_stale_issues.assert_called_once_with(
+        hass,
+        configured_remote_ids={"living_room_tv"},
+    )
+    cleanup_entities.assert_called_once_with(
+        hass,
+        entry,
+        {"living_room_tv_received_command"},
     )
 
-    assert not added_entities
 
-    issue_registry = ir.async_get(hass)
-    issue = issue_registry.async_get_issue(
-        DOMAIN,
-        f"{ISSUE_LINKED_INFRARED_RECEIVER_MISSING}_{REMOTE_ID}",
-    )
-    assert issue is not None
-    assert issue.translation_key == ISSUE_LINKED_INFRARED_RECEIVER_MISSING
-    assert issue.translation_placeholders == {
-        "remote_name": REMOTE_NAME,
-        "infrared_receiver_id": INFRARED_RECEIVER_ID,
+async def test_async_setup_entry_creates_missing_receiver_issue(hass: Any) -> None:
+    """Test setup creates a repair issue when the receiver is unavailable."""
+    entry: Any = SimpleNamespace(data={}, options={}, entry_id="entry-id")
+    remote = {
+        CONF_REMOTE_ID: "living_room_tv",
+        CONF_REMOTE_NAME: "Living room TV",
+        CONF_INFRARED_RECEIVER_ID: "infrared.missing_receiver",
+        CONF_REMOTE_CODESET: "lg_tv",
     }
+    added_entities: list[Any] = []
 
-
-async def test_async_setup_entry_ignores_entry_without_receiver(
-    hass: HomeAssistant,
-) -> None:
-    """Test setup does not add event entities when no receiver is configured."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=REMOTE_NAME,
-        data={
-            CONF_REMOTE_ID: REMOTE_ID,
-            CONF_REMOTE_NAME: REMOTE_NAME,
-            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
-        },
-        options={},
-        unique_id=REMOTE_ID,
-    )
-    added_entities: list[Entity] = []
-
-    def add_entities(
-        entities: Iterable[Entity],
-        update_before_add: bool = False,
-    ) -> None:
-        """Add entities to the test list."""
-        added_entities.extend(entities)
-
-    await event_platform.async_setup_entry(
-        hass,
-        cast(ConfigEntry, entry),
-        cast(AddEntitiesCallback, add_entities),
-    )
-
-    assert not added_entities
-
-
-async def test_async_setup_entry_ignores_entry_without_receiver_but_with_emitter(
-    hass: HomeAssistant,
-) -> None:
-    """Test setup does not add event entities for emitter-only entries."""
-    entry = MockConfigEntry(
-        domain=DOMAIN,
-        title=REMOTE_NAME,
-        data={
-            CONF_REMOTE_ID: REMOTE_ID,
-            CONF_REMOTE_NAME: REMOTE_NAME,
-            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
-            CONF_INFRARED_EMITTER_ID: "infrared.test_emitter",
-        },
-        options={},
-        unique_id=REMOTE_ID,
-    )
-    added_entities: list[Entity] = []
-
-    def add_entities(
-        entities: Iterable[Entity],
-        update_before_add: bool = False,
-    ) -> None:
-        """Add entities to the test list."""
-        added_entities.extend(entities)
-
-    await event_platform.async_setup_entry(
-        hass,
-        cast(ConfigEntry, entry),
-        cast(AddEntitiesCallback, add_entities),
-    )
-
-    assert not added_entities
-
-
-def test_event_entity_handles_received_signal() -> None:
-    """Test received infrared signals trigger event entity events."""
-    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
-        remote_id=REMOTE_ID,
-        remote_name=REMOTE_NAME,
-        receiver_entity_id=INFRARED_RECEIVER_ID,
-        codeset_id="lg_tv",
-    )
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
+    create_issue = Mock()
+    delete_stale_issues = Mock()
+    cleanup_entities = Mock()
 
     with (
         patch.object(
             event_platform,
-            "_decode_signal_event_type",
-            return_value="power",
+            "universal_remote_from_config_entry_data",
+            return_value=remote,
         ),
-        patch.object(entity, "_trigger_event") as mock_trigger_event,
-        patch.object(entity, "async_write_ha_state") as mock_write_state,
+        patch.object(
+            event_platform.infrared,
+            "async_get_receivers",
+            return_value=set(),
+        ),
+        patch.object(
+            event_platform,
+            "async_create_linked_infrared_receiver_missing_issue",
+            create_issue,
+        ),
+        patch.object(
+            event_platform,
+            "async_delete_stale_linked_infrared_receiver_missing_issues",
+            delete_stale_issues,
+        ),
+        patch.object(
+            event_platform,
+            "cleanup_stale_received_command_event_entities",
+            cleanup_entities,
+        ),
     ):
-        entity._handle_signal(signal)
+        await event_platform.async_setup_entry(
+            hass,
+            entry,
+            cast(Any, added_entities.extend),
+        )
 
-    mock_trigger_event.assert_called_once_with("power")
-    mock_write_state.assert_called_once_with()
+    assert len(added_entities) == 1
+    entity = added_entities[0]
+    assert entity._attr_unique_id == "living_room_tv_received_command"
+    assert entity._infrared_receiver_entity_id == "infrared.missing_receiver"
+    assert entity._codeset_id == "lg_tv"
+    create_issue.assert_called_once_with(
+        hass,
+        remote_id="living_room_tv",
+        remote_name="Living room TV",
+        infrared_receiver_id="infrared.missing_receiver",
+    )
+    delete_stale_issues.assert_called_once_with(
+        hass,
+        configured_remote_ids={"living_room_tv"},
+    )
+    cleanup_entities.assert_called_once_with(
+        hass,
+        entry,
+        {"living_room_tv_received_command"},
+    )
+
+
+def test_received_command_event_entity_handles_decoded_signal() -> None:
+    """Test the received-command entity triggers and stores decoded events."""
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living room TV",
+        receiver_entity_id="infrared.xiao_receiver",
+        codeset_id="lg_tv",
+    )
+    event_data = {
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": True,
+        "matched": False,
+        "repeat": False,
+        "address": "0xFB04",
+        "command": "0x09",
+    }
+
+    with (
+        patch.object(
+            event_platform,
+            "_decode_signal_event",
+            return_value=("nec", event_data),
+        ),
+        patch.object(entity, "_trigger_event") as trigger_event,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
+        entity._handle_signal(_signal())
+
+    assert entity._attr_device_info == DeviceInfo(
+        identifiers={(event_platform.DOMAIN, "living_room_tv")},
+        name="Living room TV",
+    )
+    assert entity._last_decoded_event == {"event_type": "nec", **event_data}
+    trigger_event.assert_called_once()
+    call_args = trigger_event.call_args
+    assert call_args is not None
+    event_type, triggered_data = call_args.args
+    assert event_type == "nec"
+    assert triggered_data["recent_events"] == [{"event_type": "nec", **event_data}]
+    write_state.assert_called_once_with()
+
+
+def test_received_command_event_entity_clears_last_decoded_event_on_unknown() -> None:
+    """Test unknown non-repeat frames clear the last decoded command."""
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living room TV",
+        receiver_entity_id="infrared.xiao_receiver",
+        codeset_id="lg_tv",
+    )
+    entity._last_decoded_event = {
+        "event_type": "mute",
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": True,
+        "repeat": False,
+    }
+    event_data = {
+        "protocol": event_platform.PROTOCOL_UNKNOWN,
+        "decoded": False,
+        "matched": False,
+        "repeat": False,
+    }
+
+    with (
+        patch.object(
+            event_platform,
+            "_decode_signal_event",
+            return_value=("unknown", event_data),
+        ),
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(_signal())
+
+    assert entity._last_decoded_event is None
 
 
 def test_event_types_for_codeset() -> None:
     """Test event types are generated from the selected codeset."""
     with patch.object(event_platform, "_load_codeset_enum", return_value=FakeCode):
         assert event_platform._event_types_for_codeset("lg_tv") == [
+            "nec",
+            "nec1_f16",
+            "nec_repeat",
             "power",
             "unknown",
             "volume_up",
@@ -314,250 +482,615 @@ def test_event_types_for_codeset() -> None:
 
 
 def test_event_types_for_unknown_codeset() -> None:
-    """Test unknown is exposed when the codeset cannot be loaded."""
+    """Test only unknown is exposed when no decoder is available."""
     assert event_platform._event_types_for_codeset("missing") == ["unknown"]
 
 
-def test_decode_signal_event_type_matches_library_command() -> None:
+def test_receiver_event_types_for_codeset() -> None:
+    """Test public receiver event-type helper delegates to the private helper."""
+    with patch.object(
+        event_platform,
+        "_event_types_for_codeset",
+        return_value=["nec", "unknown"],
+    ) as event_types_for_codeset:
+        assert event_platform.receiver_event_types_for_codeset("lg_tv") == [
+            "nec",
+            "unknown",
+        ]
+
+    event_types_for_codeset.assert_called_once_with("lg_tv")
+
+
+def test_decode_signal_event_matches_library_command() -> None:
     """Test a decoded NEC command is matched to the library command name."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
-
     with (
-        patch.object(
-            event_platform,
-            "_decode_nec_signal",
-            return_value=FakeCommand(1, 2),
-        ),
+        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
         patch.object(event_platform, "_load_codeset_enum", return_value=FakeCode),
     ):
-        assert event_platform._decode_signal_event_type("lg_tv", signal) == "power"
+        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
 
-
-def test_decode_signal_event_type_returns_unknown_for_unmatched_command() -> None:
-    """Test unmatched received commands return the unknown event type."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
+    assert event_type == "power"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "lg_tv",
+            "decoder": "nec",
+            "protocol": "nec",
+            "decoded": True,
+            "matched": True,
+            "repeat": False,
+            "address": "0x0001",
+            "command": "0x02",
+            "command_name": "POWER",
+        },
     )
 
+
+def test_decode_signal_event_returns_nec_for_unmatched_command() -> None:
+    """Test unmatched decoded NEC commands return the nec event type."""
     with (
-        patch.object(
-            event_platform,
-            "_decode_nec_signal",
-            return_value=FakeCommand(9, 9),
-        ),
+        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(9, 9)),
         patch.object(event_platform, "_load_codeset_enum", return_value=FakeCode),
     ):
-        assert event_platform._decode_signal_event_type("lg_tv", signal) == "unknown"
+        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
 
-
-def test_decode_signal_event_type_returns_unknown_for_unsupported_codeset() -> None:
-    """Test unsupported receiver codesets return the unknown event type."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
-
-    assert event_platform._decode_signal_event_type("samsung_tv", signal) == "unknown"
-
-
-def test_decode_signal_event_type_returns_unknown_without_codeset() -> None:
-    """Test missing library codesets return the unknown event type."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
-
-    assert event_platform._decode_signal_event_type("none", signal) == "unknown"
-
-
-def test_library_member_to_command_handles_missing_to_command() -> None:
-    """Test invalid library members are ignored."""
-    assert event_platform._library_member_to_command(BrokenCode.BROKEN) is None
-
-
-def test_nec_command_key_handles_invalid_command() -> None:
-    """Test invalid NEC-like commands do not produce a match key."""
-    assert event_platform._nec_command_key(object()) is None
-
-
-def test_decode_signal_event_type_returns_unknown_for_no_library_codeset() -> None:
-    """Test the no-library sentinel returns the unknown event type."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
-
-    assert (
-        event_platform._decode_signal_event_type(
-            event_platform.NO_INFRARED_LIBRARY_CODESET,
-            signal,
-        )
-        == "unknown"
+    assert event_type == "nec"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "lg_tv",
+            "decoder": "nec",
+            "protocol": "nec",
+            "decoded": True,
+            "matched": False,
+            "repeat": False,
+            "address": "0x0009",
+            "command": "0x09",
+        },
     )
 
 
-def test_decode_signal_event_type_returns_unknown_when_decode_fails() -> None:
-    """Test undecodable NEC signals return the unknown event type."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
-
-    with patch.object(event_platform, "_decode_nec_signal", return_value=None):
-        assert event_platform._decode_signal_event_type("lg_tv", signal) == "unknown"
-
-
-def test_decode_signal_event_type_returns_unknown_without_nec_key() -> None:
-    """Test decoded commands without NEC keys return the unknown event type."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
-
-    with patch.object(event_platform, "_decode_nec_signal", return_value=object()):
-        assert event_platform._decode_signal_event_type("lg_tv", signal) == "unknown"
-
-
-def test_decode_signal_event_type_returns_unknown_without_enum() -> None:
-    """Test missing library enums return the unknown event type."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
-
+def test_decode_signal_event_returns_nec_without_enum() -> None:
+    """Test missing library enums return the nec event type for decoded commands."""
     with (
-        patch.object(
-            event_platform,
-            "_decode_nec_signal",
-            return_value=FakeCommand(1, 2),
-        ),
+        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
         patch.object(event_platform, "_load_codeset_enum", return_value=None),
     ):
-        assert event_platform._decode_signal_event_type("lg_tv", signal) == "unknown"
+        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
 
-
-def test_decode_signal_event_type_skips_invalid_library_command() -> None:
-    """Test enum members without usable commands are ignored."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
+    assert event_type == "nec"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "lg_tv",
+            "decoder": "nec",
+            "protocol": "nec",
+            "decoded": True,
+            "matched": False,
+            "repeat": False,
+            "address": "0x0001",
+            "command": "0x02",
+        },
     )
 
+
+def test_decode_signal_event_skips_invalid_library_command() -> None:
+    """Test enum members without usable commands are ignored."""
     with (
-        patch.object(
-            event_platform,
-            "_decode_nec_signal",
-            return_value=FakeCommand(1, 2),
-        ),
+        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
         patch.object(event_platform, "_load_codeset_enum", return_value=BrokenCode),
     ):
-        assert event_platform._decode_signal_event_type("lg_tv", signal) == "unknown"
+        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+
+    assert event_type == "nec"
+    assert event_data["protocol"] == "nec"
+    assert event_data["decoded"] is True
+    assert event_data["matched"] is False
 
 
-def test_decode_nec_signal_uses_modulation() -> None:
-    """Test NEC signals are decoded with modulation when available."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
+def test_decode_signal_event_matches_repeat_count_only_library_command() -> None:
+    """Test library commands can expose to_command(repeat_count=0)."""
+    with (
+        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
+        patch.object(event_platform, "_load_codeset_enum", return_value=RepeatOnlyCode),
+    ):
+        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+
+    assert event_type == "power"
+    assert event_data["matched"] is True
+    assert event_data["command_name"] == "POWER"
+
+
+def test_decode_signal_event_ignores_unusable_to_command() -> None:
+    """Test library commands with unusable to_command methods are ignored."""
+    with (
+        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
+        patch.object(
+            event_platform,
+            "_load_codeset_enum",
+            return_value=BadToCommandCode,
+        ),
+    ):
+        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+
+    assert event_type == "nec"
+    assert event_data["matched"] is False
+
+
+def test_decode_signal_event_returns_unknown_for_unsupported_codeset() -> None:
+    """Test unsupported receiver codesets return the unknown event type."""
+    event_type, event_data = event_platform._decode_signal_event(
+        "samsung_tv",
+        _signal(),
     )
-    command = cast(NECCommand, FakeCommand(1, 2))
 
+    assert event_type == "unknown"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "samsung_tv",
+            "decoder": None,
+            "protocol": "unknown",
+            "decoded": False,
+            "matched": False,
+            "repeat": False,
+            "timings_count": 2,
+            "timings_preview": [243, -10000],
+            "modulation": None,
+        },
+    )
+
+
+def test_decode_signal_event_returns_unknown_without_codeset() -> None:
+    """Test missing library codesets return the unknown event type."""
+    event_type, event_data = event_platform._decode_signal_event("none", _signal())
+
+    assert event_type == "unknown"
+    assert event_data["decoder"] is None
+    assert event_data["protocol"] == "unknown"
+    assert event_data["timings_count"] == 2
+
+
+def test_decode_signal_event_returns_unknown_for_no_library_codeset() -> None:
+    """Test the no-library sentinel returns the unknown event type."""
+    event_type, event_data = event_platform._decode_signal_event(
+        NO_INFRARED_LIBRARY_CODESET,
+        _signal(),
+    )
+
+    assert event_type == "unknown"
+    assert event_data["codeset"] == NO_INFRARED_LIBRARY_CODESET
+    assert event_data["decoder"] is None
+    assert event_data["protocol"] == "unknown"
+    assert event_data["timings_count"] == 2
+
+
+def test_decode_signal_event_returns_unknown_when_decode_fails() -> None:
+    """Test undecodable NEC signals return the unknown event type."""
+    with _patched_nec_protocol_specs(nec_decode_result=None):
+        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+
+    assert event_type == "unknown"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "lg_tv",
+            "decoder": "nec",
+            "protocol": "unknown",
+            "decoded": False,
+            "matched": False,
+            "repeat": False,
+            "timings_count": 2,
+        },
+    )
+
+
+def test_decode_signal_event_returns_unknown_without_nec_key() -> None:
+    """Test decoded commands without NEC keys return the unknown event type."""
+    with _patched_nec_protocol_specs(nec_decode_result=object()):
+        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+
+    assert event_type == "unknown"
+    assert event_data["decoder"] == "nec"
+    assert event_data["protocol"] == "unknown"
+    assert event_data["timings_count"] == 2
+
+
+def test_decode_signal_event_decodes_nec1_f16_command() -> None:
+    """Test an NEC1-f16 full frame is decoded before command matching is added."""
+    command = NEC1F16Command(address=0xFB04, function=0xDB, subfunction=0x32)
+
+    with _patched_nec_protocol_specs(
+        nec_decode_result=None,
+        nec1_f16_decode_result=command,
+    ):
+        event_type, event_data = event_platform._decode_signal_event(
+            "lg_tv",
+            _signal(command.get_raw_timings(), modulation=38_000),
+        )
+
+    assert event_type == "nec1_f16"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "lg_tv",
+            "decoder": "nec",
+            "protocol": "nec1_f16",
+            "decoded": True,
+            "matched": False,
+            "repeat": False,
+            "address": "0xFB04",
+            "function": "0xDB",
+            "subfunction": "0x32",
+        },
+    )
+
+
+def test_decode_signal_event_matches_nec1_f16_library_command() -> None:
+    """Test a decoded NEC1-f16 command is matched to the library command name."""
+    command = NEC1F16Command(address=0xFB04, function=0xDB, subfunction=0x32)
+
+    with (
+        _patched_nec_protocol_specs(
+            nec_decode_result=None,
+            nec1_f16_decode_result=command,
+        ),
+        patch.object(
+            event_platform,
+            "_load_codeset_enum",
+            return_value=FakeNEC1F16Code,
+        ),
+    ):
+        event_type, event_data = event_platform._decode_signal_event(
+            "lg_tv",
+            _signal(),
+        )
+
+    assert event_type == "dtv_num_2"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "lg_tv",
+            "decoder": "nec",
+            "protocol": "nec1_f16",
+            "decoded": True,
+            "matched": True,
+            "repeat": False,
+            "address": "0xFB04",
+            "function": "0xDB",
+            "subfunction": "0x32",
+            "command_name": "DTV_NUM_2",
+        },
+    )
+
+
+def test_decode_signal_event_returns_nec_repeat_with_previous_event() -> None:
+    """Test NEC repeat frames include previous decoded command metadata."""
+    previous_event = {
+        "event_type": "mute",
+        "protocol": "nec",
+        "address": "0xFB04",
+        "command": "0x09",
+        "command_name": "MUTE",
+    }
+
+    with _patched_nec_protocol_specs(nec_decode_result=None):
+        event_type, event_data = event_platform._decode_signal_event(
+            "lg_tv",
+            _signal([8894, -2250, 529, -10000]),
+            previous_decoded_event=previous_event,
+        )
+
+    assert event_type == "nec_repeat"
+    _assert_event_subset(
+        event_data,
+        {
+            "protocol": "nec",
+            "repeat": True,
+            "previous_event_type": "mute",
+            "previous_protocol": "nec",
+            "previous_address": "0xFB04",
+            "previous_command": "0x09",
+            "previous_command_name": "MUTE",
+            "timings_count": 4,
+        },
+    )
+
+
+def test_decode_signal_event_returns_nec_repeat_with_previous_nec1_f16_event() -> None:
+    """Test NEC repeat frames include previous NEC1-f16 command metadata."""
+    previous_event = {
+        "event_type": "nec1_f16",
+        "protocol": "nec1_f16",
+        "address": "0xFB04",
+        "function": "0xDB",
+        "subfunction": "0x32",
+    }
+
+    with _patched_nec_protocol_specs(nec_decode_result=None):
+        event_type, event_data = event_platform._decode_signal_event(
+            "lg_tv",
+            _signal([8894, -2250, 529, -10000]),
+            previous_decoded_event=previous_event,
+        )
+
+    assert event_type == "nec_repeat"
+    assert event_data["protocol"] == "nec1_f16"
+    assert event_data["previous_function"] == "0xDB"
+    assert event_data["previous_subfunction"] == "0x32"
+
+
+def test_decode_signal_event_returns_nec_repeat_without_previous_event() -> None:
+    """Test standalone NEC repeat frames decode without previous metadata."""
+    with _patched_nec_protocol_specs(nec_decode_result=None):
+        event_type, event_data = event_platform._decode_signal_event(
+            "lg_tv",
+            _signal([8894, -2250, 529, -10000]),
+        )
+
+    assert event_type == "nec_repeat"
+    assert event_data["protocol"] == "nec"
+    assert event_data["repeat"] is True
+    assert "previous_event_type" not in event_data
+
+
+def test_with_timing_metadata_includes_nec_debug_data() -> None:
+    """Test unknown NEC-like full frames expose timing-derived debug fields."""
+    timings = _nec1_f16_timings()
+    event_data = event_platform._with_timing_metadata(
+        {"protocol": "unknown"},
+        _signal(timings),
+    )
+
+    assert event_data["timings_count"] == len(timings)
+    assert event_data["timings_preview"] == timings[:12]
+    assert event_data["nec_frame_candidate"] is True
+    assert event_data["nec_bytes"] == ["0x04", "0xFB", "0xDB", "0x32"]
+    assert event_data["nec_address_checksum_valid"] is True
+    assert event_data["nec_command_checksum_valid"] is False
+    assert event_data["nec1_f16_address"] == "0xFB04"
+    assert event_data["nec1_f16_function"] == "0xDB"
+    assert event_data["nec1_f16_subfunction"] == "0x32"
+
+
+def test_with_timing_metadata_can_omit_nec_debug_data() -> None:
+    """Test NEC timing debug fields can be omitted for non-NEC decoders."""
+    event_data = event_platform._with_timing_metadata(
+        {"protocol": "unknown"},
+        _signal(_nec1_f16_timings()),
+        include_nec_debug=False,
+    )
+
+    assert event_data["timings_count"] == len(_nec1_f16_timings())
+    assert "nec_frame_candidate" not in event_data
+    assert "nec_bytes" not in event_data
+
+
+def test_nec_full_frame_debug_data_finds_leader_after_idle_timing() -> None:
+    """Test NEC debug parsing can skip one leading idle timing."""
+    event_data = event_platform._nec_full_frame_debug_data([100, *_nec1_f16_timings()])
+
+    assert event_data["nec_frame_candidate"] is True
+    assert event_data["nec_leader_start_index"] == 1
+
+
+def test_nec_full_frame_debug_data_reports_missing_leader() -> None:
+    """Test NEC debug parsing reports a missing leader."""
+    event_data = event_platform._nec_full_frame_debug_data([100] * 67)
+
+    assert event_data == {
+        "nec_frame_candidate": False,
+        "nec_parse_error": "leader",
+    }
+
+
+def test_nec_full_frame_debug_data_reports_invalid_bit_mark() -> None:
+    """Test NEC debug parsing reports an invalid bit mark."""
+    timings = _nec1_f16_timings()
+    timings[2] = 100
+
+    event_data = event_platform._nec_full_frame_debug_data(timings)
+
+    assert event_data["nec_frame_candidate"] is True
+    assert event_data["nec_parse_error"] == "bit_0_mark"
+    assert event_data["nec_parse_timing_index"] == 2
+    assert event_data["nec_parse_timing_value"] == 100
+
+
+def test_nec_full_frame_debug_data_reports_invalid_bit_space() -> None:
+    """Test NEC debug parsing reports an invalid bit space."""
+    timings = _nec1_f16_timings()
+    timings[3] = -100
+
+    event_data = event_platform._nec_full_frame_debug_data(timings)
+
+    assert event_data["nec_frame_candidate"] is True
+    assert event_data["nec_parse_error"] == "bit_0_space"
+    assert event_data["nec_parse_timing_index"] == 3
+    assert event_data["nec_parse_timing_value"] == -100
+
+
+def test_nec_bit_from_space_returns_none_for_invalid_space() -> None:
+    """Test invalid NEC spaces are not decoded as bits."""
+    assert event_platform._nec_bit_from_space(100) is None
+
+
+def test_is_nec_repeat_frame_rejects_long_or_invalid_frames() -> None:
+    """Test invalid repeat candidates are rejected."""
+    assert event_platform._is_nec_repeat_frame([8894, -2250, 529, -10000, 1]) is False
+    assert event_platform._is_nec_repeat_frame([1, 2]) is False
+    assert event_platform._is_nec_repeat_frame([8894, -4500, 529]) is False
+
+
+def test_decode_nec_signal_falls_back_without_modulation_argument() -> None:
+    """Test NEC decoding supports older decoders without modulation keyword support."""
     with patch.object(
         event_platform.NECCommand,
         "from_raw_timings",
-        return_value=command,
-    ) as mock_from_raw_timings:
-        assert event_platform._decode_nec_signal(signal) is command
+        side_effect=[TypeError, FakeCommand(1, 2)],
+    ) as from_raw_timings:
+        command = event_platform._decode_nec_signal(_signal())
 
-    mock_from_raw_timings.assert_called_once_with([1, 2, 3], modulation=38000)
+    assert isinstance(command, FakeCommand)
+    assert from_raw_timings.call_count == 2
 
 
-def test_decode_nec_signal_falls_back_without_modulation() -> None:
-    """Test NEC decode falls back when modulation is unsupported."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
-    command = cast(NECCommand, FakeCommand(1, 2))
-
+def test_decode_nec_signal_returns_none_on_decoder_errors() -> None:
+    """Test NEC decoder errors are converted to no decoded command."""
     with patch.object(
         event_platform.NECCommand,
         "from_raw_timings",
-        side_effect=[TypeError, command],
-    ) as mock_from_raw_timings:
-        assert event_platform._decode_nec_signal(signal) is command
-
-    mock_from_raw_timings.assert_any_call([1, 2, 3], modulation=38000)
-    mock_from_raw_timings.assert_any_call([1, 2, 3])
-
-
-def test_decode_nec_signal_returns_none_when_fallback_fails() -> None:
-    """Test failed NEC decode fallback returns None."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
+        side_effect=ValueError,
+    ):
+        assert event_platform._decode_nec_signal(_signal()) is None
 
     with patch.object(
         event_platform.NECCommand,
         "from_raw_timings",
         side_effect=[TypeError, ValueError],
     ):
-        assert event_platform._decode_nec_signal(signal) is None
+        assert event_platform._decode_nec_signal(_signal()) is None
 
 
-def test_decode_nec_signal_returns_none_for_value_error() -> None:
-    """Test failed NEC decode returns None."""
-    signal = cast(
-        InfraredReceivedSignal,
-        SimpleNamespace(timings=[1, 2, 3], modulation=38000),
-    )
+def test_decode_nec1_f16_signal_falls_back_without_modulation_argument() -> None:
+    """Test NEC1-f16 decoding supports decoders without modulation kwargs."""
+    expected = NEC1F16Command(address=0xFB04, function=0xDB, subfunction=0x32)
 
     with patch.object(
-        event_platform.NECCommand,
+        event_platform.NEC1F16Command,
+        "from_raw_timings",
+        side_effect=[TypeError, expected],
+    ) as from_raw_timings:
+        command = event_platform._decode_nec1_f16_signal(_signal())
+
+    assert command is expected
+    assert from_raw_timings.call_count == 2
+
+
+def test_decode_nec1_f16_signal_returns_none_on_decoder_errors() -> None:
+    """Test NEC1-f16 decoder errors are converted to no decoded command."""
+    with patch.object(
+        event_platform.NEC1F16Command,
         "from_raw_timings",
         side_effect=ValueError,
     ):
-        assert event_platform._decode_nec_signal(signal) is None
-
-
-def test_library_member_to_command_retries_with_repeat_count() -> None:
-    """Test library members that require repeat_count are supported."""
-    command = event_platform._library_member_to_command(RepeatCode.POWER)
-
-    assert event_platform._nec_command_key(command) == (1, 2)
-
-
-def test_library_member_to_command_handles_unusable_to_command() -> None:
-    """Test unusable to_command methods are ignored."""
-    assert event_platform._library_member_to_command(TypeErrorCode.BROKEN) is None
-
-
-def test_load_codeset_enum_handles_import_error() -> None:
-    """Test import failures return None."""
-    with patch.object(event_platform, "import_module", side_effect=ImportError):
-        assert event_platform._load_codeset_enum("lg_tv") is None
-
-
-def test_load_codeset_enum_handles_missing_enum_class() -> None:
-    """Test missing enum classes return None."""
-    with patch.object(event_platform, "import_module", return_value=SimpleNamespace()):
-        assert event_platform._load_codeset_enum("lg_tv") is None
-
-
-def test_load_codeset_enum_handles_non_enum_class() -> None:
-    """Test non-enum classes return None."""
-
-    class NotEnum:
-        """Fake class that is not an enum."""
+        assert event_platform._decode_nec1_f16_signal(_signal()) is None
 
     with patch.object(
-        event_platform,
-        "import_module",
-        return_value=SimpleNamespace(LGTVCode=NotEnum),
+        event_platform.NEC1F16Command,
+        "from_raw_timings",
+        side_effect=[TypeError, ValueError],
     ):
-        assert event_platform._load_codeset_enum("lg_tv") is None
+        assert event_platform._decode_nec1_f16_signal(_signal()) is None
+
+
+def test_nec1_f16_command_event_data_requires_subfunction() -> None:
+    """Test NEC1-f16 event data requires a decoded subfunction."""
+    decoded_command = event_platform.DecodedInfraredCommand(
+        protocol=event_platform.PROTOCOL_NEC1_F16,
+        address=0xFB04,
+        primary=0xDB,
+    )
+
+    with pytest.raises(ValueError, match="missing subfunction"):
+        event_platform._nec1_f16_command_event_data(decoded_command)
+
+
+def test_command_match_key_returns_none_for_unknown_protocol() -> None:
+    """Test command match keys fail closed for unknown explicit protocols."""
+    assert (
+        event_platform._command_match_key(
+            cast(Command, FakeCommand(1, 2)),
+            protocol="missing",
+        )
+        is None
+    )
+
+
+def test_command_match_key_detects_known_protocol() -> None:
+    """Test command match keys can be detected without an explicit protocol."""
+    assert event_platform._command_match_key(cast(Command, FakeCommand(1, 2))) == (
+        event_platform.PROTOCOL_NEC,
+        1,
+        2,
+        None,
+    )
+
+
+def test_command_match_key_returns_none_without_matching_protocol() -> None:
+    """Test command match keys fail closed when no protocol normalizer matches."""
+    assert event_platform._command_match_key(cast(Command, object())) is None
+
+
+def test_nec_command_key_rejects_invalid_command_object() -> None:
+    """Test NEC lookup keys are only built from integer address and command values."""
+    assert event_platform._nec_command_key(cast(Command, object())) is None
+    assert (
+        event_platform._nec_command_key(
+            cast(Command, SimpleNamespace(address="1", command=2))
+        )
+        is None
+    )
+    assert (
+        event_platform._nec_command_key(
+            cast(Command, SimpleNamespace(address=1, command="2"))
+        )
+        is None
+    )
+
+
+def test_load_codeset_enum_returns_none_for_unknown_codeset() -> None:
+    """Test unknown codeset ids fail closed before importing modules."""
+    assert event_platform._load_codeset_enum("missing") is None
+
+
+def test_load_codeset_enum_returns_none_for_import_error() -> None:
+    """Test missing codeset modules fail closed."""
+    with patch.dict(
+        event_platform.INFRARED_LIBRARY_CODESETS,
+        {
+            "broken": SimpleNamespace(
+                module="custom_components.universal_remote.missing_codeset",
+                enum_class="MissingCode",
+            ),
+        },
+    ):
+        assert event_platform._load_codeset_enum("broken") is None
+
+
+def test_load_codeset_enum_returns_none_for_missing_enum_class() -> None:
+    """Test missing enum classes fail closed."""
+    with (
+        patch.dict(
+            event_platform.INFRARED_LIBRARY_CODESETS,
+            {
+                "broken": SimpleNamespace(
+                    module="fake.module",
+                    enum_class="MissingCode",
+                ),
+            },
+        ),
+        patch.object(event_platform, "import_module", return_value=SimpleNamespace()),
+    ):
+        assert event_platform._load_codeset_enum("broken") is None
+
+
+def test_load_codeset_enum_returns_none_for_non_enum_class() -> None:
+    """Test non-enum classes fail closed."""
+    with (
+        patch.dict(
+            event_platform.INFRARED_LIBRARY_CODESETS,
+            {
+                "broken": SimpleNamespace(
+                    module="fake.module",
+                    enum_class="NotEnum",
+                ),
+            },
+        ),
+        patch.object(
+            event_platform,
+            "import_module",
+            return_value=SimpleNamespace(NotEnum=NotEnum),
+        ),
+    ):
+        assert event_platform._load_codeset_enum("broken") is None
