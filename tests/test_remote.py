@@ -848,3 +848,31 @@ async def test_config_entry_setup_covers_standalone_remote_platform_setup(
     await hass.async_block_till_done()
 
     assert hass.states.get("remote.living_room_tv") is not None
+
+async def test_async_setup_universal_remote_entities_ignores_receiver_only_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test remote platform ignores receiver-only universal remote entries."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        entry_id="receiver_only",
+        data={
+            CONF_REMOTE_ID: "receiver_only",
+            CONF_REMOTE_NAME: "Receiver Only",
+            "infrared_receiver_id": "infrared.test_receiver",
+        },
+        options={CONF_REMOTE_COMMANDS: {COMMAND_POWER_ON: RAW_COMMAND}},
+    )
+    entry.add_to_hass(hass)
+    entities: list[InfraredRemoteEntity] = []
+
+    await async_setup_universal_remote_entities(
+        hass,
+        entry,
+        _add_remote_entities_callback(entities),
+        device_info_factory=_device_info_factory,
+        cleanup_stale_issues=True,
+    )
+
+    assert entities == []
+    

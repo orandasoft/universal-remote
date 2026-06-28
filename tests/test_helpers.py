@@ -10,6 +10,7 @@ from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
     CONF_INFRARED_EMITTER_ID,
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -20,6 +21,7 @@ from custom_components.universal_remote.const import (
 )
 from custom_components.universal_remote.helpers import (
     available_infrared_emitters,
+    available_infrared_receivers,
     command_create_button,
     command_object,
     command_options,
@@ -28,6 +30,9 @@ from custom_components.universal_remote.helpers import (
     infrared_emitter_field,
     infrared_emitter_field_with_current,
     infrared_emitter_selector,
+    infrared_receiver_field,
+    infrared_receiver_field_with_current,
+    infrared_receiver_selector,
     normalize_command_mapping,
     normalize_command_name,
     normalize_command_objects,
@@ -42,7 +47,7 @@ from homeassistant.helpers import entity_registry as er, selector
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 
-def _field_default(field: vol.Required) -> Any:
+def _field_default(field: Any) -> Any:
     """Return a voluptuous field default for typing-friendly tests."""
     default = cast(Any, field.default)
     try:
@@ -103,6 +108,51 @@ def test_available_infrared_emitters(hass: HomeAssistant) -> None:
     assert "light.ignored" not in options
 
 
+def test_available_infrared_receivers(hass: HomeAssistant) -> None:
+    """Test available infrared receiver selector options."""
+    registry = er.async_get(hass)
+    registry.async_get_or_create(
+        "infrared",
+        "test",
+        "receiver_b",
+        suggested_object_id="receiver_b",
+        original_name="Receiver B",
+    )
+    registry.async_get_or_create(
+        "infrared",
+        "test",
+        "receiver_a",
+        suggested_object_id="receiver_a",
+        original_name="Receiver A",
+    )
+    registry.async_get_or_create(
+        "infrared",
+        "test",
+        "receiver_disabled",
+        suggested_object_id="receiver_disabled",
+        original_name="Disabled Receiver",
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+
+    with patch(
+        "custom_components.universal_remote.helpers.infrared.async_get_receivers",
+        return_value=[
+            "infrared.receiver_b",
+            "infrared.receiver_a",
+            "infrared.receiver_disabled",
+        ],
+    ):
+        options = available_infrared_receivers(hass)
+
+    assert list(options) == ["infrared.receiver_a", "infrared.receiver_b"]
+    assert options["infrared.receiver_a"]["value"] == "infrared.receiver_a"
+    assert options["infrared.receiver_a"]["label"] == "Receiver A"
+    assert options["infrared.receiver_b"]["value"] == "infrared.receiver_b"
+    assert options["infrared.receiver_b"]["label"] == "Receiver B"
+    assert "infrared.receiver_disabled" not in options
+
+
+
 def test_infrared_emitter_selector_includes_current_missing_emitter() -> None:
     """Test selector includes stale current emitter."""
     available: dict[str, selector.SelectOptionDict] = {
@@ -120,6 +170,26 @@ def test_infrared_emitter_selector_includes_current_missing_emitter() -> None:
     options = cast(list[selector.SelectOptionDict], selector_obj.config["options"])
     values = [option["value"] for option in options]
     assert values == ["infrared.valid", "infrared.missing"]
+
+
+def test_infrared_receiver_selector_includes_current_missing_receiver() -> None:
+    """Test selector includes stale current receiver."""
+    available: dict[str, selector.SelectOptionDict] = {
+        "infrared.valid": selector.SelectOptionDict(
+            value="infrared.valid",
+            label="Valid",
+        )
+    }
+
+    selector_obj = infrared_receiver_selector(
+        available,
+        current_receiver_id="infrared.missing",
+    )
+
+    options = cast(list[selector.SelectOptionDict], selector_obj.config["options"])
+    values = [option["value"] for option in options]
+    assert values == ["infrared.valid", "infrared.missing"]
+
 
 
 def test_infrared_emitter_field_defaults() -> None:
@@ -145,6 +215,32 @@ def test_infrared_emitter_field_defaults() -> None:
         )
         == "infrared.missing"
     )
+
+
+def test_infrared_receiver_field_defaults() -> None:
+    """Test receiver selector field defaults."""
+    available: dict[str, selector.SelectOptionDict] = {
+        "infrared.valid": selector.SelectOptionDict(
+            value="infrared.valid",
+            label="Valid",
+        )
+    }
+
+    assert (
+        _field_default(infrared_receiver_field("infrared.valid", available))
+        == "infrared.valid"
+    )
+    assert _field_default(infrared_receiver_field("infrared.missing", available)) is None
+    assert (
+        _field_default(
+            infrared_receiver_field_with_current(
+                "infrared.missing",
+                available,
+            )
+        )
+        == "infrared.missing"
+    )
+
 
 
 def test_normalize_ids_and_command_names() -> None:
@@ -342,6 +438,54 @@ def test_infrared_emitter_field_with_current_without_default_uses_required_field
     assert field.default is vol.UNDEFINED
 
 
+def test_infrared_receiver_field_omits_unavailable_default() -> None:
+    """Test receiver field omits defaults that are not available."""
+    field = infrared_receiver_field(
+        "infrared.missing",
+        {
+            "infrared.available": selector.SelectOptionDict(
+                value="infrared.available",
+                label="Available",
+            )
+        },
+    )
+
+    assert field.default is vol.UNDEFINED
+
+
+def test_infrared_receiver_field_without_default_uses_optional_field() -> None:
+    """Test receiver field has no default when no valid default is provided."""
+    field = infrared_receiver_field(
+        "",
+        {
+            "infrared.available": selector.SelectOptionDict(
+                value="infrared.available",
+                label="Available",
+            )
+        },
+    )
+
+    assert field.default is vol.UNDEFINED
+
+
+def test_infrared_receiver_field_with_current_without_default_uses_optional_field() -> (
+    None
+):
+    """Test current receiver field has no default when no current value exists."""
+    field = infrared_receiver_field_with_current(
+        "",
+        {
+            "infrared.available": selector.SelectOptionDict(
+                value="infrared.available",
+                label="Available",
+            )
+        },
+    )
+
+    assert field.default is vol.UNDEFINED
+
+
+
 def test_universal_remote_from_config_entry_data() -> None:
     """Test normalizing a single universal remote from config entry data."""
     assert universal_remote_from_config_entry_data(
@@ -364,6 +508,59 @@ def test_universal_remote_from_config_entry_data() -> None:
             }
         },
     }
+
+
+def test_universal_remote_from_config_entry_data_supports_receiver_only() -> None:
+    """Test normalizing a receiver-only universal remote."""
+    assert universal_remote_from_config_entry_data(
+        {
+            CONF_REMOTE_ID: "tv",
+            CONF_REMOTE_NAME: "TV",
+            CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
+            CONF_REMOTE_CODESET: "lg_tv",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        }
+    ) == {
+        CONF_REMOTE_ID: "tv",
+        CONF_REMOTE_NAME: "TV",
+        CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
+        CONF_REMOTE_CODESET: "lg_tv",
+        CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+    }
+
+
+def test_universal_remote_from_config_entry_data_supports_emitter_and_receiver() -> None:
+    """Test normalizing a universal remote with emitter and receiver."""
+    assert universal_remote_from_config_entry_data(
+        {
+            CONF_REMOTE_ID: "tv",
+            CONF_REMOTE_NAME: "TV",
+            CONF_INFRARED_EMITTER_ID: "infrared.emitter",
+            CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+        }
+    ) == {
+        CONF_REMOTE_ID: "tv",
+        CONF_REMOTE_NAME: "TV",
+        CONF_INFRARED_EMITTER_ID: "infrared.emitter",
+        CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
+        CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+    }
+
+
+def test_universal_remote_from_config_entry_data_rejects_missing_ir_target() -> None:
+    """Test normalizing rejects remotes without an emitter or receiver."""
+    assert (
+        universal_remote_from_config_entry_data(
+            {
+                CONF_REMOTE_ID: "tv",
+                CONF_REMOTE_NAME: "TV",
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            }
+        )
+        is None
+    )
+
 
 
 def test_universal_remote_from_config_entry_data_rejects_malformed_data() -> None:

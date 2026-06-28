@@ -30,6 +30,7 @@ class InfraredLibraryCodeset:
     module: str
     enum_class: str
     device_type: str | None = None
+    receiver_decoder_id: str | None = None
 
 
 INFRARED_LIBRARY_CODESETS: Final[dict[str, InfraredLibraryCodeset]] = {
@@ -38,12 +39,14 @@ INFRARED_LIBRARY_CODESETS: Final[dict[str, InfraredLibraryCodeset]] = {
         module="infrared_protocols.codes.lg.tv",
         enum_class="LGTVCode",
         device_type=DEVICE_TYPE_TV,
+        receiver_decoder_id="nec",
     ),
     "lg_tv_jp": InfraredLibraryCodeset(
         label="LG TV Japan",
-        module="infrared_protocols.codes.lg.tv",
+        module="custom_components.universal_remote.lg_tv_jp",
         enum_class="LGTVCodeJP",
         device_type=DEVICE_TYPE_TV,
+        receiver_decoder_id="nec",
     ),
     "samsung_tv": InfraredLibraryCodeset(
         label="Samsung TV",
@@ -62,6 +65,7 @@ INFRARED_LIBRARY_CODESETS: Final[dict[str, InfraredLibraryCodeset]] = {
         module="infrared_protocols.codes.vizio.tv",
         enum_class="VizioTVCode",
         device_type=DEVICE_TYPE_TV,
+        receiver_decoder_id="nec",
     ),
 }
 
@@ -195,6 +199,18 @@ def validate_infrared_library_codeset(
     return codeset is not None and (
         device_type is None or codeset.device_type == device_type
     )
+
+
+def infrared_library_codeset_supports_receiver(codeset_id: str) -> bool:
+    """Return whether a codeset supports received signal decoding."""
+    codeset = INFRARED_LIBRARY_CODESETS.get(codeset_id)
+    return codeset is not None and codeset.receiver_decoder_id is not None
+
+
+def infrared_library_codeset_receiver_decoder_id(codeset_id: str) -> str | None:
+    """Return the receiver decoder id for an infrared library codeset."""
+    codeset = INFRARED_LIBRARY_CODESETS.get(codeset_id)
+    return codeset.receiver_decoder_id if codeset is not None else None
 
 
 def _load_infrared_library_enum(codeset_id: str) -> type[Enum]:

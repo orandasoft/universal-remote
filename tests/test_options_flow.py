@@ -8,6 +8,7 @@ from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
     CONF_INFRARED_EMITTER_ID,
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
@@ -104,6 +105,26 @@ def _single_entry(hass: HomeAssistant, infrared_emitter: str) -> MockConfigEntry
     return entry
 
 
+
+
+def _receiver_only_entry(hass: HomeAssistant) -> MockConfigEntry:
+    """Create a receiver-only one-remote config entry."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Receiver TV",
+        data={
+            CONF_REMOTE_ID: "receiver_tv",
+            CONF_REMOTE_NAME: "Receiver TV",
+            CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={CONF_REMOTE_COMMANDS: {"POWER_ON": RAW_COMMAND}},
+        unique_id="receiver_tv",
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
 def _single_entry_without_commands(
     hass: HomeAssistant, infrared_emitter: str
 ) -> MockConfigEntry:
@@ -183,6 +204,26 @@ async def test_manage_commands_menu_with_commands(
 ) -> None:
     """Test manage commands menu includes edit/remove when commands exist."""
     entry = _single_entry(hass, infrared_emitter)
+
+    result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
+
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == SOURCE_MANAGE_COMMANDS
+    assert result["menu_options"] == [
+        SOURCE_ADD_RAW_COMMAND,
+        SOURCE_IMPORT_LIBRARY_COMMANDS,
+        SOURCE_EDIT_COMMAND,
+        SOURCE_REMOVE_COMMAND,
+    ]
+
+
+
+
+async def test_receiver_only_entry_options_flow_manages_commands(
+    hass: HomeAssistant,
+) -> None:
+    """Test receiver-only entries can use command options."""
+    entry = _receiver_only_entry(hass)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
 

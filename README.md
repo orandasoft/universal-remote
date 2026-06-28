@@ -1,10 +1,10 @@
 # Universal Remote
 
-Universal Remote is a Home Assistant custom integration that creates logical infrared remote devices backed by existing Home Assistant `infrared` emitters.
+Universal Remote is a Home Assistant custom integration that creates logical infrared remote devices backed by existing Home Assistant `infrared` emitters and receivers.
 
-It does not communicate with infrared hardware directly. Instead, it stores named infrared commands and asks the linked infrared emitter to transmit them.
+It does not communicate with infrared hardware directly. Instead, it stores named infrared commands and asks the linked infrared emitter to transmit them. It can also listen to a linked infrared receiver and expose matched received commands as Home Assistant events.
 
-This makes it possible to use one infrared transmitter for multiple logical remotes, such as TVs, projectors, HDMI switches, or other infrared-controlled devices.
+This makes it possible to use one infrared transmitter or receiver for multiple logical remotes, such as TVs, projectors, HDMI switches, or other infrared-controlled devices.
 
 > This is a Home Assistant integration for HACS. It is not the Universal Remote Card dashboard plugin.
 
@@ -14,10 +14,12 @@ This makes it possible to use one infrared transmitter for multiple logical remo
 
 - Home Assistant 2026.6.0 or newer
 - HACS
-- At least one Home Assistant infrared emitter from another integration
-- Compatible infrared transmitter hardware supported by that infrared integration
+- At least one Home Assistant infrared emitter or infrared receiver from another integration
+- Compatible infrared transmitter or receiver hardware supported by that infrared integration
 
-The linked infrared emitter is responsible for the actual infrared transmission. Universal Remote only manages the logical remote, command names, optional buttons, and optional TV media player entity.
+The linked infrared emitter is responsible for the actual infrared transmission. Universal Remote only manages the logical remote, command names, optional buttons, optional TV media player entity, and optional received-command event entity.
+
+Universal Remote can be configured with an infrared emitter, an infrared receiver, or both. Sending commands requires an infrared emitter. Receiving and matching infrared commands requires an infrared receiver and a supported codeset.
 
 ---
 
@@ -71,24 +73,30 @@ After installation, add a new Universal Remote from the Home Assistant integrati
 During setup, select:
 
 - a remote name
-- the linked infrared emitter
+- an infrared emitter, an infrared receiver, or both
 - the device type
 - optional commands or library codeset commands
 
-Multiple Universal Remote config entries may use the same infrared emitter. This allows one physical IR blaster to control multiple logical devices.
+At least one infrared target must be selected. Select an infrared emitter when you want Universal Remote to send commands. Select an infrared receiver when you want Universal Remote to expose received command events.
+
+Receiver support requires a supported codeset so received infrared signals can be decoded and matched to known command names.
+
+Multiple Universal Remote config entries may use the same infrared emitter or receiver. This allows one physical IR blaster or receiver to be shared by multiple logical devices.
 
 ---
 
 ## Entities
 
-Each configured universal remote creates a `remote` entity.
+Depending on the configured infrared targets, Universal Remote can create the following entities:
 
-Depending on the configured options, it can also create:
-
-- `button` entities for selected commands
-- a `media_player` entity for TV remotes
+- a `remote` entity when an infrared emitter is configured
+- `button` entities for selected commands when an infrared emitter is configured
+- a `media_player` entity for TV remotes when an infrared emitter is configured
+- an `event` entity for received commands when an infrared receiver is configured
 
 The TV media player is assumed-state. It does not know the real power, volume, channel, source, or playback state of the physical device, although it may update assumed power and source state after commands are sent through Universal Remote.
+
+The received-command event entity emits events when the linked infrared receiver receives a signal. Matched codeset commands use friendly event types such as `power` or `volume_up`. Decoded NEC commands that do not match the selected codeset are reported as `nec` with decoded address and command data. Signals that cannot be decoded are reported as `unknown`.
 
 ---
 
@@ -96,9 +104,9 @@ The TV media player is assumed-state. It does not know the real power, volume, c
 
 Universal remotes can be configured as a generic remote or as a supported device type such as TV.
 
-The device type controls which device-oriented entities can be created. For example, TV remotes can create a TV `media_player` entity.
+The device type controls which device-oriented entities can be created. For example, TV remotes with an infrared emitter can create a TV `media_player` entity.
 
-A codeset is an optional infrared command library profile. Codesets are filtered by device type and can be used to import commands during setup or later from the options flow.
+A codeset is an optional infrared command library profile for sending, but it is required when configuring an infrared receiver. Codesets are filtered by device type and can be used to import commands during setup or later from the options flow.
 
 Supported TV codesets include:
 
@@ -107,6 +115,8 @@ Supported TV codesets include:
 - Samsung TV
 - Sharp AQUOS TV
 - Vizio TV
+
+Receiver command matching is currently supported for NEC-based codesets such as LG TV, LG TV Japan, and Vizio TV. Other codesets may still be used for command import and sending, but may not support received-command matching yet.
 
 ---
 
@@ -138,6 +148,8 @@ Commands may also be imported from a supported Home Assistant infrared protocols
 
 ## Sending commands
 
+Sending commands requires a configured infrared emitter.
+
 You can send a command through the normal Home Assistant `remote.send_command` service.
 
 Example:
@@ -164,9 +176,63 @@ data:
 
 ---
 
+## Receiving commands
+
+Receiving commands requires a configured infrared receiver and a supported codeset.
+
+When a supported received signal matches a known codeset command, Universal Remote exposes it through a Home Assistant `event` entity. The event type is the normalized command name in lowercase, for example:
+
+```text
+power
+volume_up
+hdmi_1
+```
+
+Matched events also include decoded receiver data such as protocol, decoder, address, command, matched status, and command name.
+
+Decoded NEC commands that do not match the selected codeset are reported with the stable event type:
+
+```text
+nec
+```
+
+The `nec` event type includes decoded address and command data. This allows automations to react to NEC commands from a physical universal remote even when those commands are not part of the selected TV codeset.
+
+Signals that cannot be decoded are reported as:
+
+```text
+unknown
+```
+
+The event entity also exposes a small `recent_events` history attribute with the most recent received event summaries. This is intended for debugging receiver behavior, repeat frames, and unmatched decoded commands. Raw timings are not stored in this history.
+
+Example automation for an unmatched decoded NEC command:
+
+```yaml
+trigger:
+  - platform: state
+    entity_id: event.lg_tv_received_command
+
+condition:
+  - condition: template
+    value_template: >
+      {{ trigger.to_state.attributes.event_type == 'nec'
+         and trigger.to_state.attributes.address == 4
+         and trigger.to_state.attributes.command == 99 }}
+
+action:
+  - action: light.toggle
+    target:
+      entity_id: light.living_room
+```
+
+Universal Remote does not learn and save new commands from received infrared signals. Received signals are used only for event reporting.
+
+---
+
 ## Button entities
 
-Command button entities are optional.
+Command button entities are optional and require a configured infrared emitter.
 
 When adding or importing commands, the flow can create Home Assistant `button` entities for selected commands. Pressing a button sends the stored infrared command through the linked infrared emitter.
 
@@ -174,7 +240,7 @@ When adding or importing commands, the flow can create Home Assistant `button` e
 
 ## TV media player
 
-TV remotes create a `media_player` entity.
+TV remotes with an infrared emitter create a `media_player` entity.
 
 The media player exposes supported features based on the commands configured for the remote.
 
@@ -198,9 +264,11 @@ Because the media player is assumed-state, it sends commands but does not receiv
 
 ## Availability and repairs
 
-Universal Remote entities are available when the linked infrared emitter exists and is available.
+Universal Remote send entities are available when the linked infrared emitter exists and is available.
 
 If the linked infrared emitter is missing or unavailable, the integration creates a repair issue to help update the configuration.
+
+If a configured infrared receiver is missing, the integration creates a repair issue for the missing receiver. The received-command event entity is only created when the linked receiver exists.
 
 ---
 
@@ -208,18 +276,22 @@ If the linked infrared emitter is missing or unavailable, the integration create
 
 Diagnostics are available from the Home Assistant device/integration diagnostics UI.
 
-Diagnostics are intended to help troubleshoot configuration issues without exposing full infrared command payloads.
+Diagnostics are intended to help troubleshoot configuration issues without exposing full infrared command payloads. Receiver diagnostics include whether a receiver event entity is expected, whether the selected codeset supports receiver decoding, the receiver decoder id, and the number of exposed receiver event types.
 
 ---
 
 ## Known limitations
 
-- Universal Remote does not learn infrared commands.
+- Universal Remote does not learn or store new infrared commands from received signals.
+- Received command history is capped and stores decoded summaries only, not raw timings.
 - Universal Remote does not transmit infrared commands directly.
 - The linked `infrared` integration is responsible for hardware communication.
+- Sending commands requires a linked infrared emitter.
+- Receiving command events requires a linked infrared receiver and a supported codeset.
+- Receiver decoding is currently limited to supported codesets.
 - The TV media player is assumed-state and does not reflect real device state.
 - Existing commands are not deleted automatically when changing device type or codeset.
-- Availability depends on the linked infrared emitter.
+- Availability depends on the linked infrared emitter or receiver.
 
 ---
 

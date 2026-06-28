@@ -96,14 +96,27 @@ async def async_setup_entry(
         if remote.get(CONF_REMOTE_DEVICE_TYPE) != DEVICE_TYPE_TV:
             continue
 
-        remote_id = str(remote[CONF_REMOTE_ID])
+        remote_id = remote.get(CONF_REMOTE_ID)
+        remote_name = remote.get(CONF_REMOTE_NAME)
+        infrared_emitter_id = remote.get(CONF_INFRARED_EMITTER_ID)
+
+        if (
+            not isinstance(remote_id, str)
+            or not remote_id
+            or not isinstance(remote_name, str)
+            or not remote_name
+            or not isinstance(infrared_emitter_id, str)
+            or not infrared_emitter_id
+        ):
+            continue
+
         unique_id = media_player_unique_id(entry.entry_id, remote_id)
         expected_unique_ids.add(unique_id)
         entities.append(
             UniversalRemoteTvMediaPlayer(
                 remote_id=remote_id,
-                remote_name=str(remote[CONF_REMOTE_NAME]),
-                infrared_emitter_id=str(remote[CONF_INFRARED_EMITTER_ID]),
+                remote_name=remote_name,
+                infrared_emitter_id=infrared_emitter_id,
                 commands=normalize_command_objects(
                     remote.get(CONF_REMOTE_COMMANDS, {})
                 ),

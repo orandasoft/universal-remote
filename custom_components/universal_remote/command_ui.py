@@ -18,7 +18,7 @@ COMMAND_CATEGORY_OTHER: Final = "other"
 
 _NUMBER_COMMAND_RE: Final = re.compile(r"^(?:NUM|NUMBER)_(\d+)$")
 _PREFIXED_NUMBER_COMMAND_RE: Final = re.compile(
-    r"^(DTV|BS|CS1|CS2|BS4K)_(?:NUM|NUMBER)_(\d+)$"
+    r"^(DTV|BS|CS1|CS2|BS4K|CS4K)_(?:NUM|NUMBER)_(\d+)$"
 )
 _HDMI_COMMAND_RE: Final = re.compile(r"^HDMI_(\d+)$")
 
@@ -65,6 +65,7 @@ _COMMAND_ICONS: Final[dict[str, str]] = {
     "CS1": "mdi:import",
     "CS2": "mdi:import",
     "BS4K": "mdi:import",
+    "CS4K": "mdi:import",
     "THREE_DIGIT_INPUT": "mdi:import",
     "HDMI_1": "mdi:video-input-hdmi",
     "HDMI_2": "mdi:video-input-hdmi",
@@ -87,6 +88,7 @@ _COMMAND_ICONS: Final[dict[str, str]] = {
     "DISPLAY": "mdi:information-outline",
     "GUIDE": "mdi:television-guide",
     "EPG": "mdi:television-guide",
+    "LIST": "mdi:format-list-bulleted",
     "SAP": "mdi:translate",
     "MTS": "mdi:translate",
     "AUDIO_LANGUAGE": "mdi:translate",
@@ -96,6 +98,7 @@ _COMMAND_ICONS: Final[dict[str, str]] = {
     "DATA": "mdi:database-outline",
     "D_BUTTON": "mdi:database-outline",
     "AMAZON": "mdi:movie-open-play-outline",
+    "ASPECT": "mdi:aspect-ratio",
     "PRIME_VIDEO": "mdi:movie-open-play-outline",
     "NETFLIX": "mdi:netflix",
     "STREAMING": "mdi:cast",
@@ -106,6 +109,7 @@ _ACRONYMS: Final[set[str]] = {
     "BS4K",
     "CS1",
     "CS2",
+    "CS4K",
     "DTV",
     "EPG",
     "HDMI",
@@ -125,6 +129,7 @@ _INPUT_COMMANDS: Final[set[str]] = {
     "CS1",
     "CS2",
     "BS4K",
+    "CS4K",
     "THREE_DIGIT_INPUT",
 }
 
@@ -140,7 +145,7 @@ def command_is_media_player_source(command_name: str) -> bool:
     """Return whether a command should be exposed as a media-player source."""
     normalized = command_name.strip().upper()
     return (
-        normalized in {"TV", "DTV", "BS", "CS1", "CS2", "BS4K"}
+        normalized in {"TV", "DTV", "BS", "CS1", "CS2", "BS4K", "CS4K"}
         or normalized in _APP_COMMANDS
         or _HDMI_COMMAND_RE.fullmatch(normalized) is not None
     )
