@@ -131,7 +131,6 @@
   },
   "issues": {
     "linked_infrared_emitter_missing": {
-      "description": "Universal remote {remote_name} is linked to infrared emitter {infrared_emitter_id}, but that emitter is unavailable or no longer exists. Repair the issue by selecting a replacement infrared emitter or disabling send support for this universal remote.",
       "title": "Linked infrared emitter is missing",
       "fix_flow": {
         "abort": {
@@ -160,7 +159,6 @@
       }
     },
     "linked_infrared_receiver_missing": {
-      "description": "Universal remote {remote_name} is linked to infrared receiver {infrared_receiver_id}, but that receiver is unavailable or no longer exists. Repair the issue by selecting a replacement infrared receiver or disabling receive support for this universal remote.",
       "title": "Linked infrared receiver is missing",
       "fix_flow": {
         "abort": {
