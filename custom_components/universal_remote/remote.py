@@ -28,8 +28,10 @@ from .helpers import (
     linked_entity_is_available,
     normalize_command_mapping,
     universal_remote_device_info as shared_universal_remote_device_info,
-    universal_remotes_from_config_entry
+    universal_remote_from_config_entry_data,
+    universal_remotes_from_config_entry,
 )
+from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 from .repairs import (
     async_create_linked_infrared_emitter_missing_issue,
     async_delete_linked_infrared_emitter_missing_issue,
@@ -50,6 +52,34 @@ type DeviceInfoFactory = Callable[[str, str, Mapping[str, Any]], DeviceInfo]
 type EntityNameFactory = Callable[[str, str, Mapping[str, Any]], str | None]
 type MissingInfraredEntityIssueHandler = Callable[[HomeAssistant, str, str, str], None]
 type RestoredInfraredEntityIssueHandler = Callable[[HomeAssistant, str], None]
+
+
+def _runtime_by_remote_id_from_config_entry(
+    entry: ConfigEntry,
+) -> dict[str, UniversalRemoteRuntime]:
+    """Return runtime objects keyed by remote id for a config entry."""
+    runtime_data = getattr(entry, "runtime_data", None)
+    if not isinstance(runtime_data, UniversalRemoteData):
+        return {}
+
+    runtime = runtime_data.runtime
+    if runtime is None:
+        return {}
+
+    remote = universal_remote_from_config_entry_data(
+        {
+            **entry.data,
+            **entry.options,
+        }
+    )
+    if remote is None:
+        return {}
+
+    remote_id = remote.get(CONF_REMOTE_ID)
+    if not isinstance(remote_id, str) or not remote_id:
+        return {}
+
+    return {remote_id: runtime}
 
 
 def _as_str_mapping(value: Any) -> dict[str, str] | None:
@@ -206,6 +236,7 @@ async def async_setup_universal_remote_entities(
     translation_domain: str = DOMAIN,
     missing_infrared_issue_handler: MissingInfraredEntityIssueHandler | None = None,
     restored_infrared_issue_handler: RestoredInfraredEntityIssueHandler | None = None,
+    runtime_by_remote_id: Mapping[str, UniversalRemoteRuntime] | None = None,
     cleanup_stale_issues: bool = False,
 ) -> None:
     """Set up configured universal remote entities.
@@ -226,6 +257,7 @@ async def async_setup_universal_remote_entities(
     configured_remote_ids: set[str] = set()
     configured_device_ids: set[str] = set()
     remote_definitions = configured_remote_definitions(entry)
+    runtime_by_remote_id = runtime_by_remote_id or {}
 
     for remote_config in remote_definitions:
         remote_id = remote_config.get(CONF_REMOTE_ID)
@@ -262,6 +294,7 @@ async def async_setup_universal_remote_entities(
                 name=name,
                 infrared_emitter_id=infrared_emitter_id,
                 commands=commands,
+                runtime=runtime_by_remote_id.get(remote_id),
                 unique_id_prefix=entry.entry_id,
                 device_info=device_info_factory(remote_id, name, remote_config),
                 entity_name=entity_name_factory(remote_id, name, remote_config),
@@ -304,6 +337,7 @@ async def async_setup_entry(
         entity_name_factory=_standalone_universal_remote_entity_name,
         has_entity_name=True,
         cleanup_devices=True,
+        runtime_by_remote_id=_runtime_by_remote_id_from_config_entry(entry),
         cleanup_stale_issues=True,
         missing_infrared_issue_handler=_create_missing_issue,
         restored_infrared_issue_handler=_delete_missing_issue,
@@ -323,6 +357,7 @@ class InfraredRemoteEntity(RemoteEntity):
         name: str,
         infrared_emitter_id: str,
         commands: dict[str, str] | None,
+        runtime: UniversalRemoteRuntime | None = None,
         unique_id_prefix: str,
         device_info: DeviceInfo,
         entity_name: str | None,
@@ -341,6 +376,7 @@ class InfraredRemoteEntity(RemoteEntity):
         self._attr_device_info = device_info
         self._infrared_emitter_id = infrared_emitter_id
         self._commands = commands or {}
+        self._runtime = runtime
         self._translation_domain = translation_domain
         self._missing_infrared_issue_handler = missing_infrared_issue_handler
         self._restored_infrared_issue_handler = restored_infrared_issue_handler
@@ -469,12 +505,32 @@ class InfraredRemoteEntity(RemoteEntity):
                 },
             )
 
+        entity_id = self._resolve_infrared_emitter_id()
+        hass = getattr(self, "hass", None)
+        if hass is None:
+            raise HomeAssistantError(
+                translation_domain=self._translation_domain,
+                translation_key="remote_infrared_missing",
+                translation_placeholders={"entity_id": entity_id},
+            )
+
+        if self._runtime is not None:
+            await self._runtime.async_send_command_sequence(
+                commands,
+                num_repeats=num_repeats,
+                delay_secs=delay_secs,
+                parse_kwargs=kwargs,
+                check_available=False,
+                allow_raw=True,
+            )
+            return
+
         total = len(commands) * num_repeats
         sent = 0
 
         for _ in range(num_repeats):
             for item in commands:
-                await self._async_send_named_command(item, kwargs)
+                await self._async_send_named_command(item, kwargs, allow_raw=True)
                 sent += 1
 
                 if delay_secs and sent < total:
@@ -496,16 +552,10 @@ class InfraredRemoteEntity(RemoteEntity):
         self,
         command: str,
         kwargs: dict[str, Any] | None = None,
+        *,
+        allow_raw: bool = False,
     ) -> None:
         """Resolve and send a named or raw infrared command."""
-        configured_payload = self._configured_command_payload(command)
-        if configured_payload is not None:
-            command_is_configured = True
-            raw_command = configured_payload
-        else:
-            command_is_configured = False
-            raw_command = command
-
         entity_id = self._resolve_infrared_emitter_id()
 
         hass = getattr(self, "hass", None)
@@ -514,6 +564,29 @@ class InfraredRemoteEntity(RemoteEntity):
                 translation_domain=self._translation_domain,
                 translation_key="remote_infrared_missing",
                 translation_placeholders={"entity_id": entity_id},
+            )
+
+        if self._runtime is not None:
+            await self._runtime.async_send_command_name(
+                command,
+                parse_kwargs=kwargs or {},
+                check_available=False,
+                allow_raw=allow_raw,
+            )
+            return
+
+        configured_payload = self._configured_command_payload(command)
+        if configured_payload is not None:
+            command_is_configured = True
+            raw_command = configured_payload
+        elif allow_raw:
+            command_is_configured = False
+            raw_command = command
+        else:
+            raise HomeAssistantError(
+                translation_domain=self._translation_domain,
+                translation_key="remote_command_missing",
+                translation_placeholders={"command": command},
             )
 
         try:

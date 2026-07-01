@@ -422,3 +422,40 @@ async def test_runtime_supports_empty_command_map_for_raw_remote_send(
 
     assert await_args.args == (hass, INFRARED_EMITTER_ID, RAW_COMMAND)
     assert await_args.kwargs["check_available"] is False
+
+
+async def test_empty_command_sequence_does_nothing(
+    hass: HomeAssistant,
+) -> None:
+    """Test empty command sequence does not send anything."""
+    runtime = _runtime(hass, {"BS": RAW_COMMAND})
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(),
+    ) as mock_send:
+        await runtime.async_send_command_sequence(
+            [],
+            num_repeats=1,
+            delay_secs=0,
+        )
+
+    mock_send.assert_not_awaited()
+    assert runtime.selected_tuner is None
+
+
+async def test_remove_tuner_listener_is_idempotent(
+    hass: HomeAssistant,
+) -> None:
+    """Test removing a tuner listener twice is safe."""
+    runtime = _runtime(hass, {})
+    listener = Mock()
+
+    remove_listener = runtime.async_add_tuner_listener(listener)
+
+    remove_listener()
+    remove_listener()
+
+    runtime.async_note_received_command("BS")
+
+    listener.assert_not_called()
