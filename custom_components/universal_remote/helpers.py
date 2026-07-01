@@ -274,6 +274,21 @@ def find_command_key(
     )
 
 
+def find_configured_command(
+    commands: Mapping[str, Any],
+    command_name: str,
+) -> tuple[str, Any] | None:
+    """Return the configured command key and stored value matching a command name."""
+    if command_name in commands:
+        return command_name, commands[command_name]
+
+    command_key = find_command_key(commands, normalize_command_name(command_name))
+    if command_key is None:
+        return None
+
+    return command_key, commands[command_key]
+
+    
 def universal_remote_from_config_entry_data(
     value: Mapping[str, Any],
 ) -> dict[str, Any] | None:

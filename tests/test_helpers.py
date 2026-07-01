@@ -27,6 +27,7 @@ from custom_components.universal_remote.helpers import (
     command_options,
     command_payload,
     find_command_key,
+    find_configured_command,
     infrared_emitter_field,
     infrared_emitter_field_with_current,
     infrared_emitter_selector,
@@ -278,6 +279,39 @@ def test_find_command_key_case_insensitive() -> None:
     assert find_command_key(commands, "MISSING") is None
 
 
+def test_find_configured_command_exact_match_wins() -> None:
+    """Test configured command lookup prefers exact command names."""
+    commands = {
+        "Power": "exact-payload",
+        "POWER": "normalized-payload",
+    }
+
+    assert find_configured_command(commands, "Power") == ("Power", "exact-payload")
+
+
+def test_find_configured_command_normalized_match() -> None:
+    """Test configured command lookup falls back to normalized command names."""
+    commands = {
+        "Power On": "payload",
+    }
+
+    assert find_configured_command(commands, "power_on") == ("Power On", "payload")
+
+
+def test_find_configured_command_returns_none_for_missing_command() -> None:
+    """Test configured command lookup returns none when missing."""
+    assert find_configured_command({"POWER": "payload"}, "MUTE") is None
+
+
+def test_find_configured_command_preserves_stored_value() -> None:
+    """Test configured command lookup returns stored values unchanged."""
+    commands = {
+        "BROKEN": "",
+    }
+
+    assert find_configured_command(commands, "broken") == ("BROKEN", "")
+
+    
 def test_command_payload_helpers() -> None:
     """Test command payload and button helper branches."""
     assert command_payload("38000:1,2") == "38000:1,2"
