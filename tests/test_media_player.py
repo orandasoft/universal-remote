@@ -14,6 +14,7 @@ from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
     CONF_INFRARED_EMITTER_ID,
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
@@ -191,6 +192,32 @@ async def test_async_setup_entry_skips_generic_remote(
     )
 
     assert entity_id is None
+
+
+async def test_async_setup_entry_ignores_receiver_only_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test media-player platform ignores receiver-only universal remote entries."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_REMOTE_ID: REMOTE_ID,
+            CONF_REMOTE_NAME: REMOTE_NAME,
+            CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "POWER_ON": _command_object(RAW_COMMAND),
+            },
+        },
+    )
+    entry.add_to_hass(hass)
+    async_add_entities = Mock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    async_add_entities.assert_called_once_with([])
 
 
 async def test_setup_entry_cleans_stale_media_player_entity(
