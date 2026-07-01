@@ -29,6 +29,7 @@ from .const import (
 )
 from .helpers import (
     command_payload,
+    find_configured_command,
     linked_entity_is_available,
     normalize_command_name,
     normalize_command_objects,
@@ -262,14 +263,15 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
 
     async def _send_command_name(self, command_name: str) -> None:
         """Send a configured command by name."""
-        if command_name not in self._commands:
+        configured_command = find_configured_command(self._commands, command_name)
+        if configured_command is None:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="remote_command_missing",
                 translation_placeholders={"command": command_name},
             )
 
-        command_data = command_payload(self._commands[command_name])
+        command_data = command_payload(configured_command[1])
         if command_data is None:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -286,15 +288,13 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
 
 def _role_commands(commands: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
     """Return available media-player roles mapped to configured command names."""
-    normalized_commands = {
-        normalize_command_name(command_name): command_name for command_name in commands
-    }
     roles: dict[str, str] = {}
 
     for role, candidate_names in _ROLE_COMMANDS.items():
         for candidate_name in candidate_names:
-            if candidate_name in normalized_commands:
-                roles[role] = normalized_commands[candidate_name]
+            configured_command = find_configured_command(commands, candidate_name)
+            if configured_command is not None:
+                roles[role] = configured_command[0]
                 break
 
     return roles
@@ -305,14 +305,12 @@ def _source_commands(
     source_command_map: Mapping[str, str],
 ) -> dict[str, str]:
     """Return source labels mapped to configured command names."""
-    normalized_commands = {
-        normalize_command_name(command_name): command_name for command_name in commands
-    }
     sources: dict[str, str] = {}
 
     for source, candidate_name in source_command_map.items():
-        if candidate_name in normalized_commands:
-            sources[source] = normalized_commands[candidate_name]
+        configured_command = find_configured_command(commands, candidate_name)
+        if configured_command is not None:
+            sources[source] = configured_command[0]
 
     return sources
 
