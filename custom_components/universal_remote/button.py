@@ -16,7 +16,6 @@ from .const import (
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
-    DOMAIN,
 )
 from .helpers import (
     command_create_button,

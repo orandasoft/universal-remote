@@ -19,6 +19,7 @@ from custom_components.universal_remote.const import (
     CONF_REMOTE_CODESET,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
+    DOMAIN,
 )
 from custom_components.universal_remote.infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
@@ -420,7 +421,7 @@ def test_received_command_event_entity_handles_decoded_signal() -> None:
         entity._handle_signal(_signal())
 
     assert entity._attr_device_info == DeviceInfo(
-        identifiers={(event_platform.DOMAIN, "living_room_tv")},
+        identifiers={(DOMAIN, "living_room_tv")},
         name="Living room TV",
     )
     assert entity._last_decoded_event == {"event_type": "nec", **event_data}

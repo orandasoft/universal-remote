@@ -29,7 +29,6 @@ from .const import (
     CONF_REMOTE_CODESET,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
-    DOMAIN,
 )
 from .helpers import universal_remote_from_config_entry_data, universal_remote_device_info
 from .infrared_library import (

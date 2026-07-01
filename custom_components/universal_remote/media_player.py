@@ -30,7 +30,6 @@ from .helpers import (
     command_payload,
     find_configured_command,
     linked_entity_is_available,
-    normalize_command_name,
     normalize_command_objects,
     universal_remote_device_info,
     universal_remotes_from_config_entry,
