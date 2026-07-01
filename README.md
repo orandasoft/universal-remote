@@ -150,6 +150,10 @@ Commands may also be imported from a supported Home Assistant infrared protocols
 
 Sending commands requires a configured infrared emitter.
 
+The `remote.send_command` service can send configured command names or a raw infrared payload supported by the linked infrared emitter. Raw payload fallback is intentionally limited to `remote.send_command`.
+
+Button entities and TV media player controls send configured commands only. A button sends its stored command. Media player controls send the configured command mapped to the selected role or source.
+
 You can send a command through the normal Home Assistant `remote.send_command` service.
 
 Example:
@@ -256,7 +260,7 @@ Examples:
 
 Source support is derived from configured command names.
 
-Commands such as `TV`, `TV_INPUT`, `DTV`, `BS`, `BS4K`, `CS1`, `CS2`, `INPUT`, `SOURCE`, `HDMI_1`, `HDMI_2`, `HDMI_3`, `HDMI_4`, and `HDMI_5` may appear as selectable sources when they are configured for the remote. Component inputs and app shortcuts such as `NETFLIX` or `AMAZON_PRIME` may also appear when supported by the selected codeset.
+Commands such as `TV`, `TV_INPUT`, `DTV`, `BS`, `BS4K`, `CS1`, `CS2`, `CS4K`, `INPUT`, `SOURCE`, `HDMI_1`, `HDMI_2`, `HDMI_3`, `HDMI_4`, and `HDMI_5` may appear as selectable sources when they are configured for the remote. Component inputs and app shortcuts such as `NETFLIX` or `AMAZON_PRIME` may also appear when supported by the selected codeset.
 
 Because the media player is assumed-state, it sends commands but does not receive real state feedback from the physical device. Source selection updates the assumed source in Home Assistant after Universal Remote sends the selected source command.
 

@@ -30,6 +30,7 @@ TV_SOURCE_COMMAND_MAP = {
     "BS4K": "BS4K",
     "CS1": "CS1",
     "CS2": "CS2",
+    "CS4K": "CS4K",
     "Input": "INPUT",
     "Source": "SOURCE",
     "Next HDMI input": "NEXT_HDMI_INPUT",

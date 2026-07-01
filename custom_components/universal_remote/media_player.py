@@ -10,11 +10,9 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
@@ -30,8 +28,10 @@ from .const import (
 )
 from .helpers import (
     command_payload,
-    normalize_command_name,
+    find_configured_command,
+    linked_entity_is_available,
     normalize_command_objects,
+    universal_remote_device_info,
     universal_remotes_from_config_entry,
 )
 from .send import async_send_infrared_command
@@ -157,10 +157,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         )
         self._role_commands = _role_commands(self._commands)
         self._attr_unique_id = unique_id
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, remote_id)},
-            name=remote_name,
-        )
+        self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
         self._attr_source_list = list(self._source_commands) or None
         self._attr_source = None
         self._attr_supported_features = _supported_features(
@@ -191,8 +188,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         if hass is None:
             return True
 
-        state = hass.states.get(self._infrared_emitter_id)
-        return state is not None and state.state != STATE_UNAVAILABLE
+        return linked_entity_is_available(hass, self._infrared_emitter_id)
 
     async def async_turn_on(self) -> None:
         """Turn on the TV."""
@@ -263,14 +259,15 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
 
     async def _send_command_name(self, command_name: str) -> None:
         """Send a configured command by name."""
-        if command_name not in self._commands:
+        configured_command = find_configured_command(self._commands, command_name)
+        if configured_command is None:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
                 translation_key="remote_command_missing",
                 translation_placeholders={"command": command_name},
             )
 
-        command_data = command_payload(self._commands[command_name])
+        command_data = command_payload(configured_command[1])
         if command_data is None:
             raise HomeAssistantError(
                 translation_domain=DOMAIN,
@@ -287,15 +284,13 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
 
 def _role_commands(commands: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
     """Return available media-player roles mapped to configured command names."""
-    normalized_commands = {
-        normalize_command_name(command_name): command_name for command_name in commands
-    }
     roles: dict[str, str] = {}
 
     for role, candidate_names in _ROLE_COMMANDS.items():
         for candidate_name in candidate_names:
-            if candidate_name in normalized_commands:
-                roles[role] = normalized_commands[candidate_name]
+            configured_command = find_configured_command(commands, candidate_name)
+            if configured_command is not None:
+                roles[role] = configured_command[0]
                 break
 
     return roles
@@ -306,14 +301,12 @@ def _source_commands(
     source_command_map: Mapping[str, str],
 ) -> dict[str, str]:
     """Return source labels mapped to configured command names."""
-    normalized_commands = {
-        normalize_command_name(command_name): command_name for command_name in commands
-    }
     sources: dict[str, str] = {}
 
     for source, candidate_name in source_command_map.items():
-        if candidate_name in normalized_commands:
-            sources[source] = normalized_commands[candidate_name]
+        configured_command = find_configured_command(commands, candidate_name)
+        if configured_command is not None:
+            sources[source] = configured_command[0]
 
     return sources
 

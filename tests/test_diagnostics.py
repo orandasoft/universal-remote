@@ -1,6 +1,8 @@
 """Tests for Universal Remote diagnostics."""
 
 from custom_components.universal_remote.const import (
+    CONF_COMMAND_CREATE_BUTTON,
+    CONF_COMMAND_DATA,
     CONF_INFRARED_EMITTER_ID,
     CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
@@ -104,3 +106,90 @@ async def test_diagnostics_reports_receiver_event_metadata(
     assert remote["receiver_decoder"] == "nec"
     assert remote["receiver_codeset_supported"] is True
     assert remote["receiver_event_type_count"] >= 3
+async def test_diagnostics_supports_receiver_only_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test diagnostics supports receiver-only universal remote entries."""
+    receiver_entity_id = "infrared.test_receiver"
+    hass.states.async_set(receiver_entity_id, STATE_ON)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Receiver Remote",
+        data={
+            CONF_REMOTE_ID: "receiver_only",
+            CONF_REMOTE_NAME: "Receiver Only",
+            CONF_INFRARED_RECEIVER_ID: receiver_entity_id,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            CONF_REMOTE_CODESET: "lg_tv",
+        },
+        options={CONF_REMOTE_COMMANDS: {"POWER": "38000:1,2"}},
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["summary"] == {
+        "remote_count": 1,
+        "command_count": 1,
+        "button_count": 0,
+        "media_player_count": 0,
+        "missing_infrared_emitter_count": 0,
+        "missing_infrared_receiver_count": 0,
+    }
+
+    remote = diagnostics["universal_remote"]
+    assert remote["id"] == "receiver_only"
+    assert remote["name"] == "Receiver Only"
+    assert remote["infrared_emitter_id"] is None
+    assert remote["infrared_emitter_exists"] is False
+    assert remote["infrared_emitter_available"] is False
+    assert remote["infrared_receiver_id"] == receiver_entity_id
+    assert remote["infrared_receiver_exists"] is True
+    assert remote["infrared_receiver_available"] is True
+    assert remote["receiver_event_expected"] is True
+    assert remote["receiver_decoder"] == "nec"
+    assert remote["receiver_codeset_supported"] is True
+    assert remote["receiver_event_type_count"] >= 3
+    assert remote["device_type"] == DEVICE_TYPE_TV
+    assert remote["codeset"] == "lg_tv"
+    assert remote["media_player_expected"] is False
+    assert remote["button_count"] == 0
+    assert remote["source_count"] == 0
+    assert remote["command_count"] == 1
+    assert remote["commands"] == ["POWER"]
+
+
+
+
+async def test_diagnostics_redacts_command_payloads(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test diagnostics exposes command names but not raw infrared payloads."""
+    raw_payload = "38000:1,2,3,4,5,6"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Living Room TV",
+        data={
+            CONF_REMOTE_ID: "living_room_tv",
+            CONF_REMOTE_NAME: "Living Room TV",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "POWER_ON": raw_payload,
+                "MUTE": {
+                    CONF_COMMAND_DATA: raw_payload,
+                    CONF_COMMAND_CREATE_BUTTON: True,
+                },
+            },
+        },
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["entry"]["options"][CONF_REMOTE_COMMANDS] == ["MUTE", "POWER_ON"]
+    assert diagnostics["universal_remote"]["commands"] == ["MUTE", "POWER_ON"]
+    assert raw_payload not in str(diagnostics)

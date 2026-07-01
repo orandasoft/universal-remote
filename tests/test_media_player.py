@@ -14,6 +14,7 @@ from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
     CONF_INFRARED_EMITTER_ID,
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
@@ -193,6 +194,32 @@ async def test_async_setup_entry_skips_generic_remote(
     assert entity_id is None
 
 
+async def test_async_setup_entry_ignores_receiver_only_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test media-player platform ignores receiver-only universal remote entries."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={
+            CONF_REMOTE_ID: REMOTE_ID,
+            CONF_REMOTE_NAME: REMOTE_NAME,
+            CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "POWER_ON": _command_object(RAW_COMMAND),
+            },
+        },
+    )
+    entry.add_to_hass(hass)
+    async_add_entities = Mock()
+
+    await async_setup_entry(hass, entry, async_add_entities)
+
+    async_add_entities.assert_called_once_with([])
+
+
 async def test_setup_entry_cleans_stale_media_player_entity(
     hass: HomeAssistant,
     infrared_emitter: str,
@@ -339,6 +366,35 @@ def test_media_player_without_source_commands_has_no_source_feature(
     assert not entity.supported_features & MediaPlayerEntityFeature.SELECT_SOURCE
 
 
+async def test_media_player_cs4k_source_is_supported(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test CS4K command is exposed as a selectable TV source."""
+    entity = _media_player_entity(
+        hass,
+        infrared_emitter,
+        commands={"CS4K": _command_object(RAW_COMMAND)},
+    )
+
+    assert entity.source_list == ["CS4K"]
+    assert entity.supported_features & MediaPlayerEntityFeature.SELECT_SOURCE
+
+    with (
+        patch(
+            "custom_components.universal_remote.media_player."
+            "async_send_infrared_command",
+            AsyncMock(),
+        ) as mock_send,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
+        await entity.async_select_source("CS4K")
+
+    assert mock_send.await_args_list[0].args == (hass, infrared_emitter, RAW_COMMAND)
+    assert entity.source == "CS4K"
+    write_state.assert_called_once()
+
+    
 async def test_media_player_missing_role_raises(
     hass: HomeAssistant,
     infrared_emitter: str,

@@ -18,7 +18,6 @@ from homeassistant.components.infrared import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from infrared_protocols.commands import Command
 from infrared_protocols.commands.nec import NECCommand
@@ -30,9 +29,8 @@ from .const import (
     CONF_REMOTE_CODESET,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
-    DOMAIN,
 )
-from .helpers import universal_remote_from_config_entry_data
+from .helpers import universal_remote_from_config_entry_data, universal_remote_device_info
 from .infrared_library import (
     INFRARED_LIBRARY_CODESETS,
     NO_INFRARED_LIBRARY_CODESET,
@@ -214,10 +212,7 @@ class UniversalRemoteReceivedCommandEventEntity(
     ) -> None:
         """Initialize the received command event entity."""
         self._attr_unique_id = event_unique_id(remote_id)
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, remote_id)},
-            name=remote_name,
-        )
+        self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
         self._infrared_receiver_entity_id = receiver_entity_id
         self._codeset_id = codeset_id
         self._attr_event_types = _event_types_for_codeset(codeset_id)

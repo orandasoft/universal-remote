@@ -7,7 +7,6 @@ from typing import Any
 
 from homeassistant.components.remote import RemoteEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -24,7 +23,13 @@ from .const import (
     DEFAULT_NUM_REPEATS,
     DOMAIN,
 )
-from .helpers import normalize_command_mapping, universal_remotes_from_config_entry
+from .helpers import (
+    find_configured_command,
+    linked_entity_is_available,
+    normalize_command_mapping,
+    universal_remote_device_info as shared_universal_remote_device_info,
+    universal_remotes_from_config_entry
+)
 from .repairs import (
     async_create_linked_infrared_emitter_missing_issue,
     async_delete_linked_infrared_emitter_missing_issue,
@@ -68,10 +73,10 @@ def configured_remote_definitions(entry: ConfigEntry) -> list[dict[str, Any]]:
 def _universal_remote_device_info(
     remote_id: str,
     name: str,
-    _remote_config: Mapping[str, Any],
+    _: Mapping[str, Any],
 ) -> DeviceInfo:
-    """Return device info for a standalone universal remote."""
-    return DeviceInfo(identifiers={(DOMAIN, remote_id)}, name=name)
+    """Return device info for a configured universal remote."""
+    return shared_universal_remote_device_info(remote_id, name)
 
 
 def _standalone_universal_remote_entity_name(
@@ -354,8 +359,7 @@ class InfraredRemoteEntity(RemoteEntity):
         if hass is None:
             return True
 
-        state = hass.states.get(self._infrared_emitter_id)
-        return state is not None and state.state != STATE_UNAVAILABLE
+        return linked_entity_is_available(hass, self._infrared_emitter_id)
 
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
@@ -477,16 +481,12 @@ class InfraredRemoteEntity(RemoteEntity):
                     await asyncio.sleep(delay_secs)
 
     def _configured_command_payload(self, command: str) -> str | None:
-        """Return configured command payload using case-insensitive command names."""
-        if command in self._commands:
-            return self._commands[command]
+        """Return configured command payload using normalized command names."""
+        configured_command = find_configured_command(self._commands, command)
+        if configured_command is None:
+            return None
 
-        normalized_command = command.upper()
-        for configured_command, payload in self._commands.items():
-            if configured_command.upper() == normalized_command:
-                return payload
-
-        return None
+        return configured_command[1]
 
     def _has_configured_command(self, command: str) -> bool:
         """Return whether a configured command exists."""
@@ -540,8 +540,7 @@ class InfraredRemoteEntity(RemoteEntity):
         if hass is None:
             return self._infrared_emitter_id
 
-        state = hass.states.get(self._infrared_emitter_id)
-        if state is None or state.state == STATE_UNAVAILABLE:
+        if not linked_entity_is_available(hass, self._infrared_emitter_id):
             self._update_missing_infrared_repair_issue()
             raise HomeAssistantError(
                 translation_domain=self._translation_domain,

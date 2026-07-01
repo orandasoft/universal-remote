@@ -18,6 +18,7 @@ from custom_components.universal_remote.const import (
     CONF_REMOTE_NAME,
     DEVICE_TYPE_GENERIC,
     DEVICE_TYPE_TV,
+    DOMAIN,
 )
 from custom_components.universal_remote.helpers import (
     available_infrared_emitters,
@@ -27,20 +28,24 @@ from custom_components.universal_remote.helpers import (
     command_options,
     command_payload,
     find_command_key,
+    find_configured_command,
     infrared_emitter_field,
     infrared_emitter_field_with_current,
     infrared_emitter_selector,
     infrared_receiver_field,
     infrared_receiver_field_with_current,
     infrared_receiver_selector,
+    linked_entity_is_available,
     normalize_command_mapping,
     normalize_command_name,
     normalize_command_objects,
     normalize_remote_id,
     unique_remote_id,
+    universal_remote_device_info,
     universal_remote_from_config_entry_data,
     universal_remotes_from_config_entry,
 )
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, selector
 
@@ -276,6 +281,39 @@ def test_find_command_key_case_insensitive() -> None:
     assert find_command_key(commands, "MISSING") is None
 
 
+def test_find_configured_command_exact_match_wins() -> None:
+    """Test configured command lookup prefers exact command names."""
+    commands = {
+        "Power": "exact-payload",
+        "POWER": "normalized-payload",
+    }
+
+    assert find_configured_command(commands, "Power") == ("Power", "exact-payload")
+
+
+def test_find_configured_command_normalized_match() -> None:
+    """Test configured command lookup falls back to normalized command names."""
+    commands = {
+        "Power On": "payload",
+    }
+
+    assert find_configured_command(commands, "power_on") == ("Power On", "payload")
+
+
+def test_find_configured_command_returns_none_for_missing_command() -> None:
+    """Test configured command lookup returns none when missing."""
+    assert find_configured_command({"POWER": "payload"}, "MUTE") is None
+
+
+def test_find_configured_command_preserves_stored_value() -> None:
+    """Test configured command lookup returns stored values unchanged."""
+    commands = {
+        "BROKEN": "",
+    }
+
+    assert find_configured_command(commands, "broken") == ("BROKEN", "")
+
+    
 def test_command_payload_helpers() -> None:
     """Test command payload and button helper branches."""
     assert command_payload("38000:1,2") == "38000:1,2"
@@ -323,6 +361,17 @@ def test_normalize_command_objects_and_mapping() -> None:
         "POWER_ON": "38000:1,2",
         "POWER_OFF": "38000:3,4",
     }
+
+
+def test_universal_remote_device_info() -> None:
+    """Test universal remote device info preserves existing identifiers."""
+    device_info = universal_remote_device_info(
+        "living_room_tv",
+        "Living Room TV",
+    )
+
+    assert device_info["identifiers"] == {(DOMAIN, "living_room_tv")}
+    assert device_info["name"] == "Living Room TV"
 
 
 def test_universal_remote_infers_device_type_from_codeset() -> None:
@@ -620,3 +669,37 @@ def test_universal_remotes_from_config_entry_rejects_malformed_single_entry_data
     )
 
     assert universal_remotes_from_config_entry(entry) == []
+
+
+def test_linked_entity_is_available_when_entity_exists(
+    hass: HomeAssistant,
+) -> None:
+    """Test linked entity availability returns true for an existing available entity."""
+    hass.states.async_set("infrared.test_emitter", "on")
+
+    assert linked_entity_is_available(hass, "infrared.test_emitter")
+
+
+def test_linked_entity_is_available_when_entity_missing(
+    hass: HomeAssistant,
+) -> None:
+    """Test linked entity availability returns false for a missing entity."""
+    assert not linked_entity_is_available(hass, "infrared.missing_emitter")
+
+
+def test_linked_entity_is_available_when_entity_unavailable(
+    hass: HomeAssistant,
+) -> None:
+    """Test linked entity availability returns false for an unavailable entity."""
+    hass.states.async_set("infrared.test_emitter", STATE_UNAVAILABLE)
+
+    assert not linked_entity_is_available(hass, "infrared.test_emitter")
+
+
+def test_linked_entity_is_available_preserves_unknown_behavior(
+    hass: HomeAssistant,
+) -> None:
+    """Test unknown linked entities are treated as available for compatibility."""
+    hass.states.async_set("infrared.test_emitter", "unknown")
+
+    assert linked_entity_is_available(hass, "infrared.test_emitter")
