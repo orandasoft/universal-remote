@@ -7,7 +7,6 @@ from typing import Any
 
 from homeassistant.components.remote import RemoteEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -24,7 +23,11 @@ from .const import (
     DEFAULT_NUM_REPEATS,
     DOMAIN,
 )
-from .helpers import normalize_command_mapping, universal_remotes_from_config_entry
+from .helpers import (
+    linked_entity_is_available,
+    normalize_command_mapping,
+    universal_remotes_from_config_entry
+)
 from .repairs import (
     async_create_linked_infrared_emitter_missing_issue,
     async_delete_linked_infrared_emitter_missing_issue,
@@ -354,8 +357,7 @@ class InfraredRemoteEntity(RemoteEntity):
         if hass is None:
             return True
 
-        state = hass.states.get(self._infrared_emitter_id)
-        return state is not None and state.state != STATE_UNAVAILABLE
+        return linked_entity_is_available(hass, self._infrared_emitter_id)
 
     async def async_added_to_hass(self) -> None:
         """Handle entity added to Home Assistant."""
@@ -540,8 +542,7 @@ class InfraredRemoteEntity(RemoteEntity):
         if hass is None:
             return self._infrared_emitter_id
 
-        state = hass.states.get(self._infrared_emitter_id)
-        if state is None or state.state == STATE_UNAVAILABLE:
+        if not linked_entity_is_available(hass, self._infrared_emitter_id):
             self._update_missing_infrared_repair_issue()
             raise HomeAssistantError(
                 translation_domain=self._translation_domain,
