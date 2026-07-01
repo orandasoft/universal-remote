@@ -13,7 +13,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
@@ -33,6 +32,7 @@ from .helpers import (
     linked_entity_is_available,
     normalize_command_name,
     normalize_command_objects,
+    universal_remote_device_info,
     universal_remotes_from_config_entry,
 )
 from .send import async_send_infrared_command
@@ -158,10 +158,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         )
         self._role_commands = _role_commands(self._commands)
         self._attr_unique_id = unique_id
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, remote_id)},
-            name=remote_name,
-        )
+        self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
         self._attr_source_list = list(self._source_commands) or None
         self._attr_source = None
         self._attr_supported_features = _supported_features(
