@@ -27,6 +27,7 @@ from .helpers import (
     find_configured_command,
     linked_entity_is_available,
     normalize_command_mapping,
+    universal_remote_device_info as shared_universal_remote_device_info,
     universal_remotes_from_config_entry
 )
 from .repairs import (
@@ -72,10 +73,10 @@ def configured_remote_definitions(entry: ConfigEntry) -> list[dict[str, Any]]:
 def _universal_remote_device_info(
     remote_id: str,
     name: str,
-    _remote_config: Mapping[str, Any],
+    _: Mapping[str, Any],
 ) -> DeviceInfo:
-    """Return device info for a standalone universal remote."""
-    return DeviceInfo(identifiers={(DOMAIN, remote_id)}, name=name)
+    """Return device info for a configured universal remote."""
+    return shared_universal_remote_device_info(remote_id, name)
 
 
 def _standalone_universal_remote_entity_name(
