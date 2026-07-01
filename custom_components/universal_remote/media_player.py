@@ -10,7 +10,6 @@ from homeassistant.components.media_player import (
     MediaPlayerState,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -30,6 +29,7 @@ from .const import (
 )
 from .helpers import (
     command_payload,
+    linked_entity_is_available,
     normalize_command_name,
     normalize_command_objects,
     universal_remotes_from_config_entry,
@@ -191,8 +191,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         if hass is None:
             return True
 
-        state = hass.states.get(self._infrared_emitter_id)
-        return state is not None and state.state != STATE_UNAVAILABLE
+        return linked_entity_is_available(hass, self._infrared_emitter_id)
 
     async def async_turn_on(self) -> None:
         """Turn on the TV."""
