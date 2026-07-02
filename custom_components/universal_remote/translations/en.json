@@ -127,6 +127,9 @@
     },
     "remote_unknown_or_invalid_command": {
       "message": "Unknown or invalid infrared command: {command}"
+    },
+    "select_tuner_unavailable": {
+      "message": "Tuner {option} is not available."
     }
   },
   "issues": {

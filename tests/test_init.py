@@ -23,7 +23,13 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from .conftest import INFRARED_EMITTER_ID, RAW_COMMAND, REMOTE_ID, REMOTE_NAME
 
-PLATFORMS = [Platform.BUTTON, Platform.MEDIA_PLAYER, Platform.REMOTE, Platform.EVENT]
+PLATFORMS = [
+    Platform.BUTTON,
+    Platform.MEDIA_PLAYER,
+    Platform.REMOTE,
+    Platform.EVENT,
+    Platform.SELECT,
+]
 
 
 def _runtime_data(entry: MockConfigEntry) -> UniversalRemoteData:

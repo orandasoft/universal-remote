@@ -8,7 +8,13 @@ from .const import CONF_INFRARED_EMITTER_ID, CONF_REMOTE_COMMANDS
 from .helpers import normalize_command_mapping, universal_remote_from_config_entry_data
 from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 
-PLATFORMS = [Platform.BUTTON, Platform.MEDIA_PLAYER, Platform.REMOTE, Platform.EVENT]
+PLATFORMS = [
+    Platform.BUTTON,
+    Platform.MEDIA_PLAYER,
+    Platform.REMOTE,
+    Platform.EVENT,
+    Platform.SELECT,
+]
 
 type UniversalRemoteConfigEntry = ConfigEntry
 
