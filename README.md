@@ -33,7 +33,7 @@ Universal Remote can be configured with an infrared emitter, an infrared receive
 4. Add this repository URL:
 
    ```text
-   https://github.com/orandasoft/hacs-universal-remote
+   https://github.com/orandasoft/universal-remote
    ```
 
 5. Select category **Integration**.
@@ -359,11 +359,11 @@ mypy custom_components/universal_remote tests
 GitHub:
 
 ```text
-https://github.com/orandasoft/hacs-universal-remote
+https://github.com/orandasoft/universal-remote
 ```
 
 Issues:
 
 ```text
-https://github.com/orandasoft/hacs-universal-remote/issues
+https://github.com/orandasoft/universal-remote/issues
 ```
