@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from custom_components.universal_remote.button import (
     UniversalRemoteButton,
     UniversalRemoteButtonEntityDescription,
@@ -92,11 +93,17 @@ async def test_button_press_sends_command(
     hass: HomeAssistant,
     infrared_emitter: str,
 ) -> None:
-    """Test pressing a command button sends the stored command."""
+    """Test pressing a command button sends the command name through runtime."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"POWER_ON": RAW_COMMAND},
+    )
     entity = UniversalRemoteButton(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
         infrared_emitter_id=infrared_emitter,
+        runtime=runtime,
         unique_id="entry_button_living_room_tv_power_on",
         description=UniversalRemoteButtonEntityDescription(
             key="power_on",
@@ -108,13 +115,14 @@ async def test_button_press_sends_command(
     )
     entity.hass = hass
 
-    with patch(
-        "custom_components.universal_remote.button.async_send_infrared_command",
+    with patch.object(
+        runtime,
+        "async_send_command_name",
         AsyncMock(),
     ) as mock_send:
         await entity.async_press()
 
-    mock_send.assert_awaited_once_with(hass, infrared_emitter, RAW_COMMAND)
+    mock_send.assert_awaited_once_with("POWER_ON")
 
 
 async def test_button_availability_tracks_infrared_state(
@@ -126,6 +134,7 @@ async def test_button_availability_tracks_infrared_state(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
         infrared_emitter_id=infrared_emitter,
+        runtime=None,
         unique_id="entry_button_living_room_tv_power_on",
         description=UniversalRemoteButtonEntityDescription(
             key="power_on",
@@ -228,6 +237,7 @@ def test_button_available_without_hass_returns_true(infrared_emitter: str) -> No
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
         infrared_emitter_id=infrared_emitter,
+        runtime=None,
         unique_id="entry_button_living_room_tv_power_on",
         description=UniversalRemoteButtonEntityDescription(
             key="power_on",
@@ -301,3 +311,104 @@ async def test_async_setup_entry_directly_skips_receiver_only_entry(
     await async_setup_entry(hass, entry, async_add_entities)
 
     async_add_entities.assert_called_once_with([])
+
+
+
+async def test_button_press_uses_runtime_command_name(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test button press sends the configured command name through runtime."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"BS": RAW_COMMAND, "BS_NUM_1": RAW_COMMAND},
+    )
+    entity = UniversalRemoteButton(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        runtime=runtime,
+        unique_id=button_unique_id("entry", REMOTE_ID, "BS"),
+        description=UniversalRemoteButtonEntityDescription(
+            key="bs",
+            name="BS",
+            command_name="BS",
+            command_data=RAW_COMMAND,
+        ),
+    )
+    entity.hass = hass
+
+    with patch.object(
+        runtime,
+        "async_send_command_name",
+        AsyncMock(),
+    ) as mock_send:
+        await entity.async_press()
+
+    mock_send.assert_awaited_once_with("BS")
+
+
+async def test_button_num_overlays_after_runtime_tuner_selected(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test number button resolves through selected tuner at press time."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={
+            "BS": RAW_COMMAND,
+            "NUM_1": "38000:9000,2250,560,560",
+            "BS_NUM_1": "38000:4500,4500,560,560",
+        },
+    )
+    entity = UniversalRemoteButton(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        runtime=runtime,
+        unique_id=button_unique_id("entry", REMOTE_ID, "NUM_1"),
+        description=UniversalRemoteButtonEntityDescription(
+            key="num_1",
+            name="1",
+            command_name="NUM_1",
+            command_data="38000:9000,2250,560,560",
+        ),
+    )
+    entity.hass = hass
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(),
+    ) as mock_send:
+        await runtime.async_send_command_name("BS")
+        await entity.async_press()
+
+    assert [call.args[2] for call in mock_send.await_args_list] == [
+        RAW_COMMAND,
+        "38000:4500,4500,560,560",
+    ]
+
+
+async def test_button_press_without_runtime_does_nothing(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test defensive no-op when a button has no runtime."""
+    entity = UniversalRemoteButton(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        runtime=None,
+        unique_id=button_unique_id("entry", REMOTE_ID, "POWER"),
+        description=UniversalRemoteButtonEntityDescription(
+            key="power",
+            name="Power",
+            command_name="POWER",
+            command_data=RAW_COMMAND,
+        ),
+    )
+    entity.hass = hass
+
+    await entity.async_press()

@@ -37,6 +37,7 @@ from .infrared_library import (
     infrared_library_codeset_receiver_decoder_id,
     is_infrared_library_codeset_selected,
 )
+from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 from .repairs import (
     async_create_linked_infrared_receiver_missing_issue,
     async_delete_linked_infrared_receiver_missing_issue,
@@ -150,6 +151,13 @@ async def async_setup_entry(
     expected_unique_ids: set[str] = set()
     configured_receiver_remote_ids: set[str] = set()
 
+    runtime_data = getattr(entry, "runtime_data", None)
+    runtime = (
+        runtime_data.runtime
+        if isinstance(runtime_data, UniversalRemoteData)
+        else None
+    )
+
     remote = universal_remote_from_config_entry_data({**entry.data, **entry.options})
     if remote is not None:
         receiver_entity_id = remote.get(CONF_INFRARED_RECEIVER_ID)
@@ -182,6 +190,7 @@ async def async_setup_entry(
                     remote_name=remote_name,
                     receiver_entity_id=receiver_entity_id,
                     codeset_id=codeset_id,
+                    runtime=runtime,
                 )
             )
 
@@ -209,8 +218,10 @@ class UniversalRemoteReceivedCommandEventEntity(
         remote_name: str,
         receiver_entity_id: str,
         codeset_id: str,
+        runtime: UniversalRemoteRuntime | None = None,
     ) -> None:
         """Initialize the received command event entity."""
+        self._runtime = runtime
         self._attr_unique_id = event_unique_id(remote_id)
         self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
         self._infrared_receiver_entity_id = receiver_entity_id
@@ -234,6 +245,15 @@ class UniversalRemoteReceivedCommandEventEntity(
             self._last_decoded_event = {"event_type": event_type, **event_data}
         elif not event_data.get("repeat"):
             self._last_decoded_event = None
+
+        command_name = event_data.get("command_name")
+        if (
+            self._runtime is not None
+            and event_data.get("matched")
+            and not event_data.get("repeat")
+            and isinstance(command_name, str)
+        ):
+            self._runtime.async_note_received_command(command_name)
 
         self._received_event_history.appendleft(
             {

@@ -26,7 +26,7 @@ from .helpers import (
     universal_remote_device_info,
     universal_remotes_from_config_entry,
 )
-from .send import async_send_infrared_command
+from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 
 PARALLEL_UPDATES = 1
 
@@ -81,6 +81,13 @@ async def async_setup_entry(
     entities: list[UniversalRemoteButton] = []
     expected_unique_ids: set[str] = set()
 
+    runtime_data = getattr(entry, "runtime_data", None)
+    runtime = (
+        runtime_data.runtime
+        if isinstance(runtime_data, UniversalRemoteData)
+        else None
+    )
+
     for remote in universal_remotes_from_config_entry(entry):
         remote_id = remote.get(CONF_REMOTE_ID)
         remote_name = remote.get(CONF_REMOTE_NAME)
@@ -111,6 +118,7 @@ async def async_setup_entry(
                     remote_id=remote_id,
                     remote_name=remote_name,
                     infrared_emitter_id=infrared_emitter_id,
+                    runtime=runtime,
                     unique_id=unique_id,
                     description=UniversalRemoteButtonEntityDescription(
                         key=normalize_command_name(command_name).lower(),
@@ -139,12 +147,14 @@ class UniversalRemoteButton(ButtonEntity):
         remote_id: str,
         remote_name: str,
         infrared_emitter_id: str,
+        runtime: UniversalRemoteRuntime | None,
         unique_id: str,
         description: UniversalRemoteButtonEntityDescription,
     ) -> None:
         """Initialize a Universal Remote button."""
         self.entity_description = description
         self._infrared_emitter_id = infrared_emitter_id
+        self._runtime = runtime
         self._attr_unique_id = unique_id
         self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
 
@@ -175,8 +185,9 @@ class UniversalRemoteButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Send the configured command."""
-        await async_send_infrared_command(
-            self.hass,
-            self._infrared_emitter_id,
-            self.entity_description.command_data,
+        if self._runtime is None:
+            return
+
+        await self._runtime.async_send_command_name(
+            self.entity_description.command_name
         )

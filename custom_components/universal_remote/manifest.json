@@ -10,5 +10,5 @@
   "issue_tracker": "https://github.com/orandasoft/hacs-universal-remote/issues",
   "loggers": ["custom_components.universal_remote"],
   "requirements": ["infrared-protocols==6.2.0"],
-  "version": "0.4.2"
+  "version": "0.5.0"
 }

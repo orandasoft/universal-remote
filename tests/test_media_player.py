@@ -23,6 +23,7 @@ from custom_components.universal_remote.const import (
     DEVICE_TYPE_TV,
     DOMAIN,
 )
+from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from custom_components.universal_remote.media_player import (
     UniversalRemoteTvMediaPlayer,
     async_setup_entry,
@@ -523,3 +524,195 @@ async def test_async_setup_entry_directly_skips_generic_remote(
 
     async_add_entities.assert_called_once_with([])
 
+
+
+
+async def test_media_player_source_uses_runtime_command_name(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test source selection sends the configured command name through runtime."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"HDMI_1": RAW_COMMAND},
+    )
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        commands={"HDMI_1": _command_object(RAW_COMMAND)},
+        unique_id="entry_media_player_living_room_tv",
+        runtime=runtime,
+    )
+    entity.hass = hass
+
+    with (
+        patch.object(
+            runtime,
+            "async_send_command_name",
+            AsyncMock(),
+        ) as mock_send,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
+        await entity.async_select_source("HDMI 1")
+
+    mock_send.assert_awaited_once_with("HDMI_1")
+    assert entity.source == "HDMI 1"
+    write_state.assert_called_once()
+
+
+async def test_media_player_role_uses_runtime_command_name(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test media-player role sends the configured command name through runtime."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"VOLUME_UP": RAW_COMMAND},
+    )
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        commands={"VOLUME_UP": _command_object(RAW_COMMAND)},
+        unique_id="entry_media_player_living_room_tv",
+        runtime=runtime,
+    )
+    entity.hass = hass
+
+    with patch.object(
+        runtime,
+        "async_send_command_name",
+        AsyncMock(),
+    ) as mock_send:
+        await entity.async_volume_up()
+
+    mock_send.assert_awaited_once_with("VOLUME_UP")
+
+
+async def test_media_player_runtime_listener_updates_source_for_available_source(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test runtime tuner listener updates source when tuner is a source."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"CS4K": RAW_COMMAND, "CS4K_NUM_1": RAW_COMMAND},
+    )
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        commands={
+            "CS4K": _command_object(RAW_COMMAND),
+            "CS4K_NUM_1": _command_object(RAW_COMMAND),
+        },
+        unique_id="entry_media_player_living_room_tv",
+        runtime=runtime,
+    )
+    entity.hass = hass
+
+    with patch.object(entity, "async_write_ha_state") as write_state:
+        await entity.async_added_to_hass()
+        runtime.async_note_received_command("CS4K_NUM_1")
+
+    assert entity.source == "CS4K"
+    write_state.assert_called_once()
+
+
+async def test_media_player_runtime_listener_ignores_non_source_tuner(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test runtime tuner listener ignores tuners that are not sources."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"DTV": RAW_COMMAND, "DTV_NUM_1": RAW_COMMAND},
+    )
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        commands={"HDMI_1": _command_object(RAW_COMMAND)},
+        unique_id="entry_media_player_living_room_tv",
+        runtime=runtime,
+    )
+    entity.hass = hass
+
+    with patch.object(entity, "async_write_ha_state") as write_state:
+        await entity.async_added_to_hass()
+        runtime.async_note_received_command("DTV_NUM_1")
+
+    assert entity.source is None
+    write_state.assert_not_called()
+
+
+async def test_media_player_runtime_listener_ignores_current_source(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test runtime tuner listener ignores tuner already shown as source."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"CS4K": RAW_COMMAND, "CS4K_NUM_1": RAW_COMMAND},
+    )
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        commands={
+            "CS4K": _command_object(RAW_COMMAND),
+            "CS4K_NUM_1": _command_object(RAW_COMMAND),
+        },
+        unique_id="entry_media_player_living_room_tv",
+        runtime=runtime,
+    )
+    entity.hass = hass
+    entity._attr_source = "CS4K"
+
+    with patch.object(entity, "async_write_ha_state") as write_state:
+        await entity.async_added_to_hass()
+        runtime.async_note_received_command("CS4K_NUM_1")
+
+    assert entity.source == "CS4K"
+    write_state.assert_not_called()
+
+
+async def test_media_player_runtime_listener_ignores_none_selected_tuner(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test runtime tuner listener ignores unset tuner state."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"CS4K": RAW_COMMAND, "CS4K_NUM_1": RAW_COMMAND},
+    )
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        commands={
+            "CS4K": _command_object(RAW_COMMAND),
+            "CS4K_NUM_1": _command_object(RAW_COMMAND),
+        },
+        unique_id="entry_media_player_living_room_tv",
+        runtime=runtime,
+    )
+    entity.hass = hass
+
+    with patch.object(entity, "async_write_ha_state") as write_state:
+        await entity.async_added_to_hass()
+
+        # Call the registered listener directly to cover the defensive
+        # selected_tuner is None branch. A normal runtime event would not notify
+        # listeners unless the tuner state changes.
+        runtime._listeners[0]()
+
+    assert entity.source is None
+    write_state.assert_not_called()

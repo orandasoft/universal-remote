@@ -15,6 +15,10 @@ from custom_components.universal_remote.const import (
     CONF_REMOTE_NAME,
     DOMAIN,
 )
+from custom_components.universal_remote.runtime import (
+    UniversalRemoteData,
+    UniversalRemoteRuntime,
+)
 from custom_components.universal_remote.remote import (
     COMMAND_POWER_OFF,
     COMMAND_POWER_ON,
@@ -24,6 +28,7 @@ from custom_components.universal_remote.remote import (
     _as_str_mapping,
     _create_missing_issue,
     _delete_missing_issue,
+    _runtime_by_remote_id_from_config_entry,
     _universal_remote_device_info,
     async_setup_universal_remote_entities,
     cleanup_stale_missing_infrared_issues,
@@ -95,6 +100,7 @@ def _make_entity(
     infrared_emitter_id: str = INFRARED_EMITTER_ID,
     missing_handler=None,
     restored_handler=None,
+    runtime: UniversalRemoteRuntime | None = None,
 ) -> InfraredRemoteEntity:
     """Create a remote entity for direct tests."""
     entity = InfraredRemoteEntity(
@@ -102,6 +108,7 @@ def _make_entity(
         name=REMOTE_NAME,
         infrared_emitter_id=infrared_emitter_id,
         commands=commands or {},
+        runtime=runtime,
         unique_id_prefix="entry",
         device_info=DeviceInfo(identifiers={(DOMAIN, REMOTE_ID)}, name=REMOTE_NAME),
         entity_name=REMOTE_NAME,
@@ -465,6 +472,82 @@ async def test_send_command_named_raw_repeat_and_delay(
 
     assert len(mock_send.mock_calls) == 4
     assert len(mock_sleep.mock_calls) == 3
+
+
+async def test_send_command_runtime_overlay(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test remote.send_command uses runtime tuner overlay."""
+    commands = {
+        "BS": RAW_COMMAND,
+        "NUM_1": "38000:9000,2250,560,560",
+        "BS_NUM_1": "38000:4500,4500,560,560",
+    }
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=INFRARED_EMITTER_ID,
+        commands=commands,
+    )
+    entity = _make_entity(hass, commands=commands, runtime=runtime)
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(),
+    ) as mock_send:
+        await entity.async_send_command(["bs", "num_1"])
+
+    assert [call.args[2] for call in mock_send.await_args_list] == [
+        RAW_COMMAND,
+        "38000:4500,4500,560,560",
+    ]
+
+
+async def test_send_command_runtime_empty_commands_allows_raw(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test runtime-backed remote.send_command keeps raw-only support."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=INFRARED_EMITTER_ID,
+        commands={},
+    )
+    entity = _make_entity(hass, commands={}, runtime=runtime)
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(),
+    ) as mock_send:
+        await entity.async_send_command([RAW_COMMAND])
+
+    assert mock_send.await_args is not None
+    assert mock_send.await_args.args == (hass, INFRARED_EMITTER_ID, RAW_COMMAND)
+    assert mock_send.await_args.kwargs["check_available"] is False
+
+
+async def test_send_command_runtime_missing_emitter_not_wrapped(
+    hass: HomeAssistant,
+) -> None:
+    """Test runtime-backed raw send preserves missing-emitter error."""
+    missing_emitter_id = "infrared.missing_ir"
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=missing_emitter_id,
+        commands={},
+    )
+    entity = _make_entity(
+        hass,
+        infrared_emitter_id=missing_emitter_id,
+        commands={},
+        runtime=runtime,
+    )
+
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_send_command([RAW_COMMAND])
+
+    assert err.value.translation_key == "remote_infrared_missing"
+    assert err.value.translation_placeholders == {"entity_id": missing_emitter_id}
 
 
 @pytest.mark.parametrize(
@@ -876,3 +959,111 @@ async def test_async_setup_universal_remote_entities_ignores_receiver_only_entry
 
     assert entities == []
     
+
+def test_runtime_by_remote_id_without_runtime_data(
+    config_entry: MockConfigEntry,
+) -> None:
+    """Test runtime lookup returns empty without runtime data."""
+    assert _runtime_by_remote_id_from_config_entry(config_entry) == {}
+
+
+def test_runtime_by_remote_id_without_valid_remote(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Test runtime lookup returns empty when entry data has no valid remote."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=INFRARED_EMITTER_ID,
+        commands={},
+    )
+    config_entry.runtime_data = UniversalRemoteData(runtime=runtime)
+
+    with patch(
+        "custom_components.universal_remote.remote."
+        "universal_remote_from_config_entry_data",
+        return_value=None,
+    ):
+        assert _runtime_by_remote_id_from_config_entry(config_entry) == {}
+
+
+def test_runtime_by_remote_id_without_valid_remote_id(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+) -> None:
+    """Test runtime lookup returns empty when remote id is invalid."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=INFRARED_EMITTER_ID,
+        commands={},
+    )
+    config_entry.runtime_data = UniversalRemoteData(runtime=runtime)
+
+    with patch(
+        "custom_components.universal_remote.remote."
+        "universal_remote_from_config_entry_data",
+        return_value={CONF_REMOTE_ID: ""},
+    ):
+        assert _runtime_by_remote_id_from_config_entry(config_entry) == {}
+
+
+async def test_power_method_uses_runtime_send_path(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test power methods route configured commands through runtime."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=INFRARED_EMITTER_ID,
+        commands={COMMAND_POWER_ON: RAW_COMMAND},
+    )
+    entity = _make_entity(
+        hass,
+        commands={COMMAND_POWER_ON: RAW_COMMAND},
+        runtime=runtime,
+    )
+
+    with (
+        patch.object(
+            runtime,
+            "async_send_command_name",
+            AsyncMock(),
+        ) as mock_send,
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        await entity.async_turn_on()
+
+    mock_send.assert_awaited_once_with(
+        COMMAND_POWER_ON,
+        parse_kwargs={},
+        check_available=False,
+        allow_raw=False,
+    )
+
+
+async def test_power_method_without_hass_raises_missing_infrared(
+    hass: HomeAssistant,
+) -> None:
+    """Test configured power command fails cleanly when hass is not attached."""
+    entity = _make_entity(hass, commands={COMMAND_POWER_ON: RAW_COMMAND})
+    setattr(entity, "hass", None)
+
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_turn_on()
+
+    assert err.value.translation_key == "remote_infrared_missing"
+    assert err.value.translation_placeholders == {"entity_id": INFRARED_EMITTER_ID}
+
+
+async def test_private_send_without_runtime_and_raw_disabled_rejects_missing_command(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test direct non-raw send path rejects missing configured command."""
+    entity = _make_entity(hass)
+
+    with pytest.raises(HomeAssistantError) as err:
+        await entity._async_send_named_command("UNKNOWN")
+
+    assert err.value.translation_key == "remote_command_missing"
+    assert err.value.translation_placeholders == {"command": "UNKNOWN"}

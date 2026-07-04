@@ -10,10 +10,13 @@ from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pytest
+from homeassistant.components.infrared import InfraredReceivedSignal
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from infrared_protocols.commands import Command
 
 from custom_components.universal_remote import event as event_platform
+from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from custom_components.universal_remote.const import (
     CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
@@ -1095,3 +1098,226 @@ def test_load_codeset_enum_returns_none_for_non_enum_class() -> None:
         ),
     ):
         assert event_platform._load_codeset_enum("broken") is None
+
+
+def test_event_entity_matched_command_updates_runtime_tuner(hass: HomeAssistant) -> None:
+    """Test matched non-repeat received command updates runtime tuner."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id="infrared.test_ir",
+        commands={"BS": "38000:9000,4500", "BS_NUM_1": "38000:9000,2250"},
+    )
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living Room TV",
+        receiver_entity_id="infrared.test_receiver",
+        codeset_id="lg_tv",
+        runtime=runtime,
+    )
+
+    with (
+        patch(
+            "custom_components.universal_remote.event._decode_signal_event",
+            return_value=(
+                "bs_num_1",
+                {
+                    "codeset": "lg_tv",
+                    "decoder": "nec",
+                    "protocol": "nec",
+                    "decoded": True,
+                    "matched": True,
+                    "repeat": False,
+                    "command_name": "BS_NUM_1",
+                },
+            ),
+        ),
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(
+            InfraredReceivedSignal(
+                timings=[9000, -4500],
+                modulation=38000,
+            )
+        )
+
+    assert runtime.selected_tuner == "BS"
+
+
+def test_event_entity_matched_cs4k_command_updates_runtime_tuner(
+    hass: HomeAssistant,
+) -> None:
+    """Test matched CS4K received command updates runtime tuner."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id="infrared.test_ir",
+        commands={"CS4K": "38000:9000,4500", "CS4K_NUM_2": "38000:9000,2250"},
+    )
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living Room TV",
+        receiver_entity_id="infrared.test_receiver",
+        codeset_id="lg_tv",
+        runtime=runtime,
+    )
+
+    with (
+        patch(
+            "custom_components.universal_remote.event._decode_signal_event",
+            return_value=(
+                "cs4k_num_2",
+                {
+                    "codeset": "lg_tv",
+                    "decoder": "nec",
+                    "protocol": "nec",
+                    "decoded": True,
+                    "matched": True,
+                    "repeat": False,
+                    "command_name": "CS4K_NUM_2",
+                },
+            ),
+        ),
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(
+            InfraredReceivedSignal(
+                timings=[9000, -4500],
+                modulation=38000,
+            )
+        )
+
+    assert runtime.selected_tuner == "CS4K"
+
+
+def test_event_entity_repeat_does_not_update_runtime_tuner(
+    hass: HomeAssistant,
+) -> None:
+    """Test repeat event does not update runtime tuner."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id="infrared.test_ir",
+        commands={"BS": "38000:9000,4500", "BS_NUM_1": "38000:9000,2250"},
+    )
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living Room TV",
+        receiver_entity_id="infrared.test_receiver",
+        codeset_id="lg_tv",
+        runtime=runtime,
+    )
+
+    with (
+        patch(
+            "custom_components.universal_remote.event._decode_signal_event",
+            return_value=(
+                "nec_repeat",
+                {
+                    "codeset": "lg_tv",
+                    "decoder": "nec",
+                    "protocol": "nec",
+                    "decoded": False,
+                    "matched": False,
+                    "repeat": True,
+                    "previous_command_name": "BS_NUM_1",
+                },
+            ),
+        ),
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(
+            InfraredReceivedSignal(
+                timings=[9000, -2250, 560],
+                modulation=38000,
+            )
+        )
+
+    assert runtime.selected_tuner is None
+
+
+def test_event_entity_unmatched_command_does_not_update_runtime_tuner(
+    hass: HomeAssistant,
+) -> None:
+    """Test unmatched event does not update runtime tuner."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id="infrared.test_ir",
+        commands={"BS": "38000:9000,4500", "BS_NUM_1": "38000:9000,2250"},
+    )
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living Room TV",
+        receiver_entity_id="infrared.test_receiver",
+        codeset_id="lg_tv",
+        runtime=runtime,
+    )
+
+    with (
+        patch(
+            "custom_components.universal_remote.event._decode_signal_event",
+            return_value=(
+                "nec",
+                {
+                    "codeset": "lg_tv",
+                    "decoder": "nec",
+                    "protocol": "nec",
+                    "decoded": True,
+                    "matched": False,
+                    "repeat": False,
+                },
+            ),
+        ),
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(
+            InfraredReceivedSignal(
+                timings=[9000, -4500],
+                modulation=38000,
+            )
+        )
+
+    assert runtime.selected_tuner is None
+
+
+def test_event_entity_receiver_only_runtime_none_still_triggers_event(
+    hass: HomeAssistant,
+) -> None:
+    """Test event entity still works when no runtime is available."""
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="receiver_remote",
+        remote_name="Receiver Remote",
+        receiver_entity_id="infrared.test_receiver",
+        codeset_id="lg_tv",
+        runtime=None,
+    )
+
+    with (
+        patch(
+            "custom_components.universal_remote.event._decode_signal_event",
+            return_value=(
+                "bs_num_1",
+                {
+                    "codeset": "lg_tv",
+                    "decoder": "nec",
+                    "protocol": "nec",
+                    "decoded": True,
+                    "matched": True,
+                    "repeat": False,
+                    "command_name": "BS_NUM_1",
+                },
+            ),
+        ),
+        patch.object(entity, "_trigger_event") as trigger_event,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
+        entity._handle_signal(
+            InfraredReceivedSignal(
+                timings=[9000, -4500],
+                modulation=38000,
+            )
+        )
+
+    trigger_event.assert_called_once()
+    write_state.assert_called_once()

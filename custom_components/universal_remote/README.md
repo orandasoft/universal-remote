@@ -29,6 +29,7 @@ Depending on the configured infrared targets, Universal Remote can create:
 - a `remote` entity when an infrared emitter is configured
 - `button` entities for commands where button creation is enabled, when an infrared emitter is configured
 - a `media_player` entity for TV remotes when an infrared emitter is configured
+- a `select` entity for tuner selection when TV tuner support is detected
 - an `event` entity for received commands when an infrared receiver is configured
 
 The TV media player is assumed-state. It does not know the real power, volume, channel, source, or playback state of the physical device, although it may update assumed power and source state after commands are sent through Universal Remote.
@@ -160,6 +161,18 @@ Because the media player is assumed-state, it sends commands but does not receiv
 
 ---
 
+## Japanese TV tuner support
+
+Universal Remote can expose a tuner `select` entity for TV command sets that include Japanese tuner families such as `DTV`, `BS`, `CS1`, `CS2`, `BS4K`, or `CS4K`.
+
+The tuner select entity is created only when tuner support is detected from configured commands. A tuner is considered available only when both the tuner selector command and at least one same-tuner numeric command are configured. For example, `BS` plus `BS_NUM_1` exposes `BS`; `BS` plus generic `NUM_1` does not.
+
+When a tuner is selected, generic numeric commands `NUM_1` through `NUM_12` are resolved to the selected tuner-specific command when one exists. For example, after selecting `BS`, sending `NUM_1` sends `BS_NUM_1` if that command is configured.
+
+This tuner-aware command resolution is shared by the `remote`, `button`, TV `media_player`, and tuner `select` entities. Raw infrared payload fallback remains limited to `remote.send_command`.
+
+When a configured infrared receiver and supported codeset are used, matched non-repeat received tuner commands can update the selected tuner state. Repeat frames do not update tuner state.
+
 ## Availability and repairs
 
 Universal Remote send entities are available when the linked infrared emitter exists and is available.
@@ -187,4 +200,5 @@ Diagnostics are intended to help troubleshoot configuration issues without expos
 - Received command history is capped and stores decoded summaries only, not raw timings.
 - Sending commands requires a linked infrared emitter.
 - Receiving command events requires a linked infrared receiver and a supported codeset.
+- The tuner select entity is created only when tuner-specific command support is detected.
 - Receiver decoding is currently limited to supported codesets.
