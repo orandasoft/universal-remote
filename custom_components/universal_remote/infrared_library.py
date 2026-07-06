@@ -10,9 +10,9 @@ from homeassistant.helpers import selector
 
 from .command import CommandParseError, validate_remote_command_payload
 from .const import DEVICE_TYPE_GENERIC, DEVICE_TYPE_TV
+from .pronto import ProntoError, encode_learned_pronto
 
-PRONTO_CLOCK_US: Final = 0.241246
-PRONTO_FINAL_GAP_US: Final = 100_000
+
 NO_INFRARED_LIBRARY_CODESET: Final = "__none__"
 
 _LOGGER = logging.getLogger(__name__)
@@ -365,25 +365,7 @@ def validate_generated_command_payload(command_name: str, command_data: str) -> 
 
 def _timings_to_pronto_hex(timings: list[int], modulation: int) -> str:
     """Convert raw timings in microseconds to Pronto HEX."""
-    if not timings:
-        raise InfraredLibraryCommandError
-
-    if len(timings) % 2:
-        timings = [*timings, PRONTO_FINAL_GAP_US]
-
-    frequency_word = round(1_000_000 / (modulation * PRONTO_CLOCK_US))
-    if frequency_word <= 0:
-        raise InfraredLibraryCommandError
-
-    pronto_unit = frequency_word * PRONTO_CLOCK_US
-    pronto_timings = [max(1, round(duration / pronto_unit)) for duration in timings]
-
-    values = [
-        0x0000,
-        frequency_word,
-        len(pronto_timings) // 2,
-        0x0000,
-        *pronto_timings,
-    ]
-
-    return " ".join(f"{value:04X}" for value in values)
+    try:
+        return encode_learned_pronto(timings, modulation)
+    except ProntoError as err:
+        raise InfraredLibraryCommandError from err
