@@ -7,10 +7,9 @@ from typing import Any
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
+from .pronto import ProntoError, decode_learned_pronto
 
 DEFAULT_CARRIER_FREQUENCY = 38_000
-# Pronto learned-code timing unit in microseconds.
-PRONTO_FREQUENCY_REFERENCE_US = 0.241246
 
 
 class CommandParseError(ValueError):
@@ -190,48 +189,13 @@ def _is_hex_word(word: str) -> bool:
 
 
 def _parse_pronto_command(command: str) -> tuple[int, list[int]]:
-    """Parse learned raw Pronto hex into carrier frequency and timings.
+    """Parse learned raw Pronto HEX into carrier frequency and timings."""
+    try:
+        decoded = decode_learned_pronto(command)
+    except ProntoError as err:
+        raise _command_error(str(err)) from err
 
-    This supports raw learned Pronto codes beginning with 0000. Once and repeat
-    sections are flattened into one raw timing sequence.
-    """
-    values = [int(word, 16) for word in command.split()]
-    if len(values) < 6:
-        raise _command_error("Pronto command is too short")
-
-    pronto_type = values[0]
-    frequency_word = values[1]
-    once_pairs = values[2]
-    repeat_pairs = values[3]
-    timing_words = values[4:]
-    pair_count = once_pairs + repeat_pairs
-    expected_timing_words = pair_count * 2
-
-    if pronto_type != 0x0000:
-        raise _command_error(
-            "Only learned raw Pronto commands beginning with 0000 are supported"
-        )
-
-    if frequency_word <= 0:
-        raise _command_error("Pronto frequency word must be greater than zero")
-
-    if pair_count <= 0:
-        raise _command_error("Pronto command must declare at least one timing pair")
-
-    if len(timing_words) != expected_timing_words:
-        raise _command_error(
-            "Pronto command timing word count does not match the declared lengths"
-        )
-
-    if any(word <= 0 for word in timing_words):
-        raise _command_error("Pronto timing words must be greater than zero")
-
-    modulation = round(1_000_000 / (frequency_word * PRONTO_FREQUENCY_REFERENCE_US))
-    timings = [
-        round(word * frequency_word * PRONTO_FREQUENCY_REFERENCE_US)
-        for word in timing_words
-    ]
-    return modulation, timings
+    return decoded.modulation, list(decoded.timings)
 
 
 def _coerce_int(value: Any, field: str) -> int:
