@@ -10,6 +10,7 @@ from homeassistant.helpers import selector
 
 from .command import CommandParseError, validate_remote_command_payload
 from .const import (
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -17,6 +18,7 @@ from .const import (
     DEVICE_TYPE_GENERIC,
 )
 from .helpers import (
+    available_infrared_receivers,
     command_create_button,
     command_object,
     command_options,
@@ -26,6 +28,14 @@ from .helpers import (
     normalize_command_objects,
     universal_remotes_from_config_entry,
 )
+from .learn import (
+    LearnResult,
+    LearnSessionManager,
+    LearnSessionReceiverBusyError,
+    LearnSessionReceiverUnavailableError,
+    LearnSessionTimeoutError,
+)
+from .learn_candidates import LearnCandidate, candidate_by_key
 from .infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
     InfraredLibraryCommandError,
@@ -50,9 +60,13 @@ COMMAND_LIBRARY_CODESET = "library_codeset"
 COMMAND_LIBRARY_COMMAND = "library_command"
 COMMAND_LIBRARY_COMMANDS = "library_commands"
 COMMAND_REPEAT_COUNT = "repeat_count"
+COMMAND_LEARN_CANDIDATE = "learn_candidate"
 
 SOURCE_MANAGE_COMMANDS = "manage_commands"
 SOURCE_ADD_RAW_COMMAND = "add_raw_command"
+SOURCE_LEARN_COMMAND = "learn_command"
+SOURCE_LEARN_CAPTURE = "learn_capture"
+SOURCE_LEARN_SELECT_CANDIDATE = "learn_select_candidate"
 SOURCE_IMPORT_LIBRARY_COMMANDS = "import_library_commands"
 SOURCE_IMPORT_LIBRARY_COMMAND_SELECT = "import_library_command_select"
 SOURCE_EDIT_COMMAND = "edit_command"
@@ -81,6 +95,27 @@ def library_command_default(
     return str(library_command_options[0]["value"])
 
 
+def learned_candidate_options(
+    candidates: tuple[LearnCandidate, ...],
+) -> list[selector.SelectOptionDict]:
+    """Return selector options for learned command candidates."""
+    options: list[selector.SelectOptionDict] = []
+
+    for candidate in candidates:
+        label = candidate.label_key.replace("_", " ").title()
+        if candidate.recommended:
+            label = f"{label} (recommended)"
+
+        options.append(
+            selector.SelectOptionDict(
+                value=candidate.key,
+                label=label,
+            )
+        )
+
+    return options
+
+
 class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
     """Handle options for Universal Remote."""
 
@@ -90,6 +125,10 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._remote = self._configured_remote()
         self._selected_command_name: str | None = None
         self._selected_library_codeset: str | None = None
+        self._learn_command_name: str | None = None
+        self._learn_receiver_id: str | None = None
+        self._learn_create_button = False
+        self._learn_result: LearnResult | None = None
 
     async def async_step_init(
         self,
@@ -113,6 +152,9 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             return self.async_abort(reason="no_universal_remotes")
 
         menu_options = [SOURCE_ADD_RAW_COMMAND]
+        if self._remote.get(CONF_INFRARED_RECEIVER_ID):
+            menu_options.append(SOURCE_LEARN_COMMAND)
+
         device_type = str(
             self._remote.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC)
         )
@@ -197,6 +239,180 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_learn_command(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Select command details before learning from an infrared receiver."""
+        errors: dict[str, str] = {}
+
+        if (remote := self._remote) is None:
+            return self.async_abort(reason="no_universal_remotes")
+
+        receiver_options = available_infrared_receivers(self.hass)
+        if not receiver_options:
+            return self.async_abort(reason="no_available_infrared_receivers")
+
+        if user_input is not None:
+            command_name = normalize_command_name(str(user_input[COMMAND_NAME]))
+            receiver_id = str(user_input[CONF_INFRARED_RECEIVER_ID])
+
+            if not command_name:
+                errors[COMMAND_NAME] = "command_name_required"
+
+            if (
+                not errors
+                and find_command_key(self._commands, command_name) is not None
+            ):
+                errors[COMMAND_NAME] = "command_name_exists"
+
+            if receiver_id not in receiver_options:
+                errors[CONF_INFRARED_RECEIVER_ID] = "infrared_receiver_unavailable"
+
+            if not errors:
+                self._learn_command_name = command_name
+                self._learn_receiver_id = receiver_id
+                self._learn_create_button = bool(
+                    user_input.get(COMMAND_CREATE_BUTTON, False)
+                )
+                self._learn_result = None
+                return await self.async_step_learn_capture()
+
+        command_name_default = (
+            str(user_input.get(COMMAND_NAME, "")) if user_input else ""
+        )
+        current_receiver_id = str(remote.get(CONF_INFRARED_RECEIVER_ID, ""))
+        receiver_default = (
+            str(user_input.get(CONF_INFRARED_RECEIVER_ID, current_receiver_id))
+            if user_input
+            else current_receiver_id
+        )
+        if receiver_default not in receiver_options:
+            receiver_default = next(iter(receiver_options))
+
+        return self.async_show_form(
+            step_id=SOURCE_LEARN_COMMAND,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(COMMAND_NAME, default=command_name_default): str,
+                    vol.Required(
+                        CONF_INFRARED_RECEIVER_ID,
+                        default=receiver_default,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=list(receiver_options.values()),
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                    vol.Optional(
+                        COMMAND_CREATE_BUTTON,
+                        default=bool(user_input.get(COMMAND_CREATE_BUTTON, False))
+                        if user_input
+                        else False,
+                    ): bool,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_learn_capture(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Capture a command from the selected infrared receiver."""
+        errors: dict[str, str] = {}
+
+        if self._remote is None:
+            return self.async_abort(reason="no_universal_remotes")
+
+        if self._learn_command_name is None or self._learn_receiver_id is None:
+            return await self.async_step_learn_command()
+
+        if user_input is not None:
+            try:
+                self._learn_result = await LearnSessionManager(
+                    self.hass
+                ).async_learn_once(self._learn_receiver_id)
+            except LearnSessionReceiverUnavailableError:
+                errors["base"] = "infrared_receiver_unavailable"
+            except LearnSessionReceiverBusyError:
+                errors["base"] = "learn_receiver_busy"
+            except LearnSessionTimeoutError:
+                errors["base"] = "learn_timeout"
+
+            if not errors:
+                return await self.async_step_learn_select_candidate()
+
+        return self.async_show_form(
+            step_id=SOURCE_LEARN_CAPTURE,
+            data_schema=vol.Schema({}),
+            errors=errors,
+            description_placeholders={
+                "command_name": self._learn_command_name,
+                "receiver": self._learn_receiver_id,
+            },
+        )
+
+    async def async_step_learn_select_candidate(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Select and save one learned command candidate."""
+        errors: dict[str, str] = {}
+
+        if (remote := self._remote) is None:
+            return self.async_abort(reason="no_universal_remotes")
+
+        if self._learn_command_name is None or self._learn_result is None:
+            return await self.async_step_learn_command()
+
+        candidates = self._learn_result.candidates
+        if not candidates:
+            return self.async_abort(reason="learn_failed")
+
+        if user_input is not None:
+            selected_candidate = candidate_by_key(
+                candidates,
+                str(user_input[COMMAND_LEARN_CANDIDATE]),
+            )
+            if selected_candidate is None:
+                errors[COMMAND_LEARN_CANDIDATE] = "invalid_learn_candidate"
+
+            if not errors and selected_candidate is not None:
+                command_objects = self._command_objects
+                command_objects[self._learn_command_name] = command_object(
+                    selected_candidate.payload,
+                    create_button=self._learn_create_button,
+                )
+                remote[CONF_REMOTE_COMMANDS] = command_objects
+                return self._create_options_entry()
+
+        recommended_candidate = next(
+            (candidate for candidate in candidates if candidate.recommended),
+            candidates[0],
+        )
+
+        return self.async_show_form(
+            step_id=SOURCE_LEARN_SELECT_CANDIDATE,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        COMMAND_LEARN_CANDIDATE,
+                        default=recommended_candidate.key,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=learned_candidate_options(candidates),
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "command_name": self._learn_command_name,
+            },
         )
 
     async def async_step_import_library_commands(
