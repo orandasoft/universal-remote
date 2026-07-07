@@ -1,5 +1,6 @@
 """Options flow for Universal Remote."""
 
+from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
@@ -99,21 +100,72 @@ def learned_candidate_options(
     candidates: tuple[LearnCandidate, ...],
 ) -> list[selector.SelectOptionDict]:
     """Return selector options for learned command candidates."""
-    options: list[selector.SelectOptionDict] = []
-
-    for candidate in candidates:
-        label = candidate.label_key.replace("_", " ").title()
-        if candidate.recommended:
-            label = f"{label} (recommended)"
-
-        options.append(
-            selector.SelectOptionDict(
-                value=candidate.key,
-                label=label,
-            )
+    return [
+        selector.SelectOptionDict(
+            value=candidate.key,
+            label=_learned_candidate_label(candidate),
         )
+        for candidate in candidates
+    ]
 
-    return options
+
+def learned_candidate_details(candidates: tuple[LearnCandidate, ...]) -> str:
+    """Return user-facing details for learned command candidates."""
+    return "\n".join(
+        f"- {_learned_candidate_label(candidate)}" for candidate in candidates
+    )
+
+
+def _learned_candidate_label(candidate: LearnCandidate) -> str:
+    """Return a readable learned-candidate label."""
+    label = candidate.label_key.replace("_", " ").title()
+    if candidate.recommended:
+        label = f"{label} (recommended)"
+
+    if summary := _learned_candidate_metadata_summary(candidate):
+        return f"{label} — {summary}"
+
+    return label
+
+
+def _learned_candidate_metadata_summary(candidate: LearnCandidate) -> str:
+    """Return a concise user-facing summary of learned candidate metadata."""
+    metadata = candidate.metadata
+    protocol = metadata.get("protocol")
+    if protocol is not None:
+        return _learned_protocol_summary(str(protocol), metadata)
+
+    details: list[str] = []
+    timing_count = metadata.get("timing_count")
+    if isinstance(timing_count, int):
+        details.append(f"{timing_count} timings")
+
+    modulation = metadata.get("modulation")
+    if isinstance(modulation, int):
+        modulation_detail = f"{modulation} Hz"
+        if metadata.get("modulation_assumed") is True:
+            modulation_detail = f"{modulation_detail} assumed"
+        details.append(modulation_detail)
+
+    return ", ".join(details)
+
+
+def _learned_protocol_summary(protocol: str, metadata: Mapping[str, Any]) -> str:
+    """Return a concise summary of decoded learned protocol metadata."""
+    protocol_label = protocol.replace("_", "-").upper()
+    details = [protocol_label]
+
+    if address := metadata.get("address"):
+        details.append(f"address {address}")
+
+    primary_label = "function" if protocol == "nec1_f16" else "command"
+    if primary := metadata.get("primary"):
+        details.append(f"{primary_label} {primary}")
+
+    if secondary := metadata.get("secondary"):
+        details.append(f"subfunction {secondary}")
+
+    return ", ".join(details)
 
 
 class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
@@ -125,9 +177,8 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._remote = self._configured_remote()
         self._selected_command_name: str | None = None
         self._selected_library_codeset: str | None = None
-        self._learn_command_name: str | None = None
         self._learn_receiver_id: str | None = None
-        self._learn_create_button = False
+        self._learn_receiver_label: str | None = None
         self._learn_result: LearnResult | None = None
 
     async def async_step_init(
@@ -245,7 +296,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """Select command details before learning from an infrared receiver."""
+        """Select an infrared receiver before learning a command."""
         errors: dict[str, str] = {}
 
         if (remote := self._remote) is None:
@@ -256,33 +307,19 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             return self.async_abort(reason="no_available_infrared_receivers")
 
         if user_input is not None:
-            command_name = normalize_command_name(str(user_input[COMMAND_NAME]))
             receiver_id = str(user_input[CONF_INFRARED_RECEIVER_ID])
-
-            if not command_name:
-                errors[COMMAND_NAME] = "command_name_required"
-
-            if (
-                not errors
-                and find_command_key(self._commands, command_name) is not None
-            ):
-                errors[COMMAND_NAME] = "command_name_exists"
 
             if receiver_id not in receiver_options:
                 errors[CONF_INFRARED_RECEIVER_ID] = "infrared_receiver_unavailable"
 
             if not errors:
-                self._learn_command_name = command_name
                 self._learn_receiver_id = receiver_id
-                self._learn_create_button = bool(
-                    user_input.get(COMMAND_CREATE_BUTTON, False)
+                self._learn_receiver_label = str(
+                    receiver_options[receiver_id].get("label", receiver_id)
                 )
                 self._learn_result = None
                 return await self.async_step_learn_capture()
 
-        command_name_default = (
-            str(user_input.get(COMMAND_NAME, "")) if user_input else ""
-        )
         current_receiver_id = str(remote.get(CONF_INFRARED_RECEIVER_ID, ""))
         receiver_default = (
             str(user_input.get(CONF_INFRARED_RECEIVER_ID, current_receiver_id))
@@ -296,7 +333,6 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             step_id=SOURCE_LEARN_COMMAND,
             data_schema=vol.Schema(
                 {
-                    vol.Required(COMMAND_NAME, default=command_name_default): str,
                     vol.Required(
                         CONF_INFRARED_RECEIVER_ID,
                         default=receiver_default,
@@ -306,12 +342,6 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
-                    vol.Optional(
-                        COMMAND_CREATE_BUTTON,
-                        default=bool(user_input.get(COMMAND_CREATE_BUTTON, False))
-                        if user_input
-                        else False,
-                    ): bool,
                 }
             ),
             errors=errors,
@@ -327,7 +357,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         if self._remote is None:
             return self.async_abort(reason="no_universal_remotes")
 
-        if self._learn_command_name is None or self._learn_receiver_id is None:
+        if self._learn_receiver_id is None:
             return await self.async_step_learn_command()
 
         if user_input is not None:
@@ -350,8 +380,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             data_schema=vol.Schema({}),
             errors=errors,
             description_placeholders={
-                "command_name": self._learn_command_name,
-                "receiver": self._learn_receiver_id,
+                "receiver": self._learn_receiver_label or self._learn_receiver_id,
             },
         )
 
@@ -359,13 +388,13 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
-        """Select and save one learned command candidate."""
+        """Name and save one learned command candidate."""
         errors: dict[str, str] = {}
 
         if (remote := self._remote) is None:
             return self.async_abort(reason="no_universal_remotes")
 
-        if self._learn_command_name is None or self._learn_result is None:
+        if self._learn_result is None:
             return await self.async_step_learn_command()
 
         candidates = self._learn_result.candidates
@@ -373,18 +402,29 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             return self.async_abort(reason="learn_failed")
 
         if user_input is not None:
+            command_name = normalize_command_name(str(user_input[COMMAND_NAME]))
             selected_candidate = candidate_by_key(
                 candidates,
                 str(user_input[COMMAND_LEARN_CANDIDATE]),
             )
+
+            if not command_name:
+                errors[COMMAND_NAME] = "command_name_required"
+
+            if (
+                not errors
+                and find_command_key(self._commands, command_name) is not None
+            ):
+                errors[COMMAND_NAME] = "command_name_exists"
+
             if selected_candidate is None:
                 errors[COMMAND_LEARN_CANDIDATE] = "invalid_learn_candidate"
 
             if not errors and selected_candidate is not None:
                 command_objects = self._command_objects
-                command_objects[self._learn_command_name] = command_object(
+                command_objects[command_name] = command_object(
                     selected_candidate.payload,
-                    create_button=self._learn_create_button,
+                    create_button=bool(user_input.get(COMMAND_CREATE_BUTTON, False)),
                 )
                 remote[CONF_REMOTE_COMMANDS] = command_objects
                 return self._create_options_entry()
@@ -393,11 +433,15 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             (candidate for candidate in candidates if candidate.recommended),
             candidates[0],
         )
+        command_name_default = (
+            str(user_input.get(COMMAND_NAME, "")) if user_input else ""
+        )
 
         return self.async_show_form(
             step_id=SOURCE_LEARN_SELECT_CANDIDATE,
             data_schema=vol.Schema(
                 {
+                    vol.Required(COMMAND_NAME, default=command_name_default): str,
                     vol.Required(
                         COMMAND_LEARN_CANDIDATE,
                         default=recommended_candidate.key,
@@ -407,11 +451,17 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
+                    vol.Optional(
+                        COMMAND_CREATE_BUTTON,
+                        default=bool(user_input.get(COMMAND_CREATE_BUTTON, False))
+                        if user_input
+                        else False,
+                    ): bool,
                 }
             ),
             errors=errors,
             description_placeholders={
-                "command_name": self._learn_command_name,
+                "candidate_details": learned_candidate_details(candidates),
             },
         )
 

@@ -35,6 +35,9 @@ from custom_components.universal_remote.helpers import (
     infrared_receiver_field,
     infrared_receiver_field_with_current,
     infrared_receiver_selector,
+    _infrared_area_name,
+    _infrared_device_context_label,
+    _infrared_entity_label,
     linked_entity_is_available,
     normalize_command_mapping,
     normalize_command_name,
@@ -106,9 +109,9 @@ def test_available_infrared_emitters(hass: HomeAssistant) -> None:
 
     assert list(options) == ["infrared.ir_a", "infrared.ir_b"]
     assert options["infrared.ir_a"]["value"] == "infrared.ir_a"
-    assert options["infrared.ir_a"]["label"] == "IR A"
+    assert options["infrared.ir_a"]["label"] == "IR A (infrared.ir_a)"
     assert options["infrared.ir_b"]["value"] == "infrared.ir_b"
-    assert options["infrared.ir_b"]["label"] == "IR B"
+    assert options["infrared.ir_b"]["label"] == "IR B (infrared.ir_b)"
     assert "infrared.ir_disabled" not in options
     assert "light.ignored" not in options
 
@@ -151,11 +154,181 @@ def test_available_infrared_receivers(hass: HomeAssistant) -> None:
 
     assert list(options) == ["infrared.receiver_a", "infrared.receiver_b"]
     assert options["infrared.receiver_a"]["value"] == "infrared.receiver_a"
-    assert options["infrared.receiver_a"]["label"] == "Receiver A"
+    assert (
+        options["infrared.receiver_a"]["label"]
+        == "Receiver A (infrared.receiver_a)"
+    )
     assert options["infrared.receiver_b"]["value"] == "infrared.receiver_b"
-    assert options["infrared.receiver_b"]["label"] == "Receiver B"
+    assert (
+        options["infrared.receiver_b"]["label"]
+        == "Receiver B (infrared.receiver_b)"
+    )
     assert "infrared.receiver_disabled" not in options
 
+
+class _FakeRegistryEntry:
+    """Fake entity registry entry for label tests."""
+
+    def __init__(
+        self,
+        *,
+        entity_id: str = "infrared.receiver",
+        name: str | None = "IR Receiver",
+        original_name: str | None = None,
+        device_id: str | None = "device-id",
+        area_id: str | None = None,
+    ) -> None:
+        """Initialize fake registry entry."""
+        self.entity_id = entity_id
+        self.name = name
+        self.original_name = original_name
+        self.device_id = device_id
+        self.area_id = area_id
+
+
+class _FakeDevice:
+    """Fake device registry entry for label tests."""
+
+    def __init__(
+        self,
+        *,
+        name_by_user: str | None = "BroadLink RM4 Pro",
+        name: str | None = None,
+        model: str | None = None,
+        area_id: str | None = "area-id",
+    ) -> None:
+        """Initialize fake device."""
+        self.name_by_user = name_by_user
+        self.name = name
+        self.model = model
+        self.area_id = area_id
+
+
+class _FakeDeviceRegistry:
+    """Fake device registry for label tests."""
+
+    def __init__(self, device: _FakeDevice | None) -> None:
+        """Initialize fake device registry."""
+        self._device = device
+
+    def async_get(self, _device_id: str) -> _FakeDevice | None:
+        """Return a fake device."""
+        return self._device
+
+
+class _FakeArea:
+    """Fake area registry entry for label tests."""
+
+    name = "Living Room"
+
+
+class _FakeAreaRegistry:
+    """Fake area registry for label tests."""
+
+    def __init__(self, area: _FakeArea | None) -> None:
+        """Initialize fake area registry."""
+        self._area = area
+
+    def async_get_area(self, _area_id: str) -> _FakeArea | None:
+        """Return a fake area."""
+        return self._area
+
+
+def test_infrared_entity_label_includes_area_device_and_entity_id(
+    hass: HomeAssistant,
+) -> None:
+    """Test infrared labels include area, device, and entity id context."""
+    entry = _FakeRegistryEntry()
+
+    with (
+        patch(
+            "custom_components.universal_remote.helpers.dr.async_get",
+            return_value=_FakeDeviceRegistry(_FakeDevice()),
+        ),
+        patch(
+            "custom_components.universal_remote.helpers.ar.async_get",
+            return_value=_FakeAreaRegistry(_FakeArea()),
+        ),
+    ):
+        label = _infrared_entity_label(hass, "infrared.receiver", entry)
+
+    assert label == (
+        "IR Receiver — Living Room BroadLink RM4 Pro (infrared.receiver)"
+    )
+
+
+def test_infrared_entity_label_uses_entity_id_without_registry_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test infrared labels fall back to entity id without a registry entry."""
+    assert (
+        _infrared_entity_label(hass, "infrared.receiver", None)
+        == "infrared.receiver"
+    )
+
+
+def test_infrared_entity_label_uses_entity_id_without_names_or_context(
+    hass: HomeAssistant,
+) -> None:
+    """Test infrared labels fall back to entity id without names or context."""
+    entry = _FakeRegistryEntry(
+        entity_id="infrared.receiver",
+        name=None,
+        original_name=None,
+        device_id=None,
+    )
+
+    assert (
+        _infrared_entity_label(hass, "infrared.receiver", entry)
+        == "infrared.receiver"
+    )
+
+
+def test_infrared_device_context_label_handles_missing_device(
+    hass: HomeAssistant,
+) -> None:
+    """Test context labels handle missing devices."""
+    entry = _FakeRegistryEntry()
+
+    with patch(
+        "custom_components.universal_remote.helpers.dr.async_get",
+        return_value=_FakeDeviceRegistry(None),
+    ):
+        assert _infrared_device_context_label(hass, entry) is None
+
+
+def test_infrared_device_context_label_uses_device_without_area(
+    hass: HomeAssistant,
+) -> None:
+    """Test context labels use the device name when no area is available."""
+    entry = _FakeRegistryEntry(area_id=None)
+    device = _FakeDevice(area_id=None)
+
+    with (
+        patch(
+            "custom_components.universal_remote.helpers.dr.async_get",
+            return_value=_FakeDeviceRegistry(device),
+        ),
+        patch(
+            "custom_components.universal_remote.helpers.ar.async_get",
+            return_value=_FakeAreaRegistry(None),
+        ),
+    ):
+        assert _infrared_device_context_label(hass, entry) == "BroadLink RM4 Pro"
+
+
+def test_infrared_area_name_handles_missing_area(
+    hass: HomeAssistant,
+) -> None:
+    """Test area labels handle stale area ids."""
+    entry = _FakeRegistryEntry(area_id="area-id")
+    device = _FakeDevice(area_id=None)
+
+    with patch(
+        "custom_components.universal_remote.helpers.ar.async_get",
+        return_value=_FakeAreaRegistry(None),
+    ):
+        assert _infrared_area_name(hass, entry, device) is None
 
 
 def test_infrared_emitter_selector_includes_current_missing_emitter() -> None:

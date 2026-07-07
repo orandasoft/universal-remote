@@ -50,6 +50,8 @@ from custom_components.universal_remote.options_flow import (
     SOURCE_MANAGE_COMMANDS,
     SOURCE_REMOVE_COMMAND,
     UniversalRemoteOptionsFlow,
+    learned_candidate_details,
+    learned_candidate_options,
     library_command_default,
 )
 from homeassistant.core import HomeAssistant
@@ -533,15 +535,12 @@ async def test_learn_command_success(
 
         result = await hass.config_entries.options.async_configure(
             result["flow_id"],
-            {
-                COMMAND_NAME: "Mute",
-                CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
-                CONF_COMMAND_CREATE_BUTTON: True,
-            },
+            {CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver"},
         )
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_CAPTURE
+    assert result["description_placeholders"] == {"receiver": "Test Receiver"}
 
     with patch(
         "custom_components.universal_remote.options_flow."
@@ -555,11 +554,18 @@ async def test_learn_command_success(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+    description_placeholders = result["description_placeholders"]
+    assert description_placeholders is not None
+    assert "4 timings" in description_placeholders["candidate_details"]
     learn_once.assert_called_once_with("infrared.test_receiver")
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED},
+        {
+            COMMAND_NAME: "Mute",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
+            CONF_COMMAND_CREATE_BUTTON: True,
+        },
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -567,30 +573,6 @@ async def test_learn_command_success(
         LEARNED_COMMAND,
         create_button=True,
     )
-
-
-async def test_learn_command_rejects_duplicate_command_name(
-    hass: HomeAssistant,
-) -> None:
-    """Test learned commands cannot replace an existing command accidentally."""
-    entry = _receiver_only_entry(hass)
-    flow = UniversalRemoteOptionsFlow(entry)
-    flow.hass = hass
-
-    with patch(
-        "custom_components.universal_remote.options_flow.available_infrared_receivers",
-        return_value=_receiver_options(),
-    ):
-        result = await flow.async_step_learn_command(
-            {
-                COMMAND_NAME: "Power On",
-                CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
-            }
-        )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_COMMAND
-    assert result["errors"] == {COMMAND_NAME: "command_name_exists"}
 
 
 async def test_learn_command_without_available_receivers_aborts(
@@ -624,10 +606,7 @@ async def test_learn_command_rejects_unavailable_receiver(
         return_value=_receiver_options(),
     ):
         result = await flow.async_step_learn_command(
-            {
-                COMMAND_NAME: "Mute",
-                CONF_INFRARED_RECEIVER_ID: "infrared.missing_receiver",
-            }
+            {CONF_INFRARED_RECEIVER_ID: "infrared.missing_receiver"}
         )
 
     assert result["type"] is FlowResultType.FORM
@@ -666,7 +645,6 @@ async def test_learn_capture_errors(
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
-    flow._learn_command_name = "MUTE"
     flow._learn_receiver_id = "infrared.test_receiver"
 
     error_type = _import_from_string(side_effect)
@@ -689,8 +667,6 @@ async def test_learn_select_candidate_selects_normalized_candidate(
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
-    flow._learn_command_name = "MUTE"
-    flow._learn_create_button = True
     flow._learn_result = _learn_result(
         (
             LearnCandidate(
@@ -698,20 +674,30 @@ async def test_learn_select_candidate_selects_normalized_candidate(
                 payload="captured-payload",
                 label_key=CANDIDATE_CAPTURED,
                 recommended=False,
-                metadata={},
+                metadata={"timing_count": 67, "modulation": 38_000},
             ),
             LearnCandidate(
                 key=CANDIDATE_NORMALIZED,
                 payload=LEARNED_COMMAND,
                 label_key=CANDIDATE_NORMALIZED,
                 recommended=True,
-                metadata={"decoder": "nec"},
+                metadata={
+                    "decoder": "nec1_f16",
+                    "protocol": "nec1_f16",
+                    "address": "0xFB04",
+                    "primary": "0xDB",
+                    "secondary": "0x32",
+                },
             ),
         )
     )
 
     result = await flow.async_step_learn_select_candidate(
-        {COMMAND_LEARN_CANDIDATE: CANDIDATE_NORMALIZED}
+        {
+            COMMAND_NAME: "Mute",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_NORMALIZED,
+            CONF_COMMAND_CREATE_BUTTON: True,
+        }
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -721,6 +707,48 @@ async def test_learn_select_candidate_selects_normalized_candidate(
     )
 
 
+async def test_learn_select_candidate_rejects_empty_command_name(
+    hass: HomeAssistant,
+) -> None:
+    """Test learned command name is required when saving a candidate."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_learn_select_candidate(
+        {
+            COMMAND_NAME: "   ",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
+        }
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+    assert result["errors"] == {COMMAND_NAME: "command_name_required"}
+
+
+async def test_learn_select_candidate_rejects_duplicate_command_name(
+    hass: HomeAssistant,
+) -> None:
+    """Test learned commands cannot replace an existing command accidentally."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_learn_select_candidate(
+        {
+            COMMAND_NAME: "Power On",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
+        }
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+    assert result["errors"] == {COMMAND_NAME: "command_name_exists"}
+
+
 async def test_learn_select_candidate_rejects_invalid_candidate(
     hass: HomeAssistant,
 ) -> None:
@@ -728,11 +756,13 @@ async def test_learn_select_candidate_rejects_invalid_candidate(
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
-    flow._learn_command_name = "MUTE"
     flow._learn_result = _learn_result()
 
     result = await flow.async_step_learn_select_candidate(
-        {COMMAND_LEARN_CANDIDATE: "missing"}
+        {
+            COMMAND_NAME: "Mute",
+            COMMAND_LEARN_CANDIDATE: "missing",
+        }
     )
 
     assert result["type"] is FlowResultType.FORM
@@ -740,48 +770,75 @@ async def test_learn_select_candidate_rejects_invalid_candidate(
     assert result["errors"] == {COMMAND_LEARN_CANDIDATE: "invalid_learn_candidate"}
 
 
-async def test_learn_steps_without_remote_abort(hass: HomeAssistant) -> None:
-    """Test learn steps abort when the entry has no remote."""
-    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
-    entry.add_to_hass(hass)
-    flow = UniversalRemoteOptionsFlow(entry)
-    flow.hass = hass
-
-    result = await flow.async_step_learn_command()
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_universal_remotes"
-
-    result = await flow.async_step_learn_capture({})
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_universal_remotes"
-
-    result = await flow.async_step_learn_select_candidate({})
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "no_universal_remotes"
-
-
-async def test_learn_command_rejects_empty_command_name(
+async def test_learn_select_candidate_form_shows_candidate_details(
     hass: HomeAssistant,
 ) -> None:
-    """Test learned command name is required."""
+    """Test learned candidate form shows decoded and captured details."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
-
-    with patch(
-        "custom_components.universal_remote.options_flow.available_infrared_receivers",
-        return_value=_receiver_options(),
-    ):
-        result = await flow.async_step_learn_command(
-            {
-                COMMAND_NAME: "   ",
-                CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
-            }
+    flow._learn_result = _learn_result(
+        (
+            LearnCandidate(
+                key=CANDIDATE_CAPTURED,
+                payload="captured-payload",
+                label_key=CANDIDATE_CAPTURED,
+                recommended=False,
+                metadata={
+                    "timing_count": 67,
+                    "modulation": 38_000,
+                    "modulation_assumed": True,
+                },
+            ),
+            LearnCandidate(
+                key=CANDIDATE_NORMALIZED,
+                payload=LEARNED_COMMAND,
+                label_key=CANDIDATE_NORMALIZED,
+                recommended=True,
+                metadata={
+                    "protocol": "nec1_f16",
+                    "address": "0xFB04",
+                    "primary": "0xDB",
+                    "secondary": "0x32",
+                },
+            ),
         )
+    )
+
+    result = await flow.async_step_learn_select_candidate()
 
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_COMMAND
-    assert result["errors"] == {COMMAND_NAME: "command_name_required"}
+    description_placeholders = result["description_placeholders"]
+    assert description_placeholders is not None
+    details = description_placeholders["candidate_details"]
+    assert "Captured — 67 timings, 38000 Hz assumed" in details
+    assert (
+        "Normalized (recommended) — NEC1-F16, address 0xFB04, "
+        "function 0xDB, subfunction 0x32"
+    ) in details
+
+
+async def test_learn_select_candidate_without_candidates_aborts(
+    hass: HomeAssistant,
+) -> None:
+    """Test learn candidate selection aborts when no candidates exist."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = LearnResult(
+        capture=LearnCapture(
+            timings=[9000, -4500, 560, -560],
+            modulation=38_000,
+            modulation_assumed=False,
+            timing_count=4,
+        ),
+        candidates=(),
+    )
+
+    result = await flow.async_step_learn_select_candidate({})
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "learn_failed"
 
 
 async def test_learn_capture_without_pending_state_returns_learn_command_form(
@@ -820,28 +877,82 @@ async def test_learn_select_candidate_without_pending_state_returns_learn_comman
     assert result["step_id"] == SOURCE_LEARN_COMMAND
 
 
-async def test_learn_select_candidate_without_candidates_aborts(
-    hass: HomeAssistant,
-) -> None:
-    """Test learn candidate selection aborts when no candidates exist."""
-    entry = _receiver_only_entry(hass)
+async def test_learn_steps_without_remote_abort(hass: HomeAssistant) -> None:
+    """Test learn steps abort when the entry has no remote."""
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.add_to_hass(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
-    flow._learn_command_name = "MUTE"
-    flow._learn_result = LearnResult(
-        capture=LearnCapture(
-            timings=[9000, -4500, 560, -560],
-            modulation=38_000,
-            modulation_assumed=False,
-            timing_count=4,
-        ),
-        candidates=(),
-    )
+
+    result = await flow.async_step_learn_command()
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_universal_remotes"
+
+    result = await flow.async_step_learn_capture({})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_universal_remotes"
 
     result = await flow.async_step_learn_select_candidate({})
-
     assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "learn_failed"
+    assert result["reason"] == "no_universal_remotes"
+
+
+def test_learned_candidate_options_include_metadata() -> None:
+    """Test learned candidate labels include safe metadata."""
+    options = learned_candidate_options(
+        (
+            LearnCandidate(
+                key=CANDIDATE_CAPTURED,
+                payload="captured-payload",
+                label_key=CANDIDATE_CAPTURED,
+                recommended=False,
+                metadata={
+                    "timing_count": 67,
+                    "modulation": 38_000,
+                    "modulation_assumed": True,
+                },
+            ),
+            LearnCandidate(
+                key=CANDIDATE_NORMALIZED,
+                payload=LEARNED_COMMAND,
+                label_key=CANDIDATE_NORMALIZED,
+                recommended=True,
+                metadata={
+                    "protocol": "nec",
+                    "address": "0x00FB",
+                    "primary": "0xDB",
+                },
+            ),
+        )
+    )
+
+    assert options == [
+        {
+            "value": CANDIDATE_CAPTURED,
+            "label": "Captured — 67 timings, 38000 Hz assumed",
+        },
+        {
+            "value": CANDIDATE_NORMALIZED,
+            "label": "Normalized (recommended) — NEC, address 0x00FB, command 0xDB",
+        },
+    ]
+
+
+def test_learned_candidate_details_handles_minimal_metadata() -> None:
+    """Test learned candidate details handles candidates without metadata."""
+    details = learned_candidate_details(
+        (
+            LearnCandidate(
+                key=CANDIDATE_CAPTURED,
+                payload="captured-payload",
+                label_key=CANDIDATE_CAPTURED,
+                recommended=False,
+                metadata={},
+            ),
+        )
+    )
+
+    assert details == "- Captured"
 
 
 def _import_from_string(path: str) -> type[Exception]:
