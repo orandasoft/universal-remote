@@ -13,9 +13,15 @@ from homeassistant.core import HomeAssistant
 from custom_components.universal_remote import learn as learn_module
 from custom_components.universal_remote.learn import (
     DEFAULT_LEARN_MODULATION,
+    LEARN_DECODER_AUTO,
+    LEARN_DECODER_NEC,
+    LEARN_DECODER_NEC1_F16,
+    LEARN_DECODER_NONE,
+    LEARN_DECODERS,
     LearnCapture,
     LearnResult,
     LearnSessionInvalidCaptureError,
+    LearnSessionInvalidDecoderError,
     LearnSessionManager,
     LearnSessionReceiverBusyError,
     LearnSessionReceiverUnavailableError,
@@ -357,6 +363,39 @@ def test_build_learn_result_uses_captured_candidate_without_decode(
     assert result.candidates[0].metadata["modulation_assumed"] is True
 
 
+def test_learn_decoders_are_stable() -> None:
+    """Test supported learn decoder constants."""
+    assert LEARN_DECODERS == (
+        LEARN_DECODER_AUTO,
+        LEARN_DECODER_NONE,
+        LEARN_DECODER_NEC,
+        LEARN_DECODER_NEC1_F16,
+    )
+
+
+def test_build_learn_result_decoder_none_uses_captured_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test None decoder does not attempt protocol normalization."""
+
+    def fail_decode(_signal: InfraredReceivedSignal) -> None:
+        pytest.fail("decoder should not be called")
+
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", fail_decode)
+    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", fail_decode)
+
+    result = learn_module.build_learn_result(_capture(), decoder=LEARN_DECODER_NONE)
+
+    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
+    assert result.candidates[0].recommended is True
+
+
+def test_build_learn_result_rejects_invalid_decoder() -> None:
+    """Test invalid decoder names are rejected."""
+    with pytest.raises(LearnSessionInvalidDecoderError):
+        learn_module.build_learn_result(_capture(), decoder="invalid")
+
+
 def test_build_learn_result_adds_normalized_nec_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -386,6 +425,53 @@ def test_build_learn_result_adds_normalized_nec_candidate(
     assert result.candidates[1].metadata["address"] == "0x0004"
     assert result.candidates[1].metadata["primary"] == "0x08"
     assert "secondary" not in result.candidates[1].metadata
+
+
+def test_build_learn_result_explicit_nec_decoder_does_not_try_nec1_f16(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test explicit NEC decoder does not try other decoders."""
+    command = FakeDecodedCommand()
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: command)
+    monkeypatch.setattr(
+        learn_module,
+        "_normalize_nec_command",
+        lambda _command: DecodedInfraredCommand(
+            protocol=PROTOCOL_NEC,
+            address=0x04,
+            primary=0x08,
+        ),
+    )
+
+    def fail_decode(_signal: InfraredReceivedSignal) -> None:
+        pytest.fail("NEC1-f16 decoder should not be called")
+
+    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", fail_decode)
+
+    result = learn_module.build_learn_result(_capture(), decoder=LEARN_DECODER_NEC)
+
+    assert [candidate.key for candidate in result.candidates] == [
+        CANDIDATE_CAPTURED,
+        CANDIDATE_NORMALIZED,
+    ]
+    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC
+
+
+def test_build_learn_result_explicit_nec_decoder_returns_captured_when_unmatched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test explicit NEC decoder returns captured-only when NEC does not match."""
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
+
+    def fail_decode(_signal: InfraredReceivedSignal) -> None:
+        pytest.fail("NEC1-f16 decoder should not be called")
+
+    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", fail_decode)
+
+    result = learn_module.build_learn_result(_capture(), decoder=LEARN_DECODER_NEC)
+
+    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
+    assert result.candidates[0].recommended is True
 
 
 def test_build_learn_result_falls_back_to_nec1_f16_candidate(
@@ -423,6 +509,61 @@ def test_build_learn_result_falls_back_to_nec1_f16_candidate(
     assert result.candidates[1].metadata["secondary"] == "0x32"
 
 
+def test_build_learn_result_explicit_nec1_f16_decoder_does_not_try_nec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test explicit NEC1-f16 decoder does not try NEC first."""
+    command = FakeDecodedCommand()
+
+    def fail_decode(_signal: InfraredReceivedSignal) -> None:
+        pytest.fail("NEC decoder should not be called")
+
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", fail_decode)
+    monkeypatch.setattr(
+        learn_module,
+        "_decode_nec1_f16_signal",
+        lambda _signal: command,
+    )
+    monkeypatch.setattr(
+        learn_module,
+        "_normalize_nec1_f16_command",
+        lambda _command: DecodedInfraredCommand(
+            protocol=PROTOCOL_NEC1_F16,
+            address=0xFB04,
+            primary=0xDB,
+            secondary=0x32,
+        ),
+    )
+
+    result = learn_module.build_learn_result(_capture(), decoder=LEARN_DECODER_NEC1_F16)
+
+    assert [candidate.key for candidate in result.candidates] == [
+        CANDIDATE_CAPTURED,
+        CANDIDATE_NORMALIZED,
+    ]
+    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC1_F16
+
+
+def test_build_learn_result_explicit_nec1_f16_returns_captured_when_unmatched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test explicit NEC1-f16 decoder returns captured-only when unmatched."""
+    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
+
+    def fail_decode(_signal: InfraredReceivedSignal) -> None:
+        pytest.fail("NEC decoder should not be called")
+
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", fail_decode)
+
+    result = learn_module.build_learn_result(
+        _capture(),
+        decoder=LEARN_DECODER_NEC1_F16,
+    )
+
+    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
+    assert result.candidates[0].recommended is True
+
+
 def test_build_learn_result_skips_candidate_when_normalization_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -450,7 +591,13 @@ async def test_async_learn_once_returns_learn_result(
     monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
     manager = LearnSessionManager(hass)
 
-    task = asyncio.create_task(manager.async_learn_once(RECEIVER_ID, timeout=1.0))
+    task = asyncio.create_task(
+        manager.async_learn_once(
+            RECEIVER_ID,
+            timeout=1.0,
+            decoder=LEARN_DECODER_NONE,
+        )
+    )
     await asyncio.sleep(0)
 
     assert subscription.callback is not None
@@ -461,3 +608,33 @@ async def test_async_learn_once_returns_learn_result(
     assert result.capture.timings == VALID_TIMINGS
     assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
     assert subscription.unsubscribe_calls == 1
+
+
+def test_build_learn_result_explicit_nec1_f16_skips_when_normalization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test NEC1-f16 decoder returns captured-only when normalization fails."""
+    command = FakeDecodedCommand()
+
+    def fail_decode(_signal: InfraredReceivedSignal) -> None:
+        pytest.fail("NEC decoder should not be called")
+
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", fail_decode)
+    monkeypatch.setattr(
+        learn_module,
+        "_decode_nec1_f16_signal",
+        lambda _signal: command,
+    )
+    monkeypatch.setattr(
+        learn_module,
+        "_normalize_nec1_f16_command",
+        lambda _command: None,
+    )
+
+    result = learn_module.build_learn_result(
+        _capture(),
+        decoder=LEARN_DECODER_NEC1_F16,
+    )
+
+    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
+    assert result.candidates[0].recommended is True

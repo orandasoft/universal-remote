@@ -32,6 +32,16 @@ from .protocols import (
 MIN_CAPTURE_TIMING_COUNT = 4
 MIN_CAPTURE_TOTAL_DURATION_US = 1_000
 DEFAULT_LEARN_TIMEOUT = 30.0
+LEARN_DECODER_AUTO = "auto"
+LEARN_DECODER_NONE = "none"
+LEARN_DECODER_NEC = PROTOCOL_NEC
+LEARN_DECODER_NEC1_F16 = PROTOCOL_NEC1_F16
+LEARN_DECODERS = (
+    LEARN_DECODER_AUTO,
+    LEARN_DECODER_NONE,
+    LEARN_DECODER_NEC,
+    LEARN_DECODER_NEC1_F16,
+)
 _LEARN_RECEIVER_LOCKS = "learn_receiver_locks"
 _LEARN_CAPTURE_TOKENS = "learn_capture_tokens"
 
@@ -75,6 +85,10 @@ class LearnSessionInvalidCaptureError(LearnSessionError):
     """Raised when a received signal is not structurally valid."""
 
 
+class LearnSessionInvalidDecoderError(LearnSessionError):
+    """Raised when an unsupported learning decoder is requested."""
+
+
 class LearnSessionManager:
     """Manage one-shot IR learning capture sessions."""
 
@@ -87,10 +101,11 @@ class LearnSessionManager:
         receiver_entity_id: str,
         *,
         timeout: float = DEFAULT_LEARN_TIMEOUT,
+        decoder: str = LEARN_DECODER_AUTO,
     ) -> LearnResult:
         """Capture one signal and generate learned command candidates."""
         capture = await self.async_capture_once(receiver_entity_id, timeout=timeout)
-        return build_learn_result(capture)
+        return build_learn_result(capture, decoder=decoder)
 
     async def async_capture_once(
         self,
@@ -191,9 +206,16 @@ class LearnSessionManager:
         return self._hass.data.setdefault(DOMAIN, {})
 
 
-def build_learn_result(capture: LearnCapture) -> LearnResult:
+def build_learn_result(
+    capture: LearnCapture,
+    *,
+    decoder: str = LEARN_DECODER_AUTO,
+) -> LearnResult:
     """Build learned command candidates from a completed capture."""
-    normalized_command, normalized_metadata = _normalized_command_for_capture(capture)
+    normalized_command, normalized_metadata = _normalized_command_for_capture(
+        capture,
+        decoder=decoder,
+    )
 
     return LearnResult(
         capture=capture,
@@ -209,26 +231,59 @@ def build_learn_result(capture: LearnCapture) -> LearnResult:
 
 def _normalized_command_for_capture(
     capture: LearnCapture,
+    *,
+    decoder: str = LEARN_DECODER_AUTO,
 ) -> tuple[Command | None, dict[str, Any] | None]:
     """Return a normalized decoded command and metadata for a capture."""
+    if decoder not in LEARN_DECODERS:
+        raise LearnSessionInvalidDecoderError
+
+    if decoder == LEARN_DECODER_NONE:
+        return None, None
+
     signal = InfraredReceivedSignal(capture.timings, modulation=capture.modulation)
 
-    nec_command = _decode_nec_signal(signal)
-    if nec_command is not None:
-        decoded = _normalize_nec_command(nec_command)
-        if decoded is not None:
-            return nec_command, _decoded_command_metadata(PROTOCOL_NEC, decoded)
+    if decoder in (LEARN_DECODER_AUTO, LEARN_DECODER_NEC):
+        normalized = _normalized_nec_command(signal)
+        if normalized is not None or decoder == LEARN_DECODER_NEC:
+            return normalized or (None, None)
 
-    nec1_f16_command = _decode_nec1_f16_signal(signal)
-    if nec1_f16_command is not None:
-        decoded = _normalize_nec1_f16_command(nec1_f16_command)
-        if decoded is not None:
-            return nec1_f16_command, _decoded_command_metadata(
-                PROTOCOL_NEC1_F16,
-                decoded,
-            )
+    if decoder in (LEARN_DECODER_AUTO, LEARN_DECODER_NEC1_F16):
+        normalized = _normalized_nec1_f16_command(signal)
+        if normalized is not None or decoder == LEARN_DECODER_NEC1_F16:
+            return normalized or (None, None)
 
     return None, None
+
+
+def _normalized_nec_command(
+    signal: InfraredReceivedSignal,
+) -> tuple[Command, dict[str, Any]] | None:
+    """Return a normalized NEC command and metadata for a signal."""
+    nec_command = _decode_nec_signal(signal)
+    if nec_command is None:
+        return None
+
+    decoded = _normalize_nec_command(nec_command)
+    if decoded is None:
+        return None
+
+    return nec_command, _decoded_command_metadata(PROTOCOL_NEC, decoded)
+
+
+def _normalized_nec1_f16_command(
+    signal: InfraredReceivedSignal,
+) -> tuple[Command, dict[str, Any]] | None:
+    """Return a normalized NEC1-f16 command and metadata for a signal."""
+    nec1_f16_command = _decode_nec1_f16_signal(signal)
+    if nec1_f16_command is None:
+        return None
+
+    decoded = _normalize_nec1_f16_command(nec1_f16_command)
+    if decoded is None:
+        return None
+
+    return nec1_f16_command, _decoded_command_metadata(PROTOCOL_NEC1_F16, decoded)
 
 
 def _decoded_command_metadata(
