@@ -30,11 +30,18 @@ from .helpers import (
     universal_remotes_from_config_entry,
 )
 from .learn import (
+    LEARN_DECODER_AUTO,
+    LEARN_DECODER_NEC,
+    LEARN_DECODER_NEC1_F16,
+    LEARN_DECODER_NONE,
+    LEARN_DECODERS,
+    LearnCapture,
     LearnResult,
     LearnSessionManager,
     LearnSessionReceiverBusyError,
     LearnSessionReceiverUnavailableError,
     LearnSessionTimeoutError,
+    build_learn_result,
 )
 from .learn_candidates import LearnCandidate, candidate_by_key
 from .infrared_library import (
@@ -62,11 +69,13 @@ COMMAND_LIBRARY_COMMAND = "library_command"
 COMMAND_LIBRARY_COMMANDS = "library_commands"
 COMMAND_REPEAT_COUNT = "repeat_count"
 COMMAND_LEARN_CANDIDATE = "learn_candidate"
+COMMAND_LEARN_DECODER = "learn_decoder"
 
 SOURCE_MANAGE_COMMANDS = "manage_commands"
 SOURCE_ADD_RAW_COMMAND = "add_raw_command"
 SOURCE_LEARN_COMMAND = "learn_command"
 SOURCE_LEARN_CAPTURE = "learn_capture"
+SOURCE_LEARN_SELECT_DECODER = "learn_select_decoder"
 SOURCE_LEARN_SELECT_CANDIDATE = "learn_select_candidate"
 SOURCE_IMPORT_LIBRARY_COMMANDS = "import_library_commands"
 SOURCE_IMPORT_LIBRARY_COMMAND_SELECT = "import_library_command_select"
@@ -94,6 +103,27 @@ def library_command_default(
             return normalized_command_name
 
     return str(library_command_options[0]["value"])
+
+
+def learn_decoder_options() -> list[selector.SelectOptionDict]:
+    """Return selector options for learned-command decoders."""
+    return [
+        selector.SelectOptionDict(value=LEARN_DECODER_AUTO, label="Auto (recommended)"),
+        selector.SelectOptionDict(value=LEARN_DECODER_NONE, label="None / captured only"),
+        selector.SelectOptionDict(value=LEARN_DECODER_NEC, label="NEC"),
+        selector.SelectOptionDict(value=LEARN_DECODER_NEC1_F16, label="NEC1-F16"),
+    ]
+
+
+def learn_capture_details(capture: LearnCapture) -> str:
+    """Return user-facing details for a captured signal."""
+    details = [f"{capture.timing_count} timings", f"{capture.modulation} Hz"]
+    if capture.modulation_assumed:
+        details[-1] = f"{details[-1]} assumed"
+    if capture.likely_protocol is not None:
+        details.append(f"likely {capture.likely_protocol.replace('_', '-')}")
+
+    return ", ".join(details)
 
 
 def learned_candidate_options(
@@ -179,6 +209,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._selected_library_codeset: str | None = None
         self._learn_receiver_id: str | None = None
         self._learn_receiver_label: str | None = None
+        self._learn_capture: LearnCapture | None = None
         self._learn_result: LearnResult | None = None
 
     async def async_step_init(
@@ -317,6 +348,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_receiver_label = str(
                     receiver_options[receiver_id].get("label", receiver_id)
                 )
+                self._learn_capture = None
                 self._learn_result = None
                 return await self.async_step_learn_capture()
 
@@ -362,9 +394,10 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
 
         if user_input is not None:
             try:
-                self._learn_result = await LearnSessionManager(
+                self._learn_capture = await LearnSessionManager(
                     self.hass
-                ).async_learn_once(self._learn_receiver_id)
+                ).async_capture_once(self._learn_receiver_id)
+                self._learn_result = None
             except LearnSessionReceiverUnavailableError:
                 errors["base"] = "infrared_receiver_unavailable"
             except LearnSessionReceiverBusyError:
@@ -373,7 +406,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 errors["base"] = "learn_timeout"
 
             if not errors:
-                return await self.async_step_learn_select_candidate()
+                return await self.async_step_learn_select_decoder()
 
         return self.async_show_form(
             step_id=SOURCE_LEARN_CAPTURE,
@@ -383,6 +416,54 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 "receiver": self._learn_receiver_label or self._learn_receiver_id,
             },
         )
+
+    async def async_step_learn_select_decoder(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Select how to decode a learned IR capture."""
+        errors: dict[str, str] = {}
+
+        if self._remote is None:
+            return self.async_abort(reason="no_universal_remotes")
+
+        if self._learn_capture is None:
+            return await self.async_step_learn_command()
+
+        if user_input is not None:
+            decoder = str(user_input[COMMAND_LEARN_DECODER])
+
+            if decoder not in LEARN_DECODERS:
+                errors[COMMAND_LEARN_DECODER] = "invalid_learn_decoder"
+
+            if not errors:
+                self._learn_result = build_learn_result(
+                    self._learn_capture,
+                    decoder=decoder,
+                )
+                return await self.async_step_learn_select_candidate()
+
+        return self.async_show_form(
+            step_id=SOURCE_LEARN_SELECT_DECODER,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        COMMAND_LEARN_DECODER,
+                        default=LEARN_DECODER_AUTO,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=learn_decoder_options(),
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "capture_details": learn_capture_details(self._learn_capture),
+            },
+        )
+
 
     async def async_step_learn_select_candidate(
         self,
@@ -395,6 +476,8 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             return self.async_abort(reason="no_universal_remotes")
 
         if self._learn_result is None:
+            if self._learn_capture is not None:
+                return await self.async_step_learn_select_decoder()
             return await self.async_step_learn_command()
 
         candidates = self._learn_result.candidates

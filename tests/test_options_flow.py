@@ -20,7 +20,14 @@ from custom_components.universal_remote.const import (
 from custom_components.universal_remote.infrared_library import (
     InfraredLibraryCommandError,
 )
-from custom_components.universal_remote.learn import LearnCapture, LearnResult
+from custom_components.universal_remote.learn import (
+    LEARN_DECODER_AUTO,
+    LEARN_DECODER_NEC,
+    LEARN_DECODER_NEC1_F16,
+    LEARN_DECODER_NONE,
+    LearnCapture,
+    LearnResult,
+)
 from custom_components.universal_remote.learn_candidates import (
     CANDIDATE_CAPTURED,
     CANDIDATE_NORMALIZED,
@@ -32,6 +39,7 @@ from custom_components.universal_remote.options_flow import (
     COMMAND_LIBRARY_COMMAND,
     COMMAND_LIBRARY_COMMANDS,
     COMMAND_LEARN_CANDIDATE,
+    COMMAND_LEARN_DECODER,
     COMMAND_NAME,
     COMMAND_REPEAT_COUNT,
     COMMAND_SOURCE,
@@ -46,10 +54,13 @@ from custom_components.universal_remote.options_flow import (
     SOURCE_IMPORT_LIBRARY_COMMANDS,
     SOURCE_LEARN_CAPTURE,
     SOURCE_LEARN_COMMAND,
+    SOURCE_LEARN_SELECT_DECODER,
     SOURCE_LEARN_SELECT_CANDIDATE,
     SOURCE_MANAGE_COMMANDS,
     SOURCE_REMOVE_COMMAND,
     UniversalRemoteOptionsFlow,
+    learn_capture_details,
+    learn_decoder_options,
     learned_candidate_details,
     learned_candidate_options,
     library_command_default,
@@ -544,20 +555,31 @@ async def test_learn_command_success(
 
     with patch(
         "custom_components.universal_remote.options_flow."
-        "LearnSessionManager.async_learn_once",
-        return_value=_learn_result(),
-    ) as learn_once:
+        "LearnSessionManager.async_capture_once",
+        return_value=_learn_result().capture,
+    ) as capture_once:
         result = await hass.config_entries.options.async_configure(
             result["flow_id"],
             {},
         )
 
     assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
+    description_placeholders = result["description_placeholders"]
+    assert description_placeholders is not None
+    assert "4 timings" in description_placeholders["capture_details"]
+    capture_once.assert_called_once_with("infrared.test_receiver")
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {COMMAND_LEARN_DECODER: LEARN_DECODER_NONE},
+    )
+
+    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
     description_placeholders = result["description_placeholders"]
     assert description_placeholders is not None
     assert "4 timings" in description_placeholders["candidate_details"]
-    learn_once.assert_called_once_with("infrared.test_receiver")
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -650,7 +672,7 @@ async def test_learn_capture_errors(
     error_type = _import_from_string(side_effect)
     with patch(
         "custom_components.universal_remote.options_flow."
-        "LearnSessionManager.async_learn_once",
+        "LearnSessionManager.async_capture_once",
         side_effect=error_type,
     ):
         result = await flow.async_step_learn_capture({})
@@ -658,6 +680,63 @@ async def test_learn_capture_errors(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_CAPTURE
     assert result["errors"] == {"base": error}
+
+
+async def test_learn_select_decoder_builds_candidates(
+    hass: HomeAssistant,
+) -> None:
+    """Test selecting a decoder builds learned command candidates."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+
+    result = await flow.async_step_learn_select_decoder(
+        {COMMAND_LEARN_DECODER: LEARN_DECODER_NONE}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+    assert flow._learn_result is not None
+    assert [candidate.key for candidate in flow._learn_result.candidates] == [
+        CANDIDATE_CAPTURED
+    ]
+
+
+async def test_learn_select_decoder_rejects_invalid_decoder(
+    hass: HomeAssistant,
+) -> None:
+    """Test decoder selection validates selected decoder."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+
+    result = await flow.async_step_learn_select_decoder(
+        {COMMAND_LEARN_DECODER: "unsupported"}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
+    assert result["errors"] == {COMMAND_LEARN_DECODER: "invalid_learn_decoder"}
+
+
+async def test_learn_select_decoder_without_pending_capture_returns_learn_command_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test decoder selection redirects when pending capture is missing."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    with patch(
+        "custom_components.universal_remote.options_flow.available_infrared_receivers",
+        return_value=_receiver_options(),
+    ):
+        result = await flow.async_step_learn_select_decoder({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_COMMAND
 
 
 async def test_learn_select_candidate_selects_normalized_candidate(
@@ -859,6 +938,21 @@ async def test_learn_capture_without_pending_state_returns_learn_command_form(
     assert result["step_id"] == SOURCE_LEARN_COMMAND
 
 
+async def test_learn_select_candidate_without_result_returns_decoder_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test candidate selection redirects to decoder when capture exists."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+
+    result = await flow.async_step_learn_select_candidate({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
+
+
 async def test_learn_select_candidate_without_pending_state_returns_learn_command_form(
     hass: HomeAssistant,
 ) -> None:
@@ -889,6 +983,10 @@ async def test_learn_steps_without_remote_abort(hass: HomeAssistant) -> None:
     assert result["reason"] == "no_universal_remotes"
 
     result = await flow.async_step_learn_capture({})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_universal_remotes"
+
+    result = await flow.async_step_learn_select_decoder({})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_universal_remotes"
 
@@ -953,6 +1051,32 @@ def test_learned_candidate_details_handles_minimal_metadata() -> None:
     )
 
     assert details == "- Captured"
+
+
+def test_learn_decoder_options() -> None:
+    """Test decoder selector options."""
+    assert learn_decoder_options() == [
+        {"value": LEARN_DECODER_AUTO, "label": "Auto (recommended)"},
+        {"value": LEARN_DECODER_NONE, "label": "None / captured only"},
+        {"value": LEARN_DECODER_NEC, "label": "NEC"},
+        {"value": LEARN_DECODER_NEC1_F16, "label": "NEC1-F16"},
+    ]
+
+
+def test_learn_capture_details() -> None:
+    """Test capture details include timing count and modulation."""
+    assert (
+        learn_capture_details(
+            LearnCapture(
+                timings=[9000, -4500, 560, -560],
+                modulation=38_000,
+                modulation_assumed=True,
+                timing_count=4,
+                likely_protocol="nec_repeat",
+            )
+        )
+        == "4 timings, 38000 Hz assumed, likely nec-repeat"
+    )
 
 
 def _import_from_string(path: str) -> type[Exception]:

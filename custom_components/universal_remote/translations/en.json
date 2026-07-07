@@ -217,7 +217,8 @@
       "infrared_receiver_unavailable": "Selected infrared receiver is unavailable.",
       "learn_receiver_busy": "The selected infrared receiver is already learning another command.",
       "learn_timeout": "No valid infrared command was received before the learning timeout.",
-      "invalid_learn_candidate": "Selected learned command candidate is invalid."
+      "invalid_learn_candidate": "Selected learned command candidate is invalid.",
+      "invalid_learn_decoder": "Selected learned-command decoder is invalid."
     },
     "step": {
       "add_raw_command": {
@@ -337,31 +338,41 @@
       },
       "learn_command": {
         "data": {
-          "command_name": "Command name",
-          "infrared_receiver_id": "Infrared receiver",
-          "create_button": "Create button entity"
+          "infrared_receiver_id": "Infrared receiver"
         },
         "data_description": {
-          "command_name": "Name used with remote.send_command.",
-          "infrared_receiver_id": "Infrared receiver used to learn this command.",
-          "create_button": "Create a button entity for this learned command."
+          "infrared_receiver_id": "Infrared receiver used to learn this command."
         },
-        "description": "Choose the command name and receiver before learning.",
+        "description": "Choose the receiver before learning.",
         "title": "Learn Command"
       },
       "learn_capture": {
-        "description": "Submit this form to start capture, then press the infrared remote button for {command_name} near receiver {receiver}.",
+        "description": "Submit this form to start capture, then press the infrared remote button near receiver {receiver}.",
         "title": "Capture Command"
       },
       "learn_select_candidate": {
         "data": {
-          "learn_candidate": "Learned command candidate"
+          "command_name": "Command name",
+          "learn_candidate": "Learned command candidate",
+          "create_button": "Create button entity"
         },
         "data_description": {
-          "learn_candidate": "Select the Pronto HEX candidate to save for this command."
+          "command_name": "Name used with remote.send_command.",
+          "learn_candidate": "Select the Pronto HEX candidate to save for this command.",
+          "create_button": "Create a button entity for this learned command."
         },
-        "description": "Select the learned command candidate to save for {command_name}.",
+        "description": "Select the learned command candidate to save.\n\n{candidate_details}",
         "title": "Save Learned Command"
+      },
+      "learn_select_decoder": {
+        "data": {
+          "learn_decoder": "Decoder"
+        },
+        "data_description": {
+          "learn_decoder": "Choose how to decode the captured signal. Use None to save the captured signal only."
+        },
+        "description": "Captured signal: {capture_details}",
+        "title": "Select Decoder"
       }
     }
   },
