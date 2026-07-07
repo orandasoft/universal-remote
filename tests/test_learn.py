@@ -14,11 +14,21 @@ from custom_components.universal_remote import learn as learn_module
 from custom_components.universal_remote.learn import (
     DEFAULT_LEARN_MODULATION,
     LearnCapture,
+    LearnResult,
     LearnSessionInvalidCaptureError,
     LearnSessionManager,
     LearnSessionReceiverBusyError,
     LearnSessionReceiverUnavailableError,
     LearnSessionTimeoutError,
+)
+from custom_components.universal_remote.learn_candidates import (
+    CANDIDATE_CAPTURED,
+    CANDIDATE_NORMALIZED,
+)
+from custom_components.universal_remote.protocols import (
+    PROTOCOL_NEC,
+    PROTOCOL_NEC1_F16,
+    DecodedInfraredCommand,
 )
 
 RECEIVER_ID = "infrared.test_receiver"
@@ -26,6 +36,21 @@ OTHER_RECEIVER_ID = "infrared.other_receiver"
 VALID_TIMINGS = [9000, -4500, 560, -560]
 VALID_OTHER_TIMINGS = [4500, -4500, 560, -560]
 NEC_REPEAT_TIMINGS = [9000, -2250, 560]
+
+
+
+class FakeDecodedCommand:
+    """Fake decoded command used for normalized learning candidates."""
+
+    modulation = 38_000
+
+    def __init__(self, timings: list[int] | None = None) -> None:
+        """Initialize the fake command."""
+        self._timings = timings or VALID_TIMINGS
+
+    def get_raw_timings(self) -> list[int]:
+        """Return normalized raw timings."""
+        return self._timings
 
 
 class FakeReceiverSubscription:
@@ -298,3 +323,141 @@ async def test_async_capture_once_uses_independent_receiver_locks(
         assert lock.locked()
     finally:
         lock.release()
+
+
+def _capture(
+    timings: list[int] | None = None,
+    *,
+    modulation: int = 38_000,
+    modulation_assumed: bool = False,
+) -> LearnCapture:
+    """Return a completed learning capture."""
+    timing_values = timings or VALID_TIMINGS
+    return LearnCapture(
+        timings=timing_values,
+        modulation=modulation,
+        modulation_assumed=modulation_assumed,
+        timing_count=len(timing_values),
+    )
+
+
+def test_build_learn_result_uses_captured_candidate_without_decode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test learn result uses captured candidate when no decoder matches."""
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
+    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
+
+    result = learn_module.build_learn_result(_capture(modulation_assumed=True))
+
+    assert isinstance(result, LearnResult)
+    assert result.capture.modulation_assumed is True
+    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
+    assert result.candidates[0].recommended is True
+    assert result.candidates[0].metadata["modulation_assumed"] is True
+
+
+def test_build_learn_result_adds_normalized_nec_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test learn result includes a normalized NEC candidate when decoded."""
+    command = FakeDecodedCommand()
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: command)
+    monkeypatch.setattr(
+        learn_module,
+        "_normalize_nec_command",
+        lambda _command: DecodedInfraredCommand(
+            protocol=PROTOCOL_NEC,
+            address=0x04,
+            primary=0x08,
+        ),
+    )
+
+    result = learn_module.build_learn_result(_capture())
+
+    assert [candidate.key for candidate in result.candidates] == [
+        CANDIDATE_CAPTURED,
+        CANDIDATE_NORMALIZED,
+    ]
+    assert result.candidates[0].recommended is False
+    assert result.candidates[1].recommended is True
+    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC
+    assert result.candidates[1].metadata["protocol"] == PROTOCOL_NEC
+    assert result.candidates[1].metadata["address"] == "0x0004"
+    assert result.candidates[1].metadata["primary"] == "0x08"
+    assert "secondary" not in result.candidates[1].metadata
+
+
+def test_build_learn_result_falls_back_to_nec1_f16_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test NEC1-f16 decode is used when NEC decode does not match."""
+    command = FakeDecodedCommand()
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
+    monkeypatch.setattr(
+        learn_module,
+        "_decode_nec1_f16_signal",
+        lambda _signal: command,
+    )
+    monkeypatch.setattr(
+        learn_module,
+        "_normalize_nec1_f16_command",
+        lambda _command: DecodedInfraredCommand(
+            protocol=PROTOCOL_NEC1_F16,
+            address=0xFB04,
+            primary=0xDB,
+            secondary=0x32,
+        ),
+    )
+
+    result = learn_module.build_learn_result(_capture())
+
+    assert [candidate.key for candidate in result.candidates] == [
+        CANDIDATE_CAPTURED,
+        CANDIDATE_NORMALIZED,
+    ]
+    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC1_F16
+    assert result.candidates[1].metadata["protocol"] == PROTOCOL_NEC1_F16
+    assert result.candidates[1].metadata["address"] == "0xFB04"
+    assert result.candidates[1].metadata["primary"] == "0xDB"
+    assert result.candidates[1].metadata["secondary"] == "0x32"
+
+
+def test_build_learn_result_skips_candidate_when_normalization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test decoded commands without normalized metadata are ignored."""
+    command = FakeDecodedCommand()
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: command)
+    monkeypatch.setattr(learn_module, "_normalize_nec_command", lambda _command: None)
+    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
+
+    result = learn_module.build_learn_result(_capture())
+
+    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
+    assert result.candidates[0].recommended is True
+
+
+async def test_async_learn_once_returns_learn_result(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test one-shot learning captures a signal and creates candidates."""
+    _patch_receivers(monkeypatch)
+    subscription = FakeReceiverSubscription()
+    _patch_subscription(monkeypatch, subscription)
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
+    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
+    manager = LearnSessionManager(hass)
+
+    task = asyncio.create_task(manager.async_learn_once(RECEIVER_ID, timeout=1.0))
+    await asyncio.sleep(0)
+
+    assert subscription.callback is not None
+    subscription.callback(_signal())
+    result = await task
+
+    assert isinstance(result, LearnResult)
+    assert result.capture.timings == VALID_TIMINGS
+    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
+    assert subscription.unsubscribe_calls == 1

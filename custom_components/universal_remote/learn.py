@@ -9,10 +9,25 @@ from typing import Any
 from homeassistant.components import infrared
 from homeassistant.components.infrared import InfraredReceivedSignal
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from infrared_protocols.commands import Command
 
 from .const import DOMAIN
-from .learn_candidates import DEFAULT_LEARN_MODULATION
-from .protocols import _is_nec_repeat_frame
+from .learn_candidates import (
+    DEFAULT_LEARN_MODULATION,
+    LearnCandidate,
+    build_learn_candidates,
+)
+from .protocols import (
+    PROTOCOL_NEC,
+    PROTOCOL_NEC1_F16,
+    DecodedInfraredCommand,
+    _decode_nec_signal,
+    _decode_nec1_f16_signal,
+    _format_hex,
+    _is_nec_repeat_frame,
+    _normalize_nec_command,
+    _normalize_nec1_f16_command,
+)
 
 MIN_CAPTURE_TIMING_COUNT = 4
 MIN_CAPTURE_TOTAL_DURATION_US = 1_000
@@ -30,6 +45,14 @@ class LearnCapture:
     modulation_assumed: bool
     timing_count: int
     likely_protocol: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LearnResult:
+    """A completed IR learning result with generated Pronto HEX candidates."""
+
+    capture: LearnCapture
+    candidates: tuple[LearnCandidate, ...]
 
 
 class LearnSessionError(Exception):
@@ -58,6 +81,16 @@ class LearnSessionManager:
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the learning session manager."""
         self._hass = hass
+
+    async def async_learn_once(
+        self,
+        receiver_entity_id: str,
+        *,
+        timeout: float = DEFAULT_LEARN_TIMEOUT,
+    ) -> LearnResult:
+        """Capture one signal and generate learned command candidates."""
+        capture = await self.async_capture_once(receiver_entity_id, timeout=timeout)
+        return build_learn_result(capture)
 
     async def async_capture_once(
         self,
@@ -156,6 +189,63 @@ class LearnSessionManager:
     def _domain_data(self) -> dict[str, Any]:
         """Return Universal Remote hass data."""
         return self._hass.data.setdefault(DOMAIN, {})
+
+
+def build_learn_result(capture: LearnCapture) -> LearnResult:
+    """Build learned command candidates from a completed capture."""
+    normalized_command, normalized_metadata = _normalized_command_for_capture(capture)
+
+    return LearnResult(
+        capture=capture,
+        candidates=build_learn_candidates(
+            capture.timings,
+            capture.modulation,
+            modulation_assumed=capture.modulation_assumed,
+            normalized_command=normalized_command,
+            normalized_metadata=normalized_metadata,
+        ),
+    )
+
+
+def _normalized_command_for_capture(
+    capture: LearnCapture,
+) -> tuple[Command | None, dict[str, Any] | None]:
+    """Return a normalized decoded command and metadata for a capture."""
+    signal = InfraredReceivedSignal(capture.timings, modulation=capture.modulation)
+
+    nec_command = _decode_nec_signal(signal)
+    if nec_command is not None:
+        decoded = _normalize_nec_command(nec_command)
+        if decoded is not None:
+            return nec_command, _decoded_command_metadata(PROTOCOL_NEC, decoded)
+
+    nec1_f16_command = _decode_nec1_f16_signal(signal)
+    if nec1_f16_command is not None:
+        decoded = _normalize_nec1_f16_command(nec1_f16_command)
+        if decoded is not None:
+            return nec1_f16_command, _decoded_command_metadata(
+                PROTOCOL_NEC1_F16,
+                decoded,
+            )
+
+    return None, None
+
+
+def _decoded_command_metadata(
+    decoder: str,
+    decoded: DecodedInfraredCommand,
+) -> dict[str, Any]:
+    """Return privacy-safe metadata for a normalized learned command."""
+    metadata: dict[str, Any] = {
+        "decoder": decoder,
+        "protocol": decoded.protocol,
+        "address": _format_hex(decoded.address, 4),
+        "primary": _format_hex(decoded.primary, 2),
+    }
+    if decoded.secondary is not None:
+        metadata["secondary"] = _format_hex(decoded.secondary, 2)
+
+    return metadata
 
 
 def _capture_from_signal(signal: InfraredReceivedSignal) -> LearnCapture:
