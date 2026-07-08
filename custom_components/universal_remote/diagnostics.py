@@ -27,6 +27,7 @@ from .infrared_library import (
     infrared_library_codeset_receiver_decoder_id,
     infrared_library_codeset_supports_receiver,
 )
+from .learn import LEARN_DECODER_AUTO, LEARN_DECODER_NONE, LEARN_DECODERS
 
 TO_REDACT = {"device_id", "unique_id", "uuid"}
 
@@ -131,22 +132,26 @@ def _diagnostic_remotes(
             if isinstance(infrared_receiver_id, str)
             else None
         )
+        infrared_emitter_available = (
+            infrared_emitter_state is not None
+            and infrared_emitter_state.state != STATE_UNAVAILABLE
+        )
+        infrared_receiver_available = (
+            infrared_receiver_state is not None
+            and infrared_receiver_state.state != STATE_UNAVAILABLE
+        )
+        receiver_configured = isinstance(infrared_receiver_id, str)
+        emitter_configured = isinstance(infrared_emitter_id, str)
         diagnostics.append(
             {
                 "id": item.get(CONF_REMOTE_ID),
                 "name": item.get(CONF_REMOTE_NAME),
                 "infrared_emitter_id": infrared_emitter_id,
                 "infrared_emitter_exists": infrared_emitter_state is not None,
-                "infrared_emitter_available": (
-                    infrared_emitter_state is not None
-                    and infrared_emitter_state.state != STATE_UNAVAILABLE
-                ),
+                "infrared_emitter_available": infrared_emitter_available,
                 "infrared_receiver_id": infrared_receiver_id,
                 "infrared_receiver_exists": infrared_receiver_state is not None,
-                "infrared_receiver_available": (
-                    infrared_receiver_state is not None
-                    and infrared_receiver_state.state != STATE_UNAVAILABLE
-                ),
+                "infrared_receiver_available": infrared_receiver_available,
                 "receiver_event_expected": receiver_event_expected,
                 "receiver_decoder": receiver_decoder,
                 "receiver_codeset_supported": receiver_codeset_supported,
@@ -165,6 +170,20 @@ def _diagnostic_remotes(
                 "source_count": source_count,
                 "command_count": len(commands) if isinstance(commands, dict) else 0,
                 "commands": command_names,
+                "learning": {
+                    "receiver_configured": receiver_configured,
+                    "receiver_available": infrared_receiver_available,
+                    "emitter_configured": emitter_configured,
+                    "emitter_available": infrared_emitter_available,
+                    "available_decoders": [
+                        decoder
+                        for decoder in LEARN_DECODERS
+                        if decoder not in (LEARN_DECODER_AUTO, LEARN_DECODER_NONE)
+                    ],
+                    "learn_command_available": (
+                        receiver_configured and infrared_receiver_available
+                    ),
+                },
             }
         )
 

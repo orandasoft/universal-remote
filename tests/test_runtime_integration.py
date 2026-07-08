@@ -477,3 +477,62 @@ async def test_receiver_event_entity_survives_learned_command_reload(
         await hass.async_block_till_done()
 
     assert _sent_timings(mock_send) == [LEARNED_PRONTO_TIMINGS]
+
+
+async def test_learned_command_reload_creates_button_entity(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test learned commands with create_button enabled create buttons after reload."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=REMOTE_NAME,
+        data={
+            CONF_REMOTE_ID: REMOTE_ID,
+            CONF_REMOTE_NAME: REMOTE_NAME,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "POWER": _command(RAW_BS),
+            },
+        },
+        unique_id="learned_button_remote",
+    )
+    entry.add_to_hass(hass)
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    button_unique = button_unique_id(entry.entry_id, REMOTE_ID, "LEARNED_POWER")
+    registry = er.async_get(hass)
+    assert registry.async_get_entity_id(BUTTON_DOMAIN, DOMAIN, button_unique) is None
+
+    await _update_entry_options_and_wait_for_reload(
+        hass,
+        entry,
+        {
+            CONF_REMOTE_COMMANDS: {
+                "POWER": _command(RAW_BS),
+                "LEARNED_POWER": _command(LEARNED_POWER, create_button=True),
+            },
+        },
+    )
+
+    button_entity_id = _entity_id(hass, BUTTON_DOMAIN, button_unique)
+
+    with patch(
+        "custom_components.universal_remote.send.infrared.async_send_command",
+        AsyncMock(),
+    ) as mock_send:
+        await hass.services.async_call(
+            BUTTON_DOMAIN,
+            "press",
+            {ATTR_ENTITY_ID: button_entity_id},
+            blocking=True,
+        )
+        await hass.async_block_till_done()
+
+    assert [call.args[1] for call in mock_send.await_args_list] == [infrared_emitter]
+    assert _sent_timings(mock_send) == [LEARNED_PRONTO_TIMINGS]

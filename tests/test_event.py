@@ -1185,3 +1185,57 @@ def test_event_entity_receiver_only_runtime_none_still_triggers_event(
 
     trigger_event.assert_called_once()
     write_state.assert_called_once()
+
+
+def test_event_entity_decodes_received_command_with_learned_runtime(
+    hass: HomeAssistant,
+) -> None:
+    """Test learned runtime commands do not interfere with received-event decoding."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id="infrared.test_ir",
+        commands={
+            "POWER": "38000:9000,4500",
+            "LEARNED_POWER": "0000 006D 0002 0000 0152 00AA 0014 0017",
+        },
+    )
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living Room TV",
+        receiver_entity_id="infrared.test_receiver",
+        codeset_id="lg_tv",
+        runtime=runtime,
+    )
+    event_data = {
+        "codeset": "lg_tv",
+        "decoder": "nec",
+        "protocol": "nec",
+        "decoded": True,
+        "matched": True,
+        "repeat": False,
+        "command_name": "POWER",
+    }
+
+    with (
+        patch(
+            "custom_components.universal_remote.event._decode_signal_event",
+            return_value=("power", event_data),
+        ),
+        patch.object(entity, "_trigger_event") as trigger_event,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
+        entity._handle_signal(
+            InfraredReceivedSignal(
+                timings=[9000, -4500],
+                modulation=38000,
+            )
+        )
+
+    assert entity._last_decoded_event == {"event_type": "power", **event_data}
+    trigger_event.assert_called_once()
+    call_args = trigger_event.call_args
+    assert call_args is not None
+    event_type, triggered_data = call_args.args
+    assert event_type == "power"
+    assert triggered_data["recent_events"] == [{"event_type": "power", **event_data}]
+    write_state.assert_called_once_with()

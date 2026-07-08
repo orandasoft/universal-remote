@@ -72,6 +72,14 @@ async def test_diagnostics_supports_single_entry_remote(
         "source_count": 0,
         "command_count": 1,
         "commands": ["POWER_ON"],
+        "learning": {
+            "receiver_configured": False,
+            "receiver_available": False,
+            "emitter_configured": True,
+            "emitter_available": True,
+            "available_decoders": ["nec", "nec1_f16"],
+            "learn_command_available": False,
+        },
     }
 
 
@@ -157,6 +165,14 @@ async def test_diagnostics_supports_receiver_only_entry(
     assert remote["source_count"] == 0
     assert remote["command_count"] == 1
     assert remote["commands"] == ["POWER"]
+    assert remote["learning"] == {
+        "receiver_configured": True,
+        "receiver_available": True,
+        "emitter_configured": False,
+        "emitter_available": False,
+        "available_decoders": ["nec", "nec1_f16"],
+        "learn_command_available": True,
+    }
 
 
 
@@ -236,3 +252,37 @@ async def test_diagnostics_redacts_learned_pronto_command_payloads(
     assert learned_pronto not in str(diagnostics)
     assert "0000 006D" not in str(diagnostics)
     assert "0157 00AC" not in str(diagnostics)
+
+
+async def test_diagnostics_reports_learning_capabilities(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test diagnostics includes privacy-safe learning capability metadata."""
+    receiver_entity_id = "infrared.test_receiver"
+    hass.states.async_set(receiver_entity_id, STATE_ON)
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Learnable Remote",
+        data={
+            CONF_REMOTE_ID: "learnable_remote",
+            CONF_REMOTE_NAME: "Learnable Remote",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_INFRARED_RECEIVER_ID: receiver_entity_id,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            CONF_REMOTE_CODESET: "lg_tv",
+        },
+        options={CONF_REMOTE_COMMANDS: {"POWER": "38000:1,2"}},
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["universal_remote"]["learning"] == {
+        "receiver_configured": True,
+        "receiver_available": True,
+        "emitter_configured": True,
+        "emitter_available": True,
+        "available_decoders": ["nec", "nec1_f16"],
+        "learn_command_available": True,
+    }
