@@ -193,3 +193,46 @@ async def test_diagnostics_redacts_command_payloads(
     assert diagnostics["entry"]["options"][CONF_REMOTE_COMMANDS] == ["MUTE", "POWER_ON"]
     assert diagnostics["universal_remote"]["commands"] == ["MUTE", "POWER_ON"]
     assert raw_payload not in str(diagnostics)
+
+
+async def test_diagnostics_redacts_learned_pronto_command_payloads(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test diagnostics redacts Pronto payloads from learned commands."""
+    learned_pronto = (
+        "0000 006D 0022 0002 0157 00AC 0016 0015 0016 0015 0016 0015 "
+        "0016 0015 0016 0015 0016 0015 0016 0015 0016 0015 0016 0040 "
+        "0016 0040 0016 0040 0016 0040 0016 0040 0016 0040 0016 0040 "
+        "0016 0040 0016 0015 0016 0040 0016 0015 0016 0040 0016 0015 "
+        "0016 0015 0016 0015 0016 0015 0016 0040 0016 0015 0016 0040 "
+        "0016 0015 0016 0040 0016 0040 0016 0040 0016 0040 0016 05F7 "
+        "0157 0055 0016 0E6C"
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Learned Remote",
+        data={
+            CONF_REMOTE_ID: "learned_remote",
+            CONF_REMOTE_NAME: "Learned Remote",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "LEARNED_POWER": {
+                    CONF_COMMAND_DATA: learned_pronto,
+                    CONF_COMMAND_CREATE_BUTTON: True,
+                },
+            },
+        },
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["entry"]["options"][CONF_REMOTE_COMMANDS] == ["LEARNED_POWER"]
+    assert diagnostics["universal_remote"]["commands"] == ["LEARNED_POWER"]
+    assert learned_pronto not in str(diagnostics)
+    assert "0000 006D" not in str(diagnostics)
+    assert "0157 00AC" not in str(diagnostics)
