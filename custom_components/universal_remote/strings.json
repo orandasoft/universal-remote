@@ -219,7 +219,8 @@
       "learn_timeout": "No valid infrared command was received before the learning timeout.",
       "invalid_learn_candidate": "Selected learned command candidate is invalid.",
       "invalid_learn_decoder": "Selected learned-command decoder is invalid.",
-      "invalid_learn_review_action": "Selected learned-command review action is invalid."
+      "invalid_learn_review_action": "Selected learned-command review action is invalid.",
+      "learn_test_send_failed": "The learned command test send failed. You can retry capture, save anyway, or discard the learned command."
     },
     "step": {
       "add_raw_command": {
@@ -382,10 +383,22 @@
           "learn_review_action": "Action"
         },
         "data_description": {
-          "learn_review_action": "Choose whether to save this learned command, retry capture, or discard it without changing the remote."
+          "learn_review_action": "Choose whether to test a learned candidate, save it, retry capture, or discard it without changing the remote."
         },
         "description": "Review the learned command candidates before saving.\n\n{candidate_details}",
         "title": "Review Learned Command"
+      }
+    },
+    "selector": {
+      "learn_review_action": {
+        "options": {
+          "test_captured": "Test captured candidate",
+          "test_normalized": "Test normalized candidate",
+          "continue_save": "Continue to save",
+          "save_anyway": "Save anyway",
+          "retry_capture": "Retry capture",
+          "discard": "Discard"
+        }
       }
     }
   },

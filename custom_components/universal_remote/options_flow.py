@@ -1,16 +1,20 @@
 """Options flow for Universal Remote."""
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import selector
 
 from .command import CommandParseError, validate_remote_command_payload
 from .const import (
+    CONF_INFRARED_EMITTER_ID,
     CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
@@ -43,7 +47,12 @@ from .learn import (
     LearnSessionTimeoutError,
     build_learn_result,
 )
-from .learn_candidates import LearnCandidate, candidate_by_key
+from .learn_candidates import (
+    CANDIDATE_CAPTURED,
+    CANDIDATE_NORMALIZED,
+    LearnCandidate,
+    candidate_by_key,
+)
 from .infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
     InfraredLibraryCommandError,
@@ -55,6 +64,7 @@ from .infrared_library import (
     is_infrared_library_codeset_selected,
     validate_generated_command_payload,
 )
+from .send import async_send_infrared_command
 
 COMMAND_NAME = "command_name"
 COMMAND_DATA = "command_data"
@@ -74,6 +84,9 @@ COMMAND_LEARN_DECODER = "learn_decoder"
 COMMAND_LEARN_REVIEW_ACTION = "learn_review_action"
 
 LEARN_REVIEW_ACTION_CONTINUE_SAVE = "continue_save"
+LEARN_REVIEW_ACTION_TEST_CAPTURED = "test_captured"
+LEARN_REVIEW_ACTION_TEST_NORMALIZED = "test_normalized"
+LEARN_REVIEW_ACTION_SAVE_ANYWAY = "save_anyway"
 LEARN_REVIEW_ACTION_RETRY_CAPTURE = "retry_capture"
 LEARN_REVIEW_ACTION_DISCARD = "discard"
 
@@ -156,22 +169,60 @@ def learned_candidate_details(candidates: tuple[LearnCandidate, ...]) -> str:
     )
 
 
-def learn_review_action_options() -> list[selector.SelectOptionDict]:
+def learn_review_action_options(
+    candidates: tuple[LearnCandidate, ...] = (),
+    *,
+    can_test_send: bool = False,
+    test_send_failed: bool = False,
+) -> list[selector.SelectOptionDict]:
     """Return selector options for learned-command review actions."""
-    return [
-        selector.SelectOptionDict(
-            value=LEARN_REVIEW_ACTION_CONTINUE_SAVE,
-            label="Continue to save",
-        ),
-        selector.SelectOptionDict(
-            value=LEARN_REVIEW_ACTION_RETRY_CAPTURE,
-            label="Retry capture",
-        ),
-        selector.SelectOptionDict(
-            value=LEARN_REVIEW_ACTION_DISCARD,
-            label="Discard",
-        ),
-    ]
+    options: list[selector.SelectOptionDict] = []
+
+    if can_test_send:
+        if candidate_by_key(candidates, CANDIDATE_CAPTURED) is not None:
+            options.append(
+                selector.SelectOptionDict(
+                    value=LEARN_REVIEW_ACTION_TEST_CAPTURED,
+                    label="Test captured candidate",
+                )
+            )
+
+        if candidate_by_key(candidates, CANDIDATE_NORMALIZED) is not None:
+            options.append(
+                selector.SelectOptionDict(
+                    value=LEARN_REVIEW_ACTION_TEST_NORMALIZED,
+                    label="Test normalized candidate",
+                )
+            )
+
+    if test_send_failed:
+        options.append(
+            selector.SelectOptionDict(
+                value=LEARN_REVIEW_ACTION_SAVE_ANYWAY,
+                label="Save anyway",
+            )
+        )
+    else:
+        options.append(
+            selector.SelectOptionDict(
+                value=LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+                label="Continue to save",
+            )
+        )
+
+    options.extend(
+        [
+            selector.SelectOptionDict(
+                value=LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+                label="Retry capture",
+            ),
+            selector.SelectOptionDict(
+                value=LEARN_REVIEW_ACTION_DISCARD,
+                label="Discard",
+            ),
+        ]
+    )
+    return options
 
 
 def learn_capture_receiver_label(
@@ -257,6 +308,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._learn_receiver_label: str | None = None
         self._learn_capture: LearnCapture | None = None
         self._learn_result: LearnResult | None = None
+        self._learn_test_send_failed = False
 
     async def async_step_init(
         self,
@@ -396,6 +448,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 )
                 self._learn_capture = None
                 self._learn_result = None
+                self._learn_test_send_failed = False
                 return await self.async_step_learn_capture()
 
         current_receiver_id = str(remote.get(CONF_INFRARED_RECEIVER_ID, ""))
@@ -444,6 +497,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                     self.hass
                 ).async_capture_once(self._learn_receiver_id)
                 self._learn_result = None
+                self._learn_test_send_failed = False
             except LearnSessionReceiverUnavailableError:
                 errors["base"] = "infrared_receiver_unavailable"
             except LearnSessionReceiverBusyError:
@@ -490,6 +544,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                     self._learn_capture,
                     decoder=decoder,
                 )
+                self._learn_test_send_failed = False
                 return await self.async_step_learn_review()
 
         return self.async_show_form(
@@ -532,26 +587,58 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         if not candidates:
             return self.async_abort(reason="learn_failed")
 
+        can_test_send = self._learn_test_send_emitter_id is not None
+        action_options = learn_review_action_options(
+            candidates,
+            can_test_send=can_test_send,
+            test_send_failed=self._learn_test_send_failed,
+        )
+
         if user_input is not None:
             action = str(user_input[COMMAND_LEARN_REVIEW_ACTION])
+            valid_actions = {str(option["value"]) for option in action_options}
 
-            if action == LEARN_REVIEW_ACTION_CONTINUE_SAVE:
+            if action not in valid_actions:
+                errors[COMMAND_LEARN_REVIEW_ACTION] = "invalid_learn_review_action"
+
+            elif action in (
+                LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+                LEARN_REVIEW_ACTION_SAVE_ANYWAY,
+            ):
                 return await self.async_step_learn_select_candidate()
 
-            if action == LEARN_REVIEW_ACTION_RETRY_CAPTURE:
+            elif action in (
+                LEARN_REVIEW_ACTION_TEST_CAPTURED,
+                LEARN_REVIEW_ACTION_TEST_NORMALIZED,
+            ):
+                if await self._async_test_learned_candidate(action, candidates):
+                    self._learn_test_send_failed = False
+                else:
+                    self._learn_test_send_failed = True
+                    errors["base"] = "learn_test_send_failed"
+
+            elif action == LEARN_REVIEW_ACTION_RETRY_CAPTURE:
                 self._learn_capture = None
                 self._learn_result = None
+                self._learn_test_send_failed = False
                 return await self.async_step_learn_capture()
 
-            if action == LEARN_REVIEW_ACTION_DISCARD:
+            elif action == LEARN_REVIEW_ACTION_DISCARD:
                 self._learn_capture = None
                 self._learn_result = None
+                self._learn_test_send_failed = False
                 return self.async_create_entry(
                     title="",
                     data=dict(self._config_entry.options),
                 )
 
-            errors[COMMAND_LEARN_REVIEW_ACTION] = "invalid_learn_review_action"
+            action_options = learn_review_action_options(
+                candidates,
+                can_test_send=can_test_send,
+                test_send_failed=self._learn_test_send_failed,
+            )
+
+        default_action = str(action_options[0]["value"])
 
         return self.async_show_form(
             step_id=SOURCE_LEARN_REVIEW,
@@ -559,10 +646,10 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 {
                     vol.Required(
                         COMMAND_LEARN_REVIEW_ACTION,
-                        default=LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+                        default=default_action,
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=learn_review_action_options(),
+                            options=action_options,
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
@@ -1283,6 +1370,54 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             ),
             errors=errors,
         )
+
+    async def _async_test_learned_candidate(
+        self,
+        action: str,
+        candidates: tuple[LearnCandidate, ...],
+    ) -> bool:
+        """Test-send a learned candidate through the configured emitter."""
+        emitter_id = self._learn_test_send_emitter_id
+        if emitter_id is None:
+            return False
+
+        candidate_key = (
+            CANDIDATE_CAPTURED
+            if action == LEARN_REVIEW_ACTION_TEST_CAPTURED
+            else CANDIDATE_NORMALIZED
+        )
+        candidate = candidate_by_key(candidates, candidate_key)
+        if candidate is None:
+            return False
+
+        try:
+            await async_send_infrared_command(
+                self.hass,
+                emitter_id,
+                candidate.payload,
+            )
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
+        except HomeAssistantError:
+            return False
+
+        return True
+
+    @property
+    def _learn_test_send_emitter_id(self) -> str | None:
+        """Return the emitter id when learned-candidate test send is available."""
+        if self._remote is None:
+            return None
+
+        emitter_id = str(self._remote.get(CONF_INFRARED_EMITTER_ID, "")).strip()
+        if not emitter_id:
+            return None
+
+        state = self.hass.states.get(emitter_id)
+        if state is None or state.state == STATE_UNAVAILABLE:
+            return None
+
+        return emitter_id
 
     @callback
     def _create_options_entry(self) -> config_entries.ConfigFlowResult:

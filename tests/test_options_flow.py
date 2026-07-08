@@ -1,5 +1,8 @@
 """Tests for the Universal Remote options flow."""
 
+import asyncio
+from collections.abc import Mapping
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -50,6 +53,9 @@ from custom_components.universal_remote.options_flow import (
     LEARN_REVIEW_ACTION_CONTINUE_SAVE,
     LEARN_REVIEW_ACTION_DISCARD,
     LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+    LEARN_REVIEW_ACTION_SAVE_ANYWAY,
+    LEARN_REVIEW_ACTION_TEST_CAPTURED,
+    LEARN_REVIEW_ACTION_TEST_NORMALIZED,
     SOURCE_ADD_RAW_COMMAND,
     SOURCE_EDIT_COMMAND,
     SOURCE_EDIT_LIBRARY_CODESET,
@@ -75,6 +81,7 @@ from custom_components.universal_remote.options_flow import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import HomeAssistantError
 
 from .conftest import RAW_COMMAND
 
@@ -189,6 +196,68 @@ def _receiver_only_entry(hass: HomeAssistant) -> MockConfigEntry:
     )
     entry.add_to_hass(hass)
     return entry
+
+
+def _receiver_and_emitter_entry(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> MockConfigEntry:
+    """Create a one-remote config entry with receiver and emitter."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Learning TV",
+        data={
+            CONF_REMOTE_ID: "learning_tv",
+            CONF_REMOTE_NAME: "Learning TV",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={CONF_REMOTE_COMMANDS: {"POWER_ON": RAW_COMMAND}},
+        unique_id="learning_tv",
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def _learn_result_with_captured_and_normalized() -> LearnResult:
+    """Return a learned result with captured and normalized candidates."""
+    return _learn_result(
+        (
+            LearnCandidate(
+                key=CANDIDATE_CAPTURED,
+                payload="captured-payload",
+                label_key=CANDIDATE_CAPTURED,
+                recommended=False,
+                metadata={"timing_count": 67, "modulation": 38_000},
+            ),
+            LearnCandidate(
+                key=CANDIDATE_NORMALIZED,
+                payload=LEARNED_COMMAND,
+                label_key=CANDIDATE_NORMALIZED,
+                recommended=True,
+                metadata={
+                    "decoder": "nec1_f16",
+                    "protocol": "nec1_f16",
+                    "address": "0xFB04",
+                    "primary": "0xDB",
+                    "secondary": "0x32",
+                },
+            ),
+        )
+    )
+
+
+def _learn_review_action_values(result: Mapping[str, Any]) -> list[str]:
+    """Return configured learn-review action values from a form result."""
+    schema = result["data_schema"].schema
+    for field, field_selector in schema.items():
+        if getattr(field, "schema", None) == COMMAND_LEARN_REVIEW_ACTION:
+            return [
+                str(option["value"])
+                for option in field_selector.config["options"]
+            ]
+    raise AssertionError("Learn review action selector was not found")
 
 
 def _single_entry_without_commands(
@@ -833,6 +902,237 @@ async def test_learn_review_rejects_invalid_action(
     }
 
 
+async def test_learn_review_rejects_hidden_test_action_without_emitter(
+    hass: HomeAssistant,
+) -> None:
+    """Test hidden learned-candidate test actions cannot be submitted."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_learn_review(
+        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_CAPTURED}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_REVIEW
+    assert result["errors"] == {
+        COMMAND_LEARN_REVIEW_ACTION: "invalid_learn_review_action"
+    }
+
+
+async def test_learn_review_test_captured_candidate(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test review can test-send the captured learned candidate."""
+    entry = _receiver_and_emitter_entry(hass, infrared_emitter)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result_with_captured_and_normalized()
+
+    with patch(
+        "custom_components.universal_remote.options_flow.async_send_infrared_command",
+        return_value=None,
+    ) as send_command:
+        result = await flow.async_step_learn_review(
+            {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_CAPTURED}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_REVIEW
+    assert result["errors"] == {}
+    send_command.assert_awaited_once_with(
+        hass,
+        infrared_emitter,
+        "captured-payload",
+    )
+
+
+async def test_learn_review_test_normalized_candidate(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test review can test-send the normalized learned candidate."""
+    entry = _receiver_and_emitter_entry(hass, infrared_emitter)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result_with_captured_and_normalized()
+
+    with patch(
+        "custom_components.universal_remote.options_flow.async_send_infrared_command",
+        return_value=None,
+    ) as send_command:
+        result = await flow.async_step_learn_review(
+            {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_NORMALIZED}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_REVIEW
+    assert result["errors"] == {}
+    send_command.assert_awaited_once_with(
+        hass,
+        infrared_emitter,
+        LEARNED_COMMAND,
+    )
+
+
+async def test_learn_review_test_send_failure_allows_save_anyway(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test failed learned-candidate test send allows save anyway."""
+    entry = _receiver_and_emitter_entry(hass, infrared_emitter)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result_with_captured_and_normalized()
+
+    with patch(
+        "custom_components.universal_remote.options_flow.async_send_infrared_command",
+        side_effect=HomeAssistantError("send failed"),
+    ):
+        result = await flow.async_step_learn_review(
+            {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_CAPTURED}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_REVIEW
+    assert result["errors"] == {"base": "learn_test_send_failed"}
+    assert flow._learn_test_send_failed is True
+    assert LEARN_REVIEW_ACTION_SAVE_ANYWAY in _learn_review_action_values(result)
+    assert LEARN_REVIEW_ACTION_CONTINUE_SAVE not in _learn_review_action_values(result)
+
+    result = await flow.async_step_learn_review(
+        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_SAVE_ANYWAY}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+
+
+async def test_learn_review_hides_test_actions_without_emitter(
+    hass: HomeAssistant,
+) -> None:
+    """Test review hides learned-candidate test actions without an emitter."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result_with_captured_and_normalized()
+
+    result = await flow.async_step_learn_review()
+
+    assert LEARN_REVIEW_ACTION_TEST_CAPTURED not in _learn_review_action_values(result)
+    assert (
+        LEARN_REVIEW_ACTION_TEST_NORMALIZED
+        not in _learn_review_action_values(result)
+    )
+
+
+async def test_learn_review_hides_missing_normalized_test_action(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test review hides normalized test action without a normalized candidate."""
+    entry = _receiver_and_emitter_entry(hass, infrared_emitter)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_learn_review()
+
+    assert LEARN_REVIEW_ACTION_TEST_CAPTURED in _learn_review_action_values(result)
+    assert (
+        LEARN_REVIEW_ACTION_TEST_NORMALIZED
+        not in _learn_review_action_values(result)
+    )
+
+
+async def test_learn_review_test_candidate_returns_false_without_emitter(
+    hass: HomeAssistant,
+) -> None:
+    """Test learned-candidate test send is skipped without an emitter."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    result = await flow._async_test_learned_candidate(
+        LEARN_REVIEW_ACTION_TEST_CAPTURED,
+        _learn_result().candidates,
+    )
+
+    assert result is False
+
+
+async def test_learn_review_test_candidate_returns_false_without_candidate(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test learned-candidate test send is skipped without that candidate."""
+    entry = _receiver_and_emitter_entry(hass, infrared_emitter)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    result = await flow._async_test_learned_candidate(
+        LEARN_REVIEW_ACTION_TEST_NORMALIZED,
+        _learn_result().candidates,
+    )
+
+    assert result is False
+
+
+async def test_learn_review_test_send_preserves_cancellation(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test learned-candidate test send does not swallow cancellation."""
+    entry = _receiver_and_emitter_entry(hass, infrared_emitter)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    with (
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "async_send_infrared_command",
+            side_effect=asyncio.CancelledError,
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await flow.async_step_learn_review(
+            {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_CAPTURED}
+        )
+
+
+def test_learn_test_send_emitter_id_returns_none_without_remote(
+    hass: HomeAssistant,
+) -> None:
+    """Test learned-candidate test send is unavailable without a remote."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Empty",
+        data={},
+        options={},
+        unique_id="empty",
+    )
+    entry.add_to_hass(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    assert flow._learn_test_send_emitter_id is None
+
+
+def test_learn_test_send_emitter_id_returns_none_for_missing_state(
+    hass: HomeAssistant,
+) -> None:
+    """Test learned-candidate test send is unavailable when emitter state is missing."""
+    entry = _receiver_and_emitter_entry(hass, "infrared.missing_emitter")
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    assert flow._learn_test_send_emitter_id is None
+
+
 async def test_learn_review_form_shows_candidate_details(
     hass: HomeAssistant,
 ) -> None:
@@ -1257,6 +1557,43 @@ def test_learn_review_action_options() -> None:
     """Test learned-command review action selector options."""
     assert learn_review_action_options() == [
         {"value": LEARN_REVIEW_ACTION_CONTINUE_SAVE, "label": "Continue to save"},
+        {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
+        {"value": LEARN_REVIEW_ACTION_DISCARD, "label": "Discard"},
+    ]
+
+
+def test_learn_review_action_options_include_test_send_actions() -> None:
+    """Test learned-command review actions include available test sends."""
+    assert learn_review_action_options(
+        _learn_result_with_captured_and_normalized().candidates,
+        can_test_send=True,
+    ) == [
+        {
+            "value": LEARN_REVIEW_ACTION_TEST_CAPTURED,
+            "label": "Test captured candidate",
+        },
+        {
+            "value": LEARN_REVIEW_ACTION_TEST_NORMALIZED,
+            "label": "Test normalized candidate",
+        },
+        {"value": LEARN_REVIEW_ACTION_CONTINUE_SAVE, "label": "Continue to save"},
+        {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
+        {"value": LEARN_REVIEW_ACTION_DISCARD, "label": "Discard"},
+    ]
+
+
+def test_learn_review_action_options_show_save_anyway_after_test_send_failure() -> None:
+    """Test failed test-send review actions include save anyway."""
+    assert learn_review_action_options(
+        _learn_result().candidates,
+        can_test_send=True,
+        test_send_failed=True,
+    ) == [
+        {
+            "value": LEARN_REVIEW_ACTION_TEST_CAPTURED,
+            "label": "Test captured candidate",
+        },
+        {"value": LEARN_REVIEW_ACTION_SAVE_ANYWAY, "label": "Save anyway"},
         {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
         {"value": LEARN_REVIEW_ACTION_DISCARD, "label": "Discard"},
     ]
