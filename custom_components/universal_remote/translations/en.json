@@ -218,7 +218,8 @@
       "learn_receiver_busy": "The selected infrared receiver is already learning another command.",
       "learn_timeout": "No valid infrared command was received before the learning timeout.",
       "invalid_learn_candidate": "Selected learned command candidate is invalid.",
-      "invalid_learn_decoder": "Selected learned-command decoder is invalid."
+      "invalid_learn_decoder": "Selected learned-command decoder is invalid.",
+      "invalid_learn_review_action": "Selected learned-command review action is invalid."
     },
     "step": {
       "add_raw_command": {
@@ -341,25 +342,27 @@
           "infrared_receiver_id": "Infrared receiver"
         },
         "data_description": {
-          "infrared_receiver_id": "Infrared receiver used to learn this command."
+          "infrared_receiver_id": "Infrared receiver used to learn the command."
         },
         "description": "Choose the receiver before learning.",
         "title": "Learn Command"
       },
       "learn_capture": {
-        "description": "Submit this form to start capture, then press the infrared remote button near receiver {receiver}.",
+        "description": "Select Submit to start capture. Then press the infrared remote button near {receiver}.",
         "title": "Capture Command"
       },
       "learn_select_candidate": {
         "data": {
           "command_name": "Command name",
           "learn_candidate": "Learned command candidate",
-          "create_button": "Create button entity"
+          "create_button": "Create button entity",
+          "overwrite_existing_command": "Overwrite existing command"
         },
         "data_description": {
           "command_name": "Name used with remote.send_command.",
           "learn_candidate": "Select the Pronto HEX candidate to save for this command.",
-          "create_button": "Create a button entity for this learned command."
+          "create_button": "Create a button entity for this learned command.",
+          "overwrite_existing_command": "Replace the existing command with this learned command."
         },
         "description": "Select the learned command candidate to save.\n\n{candidate_details}",
         "title": "Save Learned Command"
@@ -373,6 +376,16 @@
         },
         "description": "Captured signal: {capture_details}",
         "title": "Select Decoder"
+      },
+      "learn_review": {
+        "data": {
+          "learn_review_action": "Action"
+        },
+        "data_description": {
+          "learn_review_action": "Choose whether to save this learned command, retry capture, or discard it without changing the remote."
+        },
+        "description": "Review the learned command candidates before saving.\n\n{candidate_details}",
+        "title": "Review Learned Command"
       }
     }
   },

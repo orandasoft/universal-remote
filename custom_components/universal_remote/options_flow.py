@@ -59,6 +59,7 @@ from .infrared_library import (
 COMMAND_NAME = "command_name"
 COMMAND_DATA = "command_data"
 COMMAND_CREATE_BUTTON = "create_button"
+COMMAND_OVERWRITE_EXISTING = "overwrite_existing_command"
 
 COMMAND_SOURCE = "command_source"
 COMMAND_SOURCE_RAW = "raw"
@@ -70,12 +71,18 @@ COMMAND_LIBRARY_COMMANDS = "library_commands"
 COMMAND_REPEAT_COUNT = "repeat_count"
 COMMAND_LEARN_CANDIDATE = "learn_candidate"
 COMMAND_LEARN_DECODER = "learn_decoder"
+COMMAND_LEARN_REVIEW_ACTION = "learn_review_action"
+
+LEARN_REVIEW_ACTION_CONTINUE_SAVE = "continue_save"
+LEARN_REVIEW_ACTION_RETRY_CAPTURE = "retry_capture"
+LEARN_REVIEW_ACTION_DISCARD = "discard"
 
 SOURCE_MANAGE_COMMANDS = "manage_commands"
 SOURCE_ADD_RAW_COMMAND = "add_raw_command"
 SOURCE_LEARN_COMMAND = "learn_command"
 SOURCE_LEARN_CAPTURE = "learn_capture"
 SOURCE_LEARN_SELECT_DECODER = "learn_select_decoder"
+SOURCE_LEARN_REVIEW = "learn_review"
 SOURCE_LEARN_SELECT_CANDIDATE = "learn_select_candidate"
 SOURCE_IMPORT_LIBRARY_COMMANDS = "import_library_commands"
 SOURCE_IMPORT_LIBRARY_COMMAND_SELECT = "import_library_command_select"
@@ -109,7 +116,10 @@ def learn_decoder_options() -> list[selector.SelectOptionDict]:
     """Return selector options for learned-command decoders."""
     return [
         selector.SelectOptionDict(value=LEARN_DECODER_AUTO, label="Auto (recommended)"),
-        selector.SelectOptionDict(value=LEARN_DECODER_NONE, label="None / captured only"),
+        selector.SelectOptionDict(
+            value=LEARN_DECODER_NONE,
+            label="None / captured only",
+        ),
         selector.SelectOptionDict(value=LEARN_DECODER_NEC, label="NEC"),
         selector.SelectOptionDict(value=LEARN_DECODER_NEC1_F16, label="NEC1-F16"),
     ]
@@ -144,6 +154,42 @@ def learned_candidate_details(candidates: tuple[LearnCandidate, ...]) -> str:
     return "\n".join(
         f"- {_learned_candidate_label(candidate)}" for candidate in candidates
     )
+
+
+def learn_review_action_options() -> list[selector.SelectOptionDict]:
+    """Return selector options for learned-command review actions."""
+    return [
+        selector.SelectOptionDict(
+            value=LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+            label="Continue to save",
+        ),
+        selector.SelectOptionDict(
+            value=LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+            label="Retry capture",
+        ),
+        selector.SelectOptionDict(
+            value=LEARN_REVIEW_ACTION_DISCARD,
+            label="Discard",
+        ),
+    ]
+
+
+def learn_capture_receiver_label(
+    receiver_label: str | None,
+    receiver_id: str | None,
+) -> str:
+    """Return a readable receiver label for the capture step."""
+    if receiver_label is None:
+        return receiver_id or ""
+
+    if receiver_id is None:
+        return receiver_label
+
+    entity_suffix = f" ({receiver_id})"
+    if receiver_label.endswith(entity_suffix):
+        return receiver_label.removesuffix(entity_suffix)
+
+    return receiver_label
 
 
 def _learned_candidate_label(candidate: LearnCandidate) -> str:
@@ -413,7 +459,10 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             data_schema=vol.Schema({}),
             errors=errors,
             description_placeholders={
-                "receiver": self._learn_receiver_label or self._learn_receiver_id,
+                "receiver": learn_capture_receiver_label(
+                    self._learn_receiver_label,
+                    self._learn_receiver_id,
+                ),
             },
         )
 
@@ -441,7 +490,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                     self._learn_capture,
                     decoder=decoder,
                 )
-                return await self.async_step_learn_select_candidate()
+                return await self.async_step_learn_review()
 
         return self.async_show_form(
             step_id=SOURCE_LEARN_SELECT_DECODER,
@@ -464,6 +513,66 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             },
         )
 
+    async def async_step_learn_review(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Review a learned command before choosing whether to save it."""
+        errors: dict[str, str] = {}
+
+        if self._remote is None:
+            return self.async_abort(reason="no_universal_remotes")
+
+        if self._learn_result is None:
+            if self._learn_capture is not None:
+                return await self.async_step_learn_select_decoder()
+            return await self.async_step_learn_command()
+
+        candidates = self._learn_result.candidates
+        if not candidates:
+            return self.async_abort(reason="learn_failed")
+
+        if user_input is not None:
+            action = str(user_input[COMMAND_LEARN_REVIEW_ACTION])
+
+            if action == LEARN_REVIEW_ACTION_CONTINUE_SAVE:
+                return await self.async_step_learn_select_candidate()
+
+            if action == LEARN_REVIEW_ACTION_RETRY_CAPTURE:
+                self._learn_capture = None
+                self._learn_result = None
+                return await self.async_step_learn_capture()
+
+            if action == LEARN_REVIEW_ACTION_DISCARD:
+                self._learn_capture = None
+                self._learn_result = None
+                return self.async_create_entry(
+                    title="",
+                    data=dict(self._config_entry.options),
+                )
+
+            errors[COMMAND_LEARN_REVIEW_ACTION] = "invalid_learn_review_action"
+
+        return self.async_show_form(
+            step_id=SOURCE_LEARN_REVIEW,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        COMMAND_LEARN_REVIEW_ACTION,
+                        default=LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=learn_review_action_options(),
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "candidate_details": learned_candidate_details(candidates),
+            },
+        )
 
     async def async_step_learn_select_candidate(
         self,
@@ -490,6 +599,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 candidates,
                 str(user_input[COMMAND_LEARN_CANDIDATE]),
             )
+            overwrite_existing = bool(user_input.get(COMMAND_OVERWRITE_EXISTING, False))
 
             if not command_name:
                 errors[COMMAND_NAME] = "command_name_required"
@@ -497,6 +607,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             if (
                 not errors
                 and find_command_key(self._commands, command_name) is not None
+                and not overwrite_existing
             ):
                 errors[COMMAND_NAME] = "command_name_exists"
 
@@ -537,6 +648,12 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                     vol.Optional(
                         COMMAND_CREATE_BUTTON,
                         default=bool(user_input.get(COMMAND_CREATE_BUTTON, False))
+                        if user_input
+                        else False,
+                    ): bool,
+                    vol.Optional(
+                        COMMAND_OVERWRITE_EXISTING,
+                        default=bool(user_input.get(COMMAND_OVERWRITE_EXISTING, False))
                         if user_input
                         else False,
                     ): bool,
