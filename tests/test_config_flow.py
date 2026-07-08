@@ -114,6 +114,112 @@ async def test_user_flow_success(hass: HomeAssistant, infrared_emitter: str) -> 
     assert len(mock_setup.mock_calls) == 1
 
 
+async def test_user_flow_receiver_only_generic_creates_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test setup allows receiver-only generic remotes for learning."""
+    receiver_id = "infrared.receiver"
+
+    with (
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value={},
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_receivers",
+            return_value=_receiver_options(receiver_id),
+        ),
+        patch(
+            "custom_components.universal_remote.async_setup_entry",
+            return_value=True,
+        ) as mock_setup,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+        )
+
+        assert result["type"] is FlowResultType.FORM
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_REMOTE_NAME: "Learning Remote",
+                CONF_INFRARED_RECEIVER_ID: receiver_id,
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            },
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Learning Remote"
+    assert result["data"] == {
+        CONF_REMOTE_ID: "learning_remote",
+        CONF_REMOTE_NAME: "Learning Remote",
+        CONF_INFRARED_RECEIVER_ID: receiver_id,
+        CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+    }
+    assert result["options"] == {}
+    assert len(mock_setup.mock_calls) == 1
+
+
+async def test_user_flow_receiver_tv_without_codeset_creates_entry(
+    hass: HomeAssistant,
+) -> None:
+    """Test setup allows receiver remotes to skip library codesets."""
+    receiver_id = "infrared.receiver"
+
+    with (
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value={},
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_receivers",
+            return_value=_receiver_options(receiver_id),
+        ),
+        patch(
+            "custom_components.universal_remote.async_setup_entry",
+            return_value=True,
+        ) as mock_setup,
+    ):
+        result = await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": config_entries.SOURCE_USER},
+        )
+
+        assert result["type"] is FlowResultType.FORM
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {
+                CONF_REMOTE_NAME: "Learning TV",
+                CONF_INFRARED_RECEIVER_ID: receiver_id,
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            },
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "select_codeset"
+
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {CONF_REMOTE_CODESET: NO_INFRARED_LIBRARY_CODESET},
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == "Learning TV"
+    assert result["data"] == {
+        CONF_REMOTE_ID: "learning_tv",
+        CONF_REMOTE_NAME: "Learning TV",
+        CONF_INFRARED_RECEIVER_ID: receiver_id,
+        CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+    }
+    assert result["options"] == {}
+    assert len(mock_setup.mock_calls) == 1
+
+
 @pytest.mark.parametrize(
     ("user_input", "errors"),
     [
@@ -1107,11 +1213,11 @@ def test_update_reconfigure_entry_supports_receiver_only(
     assert config_entry.data[CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
 
 
-async def test_reconfigure_codeset_receiver_requires_codeset(
+async def test_reconfigure_codeset_receiver_allows_no_codeset(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
 ) -> None:
-    """Test receiver reconfigure requires a real codeset."""
+    """Test receiver reconfigure can clear the codeset for learning-only use."""
     flow = _direct_flow(hass)
     flow.context = {
         "source": config_entries.SOURCE_RECONFIGURE,
@@ -1127,15 +1233,17 @@ async def test_reconfigure_codeset_receiver_requires_codeset(
             {CONF_REMOTE_CODESET: NO_INFRARED_LIBRARY_CODESET}
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_REMOTE_CODESET: "receiver_codeset_required"}
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert config_entry.data[CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
+    assert CONF_REMOTE_CODESET not in config_entry.data
 
 
-async def test_reconfigure_codeset_receiver_rejects_unsupported_codeset(
+async def test_reconfigure_codeset_receiver_allows_unsupported_codeset(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
 ) -> None:
-    """Test receiver reconfigure rejects codesets without receiver decoding."""
+    """Test receiver reconfigure allows codesets used for commands only."""
     flow = _direct_flow(hass)
     flow.context = {
         "source": config_entries.SOURCE_RECONFIGURE,
@@ -1153,18 +1261,15 @@ async def test_reconfigure_codeset_receiver_rejects_unsupported_codeset(
             "validate_infrared_library_codeset",
             return_value=True,
         ),
-        patch(
-            "custom_components.universal_remote.config_flow."
-            "infrared_library_codeset_supports_receiver",
-            return_value=False,
-        ),
     ):
         result = await flow.async_step_reconfigure_codeset(
             {CONF_REMOTE_CODESET: "samsung_tv"}
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_REMOTE_CODESET: "receiver_codeset_unsupported"}
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert config_entry.data[CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
+    assert config_entry.data[CONF_REMOTE_CODESET] == "samsung_tv"
 
 
 
@@ -1230,10 +1335,10 @@ async def test_user_flow_rejects_unavailable_receiver_direct(
     }
 
 
-async def test_select_codeset_receiver_requires_real_codeset_direct(
+async def test_select_codeset_receiver_allows_no_codeset_direct(
     hass: HomeAssistant,
 ) -> None:
-    """Test receiver setup cannot continue without a real codeset."""
+    """Test receiver setup can continue without a library codeset."""
     flow = _direct_flow(hass)
     flow._name = "Living Room TV"
     flow._infrared_receiver_id = "infrared.receiver"
@@ -1243,14 +1348,15 @@ async def test_select_codeset_receiver_requires_real_codeset_direct(
         {CONF_REMOTE_CODESET: NO_INFRARED_LIBRARY_CODESET}
     )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_REMOTE_CODESET: "receiver_codeset_required"}
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
+    assert CONF_REMOTE_CODESET not in result["data"]
 
 
-async def test_select_codeset_receiver_rejects_unsupported_codeset_direct(
+async def test_select_codeset_receiver_allows_unsupported_codeset_direct(
     hass: HomeAssistant,
 ) -> None:
-    """Test receiver setup rejects a codeset without receiver decoding."""
+    """Test receiver setup allows codesets used for commands only."""
     flow = _direct_flow(hass)
     flow._name = "Living Room TV"
     flow._infrared_receiver_id = "infrared.receiver"
@@ -1266,7 +1372,8 @@ async def test_select_codeset_receiver_rejects_unsupported_codeset_direct(
         )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_REMOTE_CODESET: "receiver_codeset_unsupported"}
+    assert result["step_id"] == "import_commands"
+    assert flow._codeset_id == "samsung_tv"
 
 
 async def test_reconfigure_rejects_unavailable_receiver_direct(
@@ -1372,10 +1479,10 @@ def test_command_objects_sets_create_button_flag() -> None:
     }
 
 
-async def test_user_flow_rejects_receiver_with_generic_device_type_direct(
+async def test_user_flow_allows_receiver_with_generic_device_type_direct(
     hass: HomeAssistant,
 ) -> None:
-    """Test receiver setup requires a specific supported device type."""
+    """Test receiver setup allows generic learning-only remotes."""
     flow = _direct_flow(hass)
 
     with (
@@ -1389,28 +1496,38 @@ async def test_user_flow_rejects_receiver_with_generic_device_type_direct(
             "available_infrared_receivers",
             return_value=_receiver_options("infrared.receiver"),
         ),
+        patch.object(flow, "async_set_unique_id", AsyncMock(return_value=None)),
+        patch.object(flow, "_abort_if_unique_id_configured", return_value=None),
     ):
         result = await flow.async_step_user(
             {
-                CONF_REMOTE_NAME: "Living Room TV",
+                CONF_REMOTE_NAME: "Learning Remote",
                 CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
                 CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
             }
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {
-        CONF_REMOTE_DEVICE_TYPE: "receiver_device_type_required"
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        CONF_REMOTE_ID: "learning_remote",
+        CONF_REMOTE_NAME: "Learning Remote",
+        CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
+        CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
     }
+    assert result["options"] == {}
 
 
-async def test_reconfigure_rejects_receiver_with_generic_device_type_direct(
+async def test_reconfigure_allows_receiver_with_generic_device_type_direct(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     infrared_emitter: str,
 ) -> None:
-    """Test receiver reconfigure requires a specific supported device type."""
+    """Test receiver reconfigure allows generic learning-only remotes."""
     flow = _direct_flow(hass)
+    flow.context = {
+        "source": config_entries.SOURCE_RECONFIGURE,
+        "entry_id": config_entry.entry_id,
+    }
 
     with (
         patch.object(flow, "_get_reconfigure_entry", return_value=config_entry),
@@ -1427,14 +1544,16 @@ async def test_reconfigure_rejects_receiver_with_generic_device_type_direct(
     ):
         result = await flow.async_step_reconfigure(
             {
-                CONF_REMOTE_NAME: "Living Room TV",
-                CONF_INFRARED_EMITTER_ID: infrared_emitter,
+                CONF_REMOTE_NAME: "Learning Remote",
+                CONF_INFRARED_EMITTER_ID: "",
                 CONF_INFRARED_RECEIVER_ID: "infrared.receiver",
                 CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
             }
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {
-        CONF_REMOTE_DEVICE_TYPE: "receiver_device_type_required"
-    }
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert CONF_INFRARED_EMITTER_ID not in config_entry.data
+    assert config_entry.data[CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
+    assert config_entry.data[CONF_REMOTE_DEVICE_TYPE] == DEVICE_TYPE_GENERIC
+    assert CONF_REMOTE_CODESET not in config_entry.data

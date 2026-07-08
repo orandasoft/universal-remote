@@ -17,10 +17,7 @@
       "remote_name_required": "Remote name is required.",
       "infrared_emitter_unavailable": "Selected infrared emitter is unavailable.",
       "infrared_target_required": "Select at least one infrared emitter or receiver.",
-      "infrared_receiver_unavailable": "Selected infrared receiver is unavailable.",
-      "receiver_codeset_required": "Select an infrared library codeset when an infrared receiver is configured.",
-      "receiver_codeset_unsupported": "The selected infrared library codeset does not support received command decoding.",
-      "receiver_device_type_required": "Select a specific device type when an infrared receiver is configured."
+      "infrared_receiver_unavailable": "Selected infrared receiver is unavailable."
     },
     "step": {
       "import_commands": {
