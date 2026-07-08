@@ -260,6 +260,39 @@ def _learn_review_action_values(result: Mapping[str, Any]) -> list[str]:
     raise AssertionError("Learn review action selector was not found")
 
 
+async def _finish_learn_capture_progress(
+    flow: UniversalRemoteOptionsFlow,
+):
+    """Finish a pending learn-capture progress task and return the next step."""
+    task = flow._learn_capture_task
+    assert task is not None
+    done, pending = await asyncio.wait({task}, timeout=1)
+    assert not pending
+    assert task in done
+
+    result = await flow.async_step_learn_capture()
+    assert result["type"] is FlowResultType.SHOW_PROGRESS_DONE
+
+    return await flow.async_step_learn_capture_progress_done()
+
+
+async def _finish_learn_capture_config_flow(
+    hass: HomeAssistant,
+    flow_id: str,
+):
+    """Poll a config-entry options flow until learn-capture progress is done."""
+    for _ in range(5):
+        await hass.async_block_till_done()
+        result = await hass.config_entries.options.async_configure(flow_id)
+        if result["type"] is FlowResultType.SHOW_PROGRESS_DONE:
+            return await hass.config_entries.options.async_configure(flow_id)
+        if result["type"] is FlowResultType.FORM:
+            return result
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+
+    raise AssertionError("Learn-capture progress did not finish")
+
+
 def _single_entry_without_commands(
     hass: HomeAssistant, infrared_emitter: str
 ) -> MockConfigEntry:
@@ -640,6 +673,14 @@ async def test_learn_command_success(
             {},
         )
 
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["progress_action"] == SOURCE_LEARN_CAPTURE
+        assert result["description_placeholders"] == {"receiver": "Test Receiver"}
+        result = await _finish_learn_capture_config_flow(
+            hass, str(result["flow_id"])
+        )
+
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
     description_placeholders = result["description_placeholders"]
@@ -761,10 +802,140 @@ async def test_learn_capture_errors(
         side_effect=error_type,
     ):
         result = await flow.async_step_learn_capture({})
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+
+        result = await _finish_learn_capture_progress(flow)
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_CAPTURE
     assert result["errors"] == {"base": error}
+
+
+async def test_learn_capture_progress_starts_and_advances_to_decoder(
+    hass: HomeAssistant,
+) -> None:
+    """Test learn capture uses progress while waiting for a signal."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_receiver_id = "infrared.test_receiver"
+    flow._learn_receiver_label = "Test Receiver"
+
+    with patch(
+        "custom_components.universal_remote.options_flow."
+        "LearnSessionManager.async_capture_once",
+        return_value=_learn_result().capture,
+    ) as capture_once:
+        result = await flow.async_step_learn_capture({})
+
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["progress_action"] == SOURCE_LEARN_CAPTURE
+        assert result["description_placeholders"] == {"receiver": "Test Receiver"}
+
+        result = await _finish_learn_capture_progress(flow)
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
+    assert flow._learn_capture == _learn_result().capture
+    assert flow._learn_capture_task is None
+    capture_once.assert_called_once_with("infrared.test_receiver")
+
+
+async def test_learn_capture_progress_reuses_pending_task(
+    hass: HomeAssistant,
+) -> None:
+    """Test refreshing the progress step does not create another capture task."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_receiver_id = "infrared.test_receiver"
+    capture_future: asyncio.Future[LearnCapture] = hass.loop.create_future()
+
+    async def _capture_once(receiver_id: str) -> LearnCapture:
+        assert receiver_id == "infrared.test_receiver"
+        return await capture_future
+
+    with patch(
+        "custom_components.universal_remote.options_flow."
+        "LearnSessionManager.async_capture_once",
+        side_effect=_capture_once,
+    ) as capture_once:
+        result = await flow.async_step_learn_capture({})
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        task = flow._learn_capture_task
+        assert task is not None
+        await asyncio.sleep(0)
+
+        result = await flow.async_step_learn_capture()
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert flow._learn_capture_task is task
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    capture_once.assert_called_once_with("infrared.test_receiver")
+
+
+async def test_learn_capture_progress_done_preserves_cancellation(
+    hass: HomeAssistant,
+) -> None:
+    """Test learn capture progress re-raises task cancellation."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_receiver_id = "infrared.test_receiver"
+
+    with patch(
+        "custom_components.universal_remote.options_flow."
+        "LearnSessionManager.async_capture_once",
+        side_effect=asyncio.CancelledError,
+    ):
+        result = await flow.async_step_learn_capture({})
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        task = flow._learn_capture_task
+        assert task is not None
+        await asyncio.wait({task}, timeout=1)
+
+        with pytest.raises(asyncio.CancelledError):
+            await flow.async_step_learn_capture_progress_done()
+
+    assert flow._learn_capture_task is None
+
+
+async def test_learn_capture_cancel_pending_task(
+    hass: HomeAssistant,
+) -> None:
+    """Test cancelling a pending learn capture task clears flow state."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_receiver_id = "infrared.test_receiver"
+    capture_started = asyncio.Event()
+
+    async def _never_capture(receiver_id: str) -> LearnCapture:
+        assert receiver_id == "infrared.test_receiver"
+        capture_started.set()
+        await asyncio.Future()
+        raise AssertionError("unreachable")
+
+    with patch(
+        "custom_components.universal_remote.options_flow."
+        "LearnSessionManager.async_capture_once",
+        side_effect=_never_capture,
+    ):
+        result = await flow.async_step_learn_capture({})
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        task = flow._learn_capture_task
+        assert task is not None
+        await capture_started.wait()
+
+        await flow._async_cancel_learn_capture_task()
+
+    assert flow._learn_capture_task is None
+    assert task.cancelled()
 
 
 async def test_learn_select_decoder_builds_candidates(
@@ -1406,6 +1577,59 @@ async def test_learn_select_candidate_without_candidates_aborts(
     assert result["reason"] == "learn_failed"
 
 
+async def test_learn_capture_progress_done_without_receiver_returns_learn_command_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test capture progress done redirects when receiver state is missing."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    with patch(
+        "custom_components.universal_remote.options_flow.available_infrared_receivers",
+        return_value=_receiver_options(),
+    ):
+        result = await flow.async_step_learn_capture_progress_done({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_COMMAND
+
+
+async def test_learn_capture_progress_done_without_task_returns_capture_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test capture progress done redirects when the task is missing."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_receiver_id = "infrared.test_receiver"
+
+    result = await flow.async_step_learn_capture_progress_done({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_CAPTURE
+
+
+async def test_learn_capture_cancel_done_task_only_clears_state(
+    hass: HomeAssistant,
+) -> None:
+    """Test cancelling a completed capture task only clears flow state."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    async def _done_capture() -> LearnCapture:
+        return _learn_result().capture
+
+    task = hass.async_create_task(_done_capture())
+    await task
+    flow._learn_capture_task = task
+
+    await flow._async_cancel_learn_capture_task()
+
+    assert flow._learn_capture_task is None
+    assert task.done()
+
+
 async def test_learn_capture_without_pending_state_returns_learn_command_form(
     hass: HomeAssistant,
 ) -> None:
@@ -1469,6 +1693,10 @@ async def test_learn_steps_without_remote_abort(hass: HomeAssistant) -> None:
     assert result["reason"] == "no_universal_remotes"
 
     result = await flow.async_step_learn_capture({})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_universal_remotes"
+
+    result = await flow.async_step_learn_capture_progress_done({})
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_universal_remotes"
 

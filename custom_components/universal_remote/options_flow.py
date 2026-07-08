@@ -94,6 +94,7 @@ SOURCE_MANAGE_COMMANDS = "manage_commands"
 SOURCE_ADD_RAW_COMMAND = "add_raw_command"
 SOURCE_LEARN_COMMAND = "learn_command"
 SOURCE_LEARN_CAPTURE = "learn_capture"
+SOURCE_LEARN_CAPTURE_PROGRESS_DONE = "learn_capture_progress_done"
 SOURCE_LEARN_SELECT_DECODER = "learn_select_decoder"
 SOURCE_LEARN_REVIEW = "learn_review"
 SOURCE_LEARN_SELECT_CANDIDATE = "learn_select_candidate"
@@ -105,6 +106,13 @@ SOURCE_REMOVE_COMMAND = "remove_command"
 SOURCE_EDIT_RAW_COMMAND = "edit_raw_command"
 SOURCE_EDIT_LIBRARY_CODESET = "edit_library_codeset"
 SOURCE_EDIT_LIBRARY_COMMAND = "edit_library_command"
+
+LearnCaptureTaskResult = (
+    LearnCapture
+    | LearnSessionReceiverUnavailableError
+    | LearnSessionReceiverBusyError
+    | LearnSessionTimeoutError
+)
 
 
 def library_command_default(
@@ -306,6 +314,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._selected_library_codeset: str | None = None
         self._learn_receiver_id: str | None = None
         self._learn_receiver_label: str | None = None
+        self._learn_capture_task: asyncio.Task[LearnCaptureTaskResult] | None = None
         self._learn_capture: LearnCapture | None = None
         self._learn_result: LearnResult | None = None
         self._learn_test_send_failed = False
@@ -446,6 +455,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_receiver_label = str(
                     receiver_options[receiver_id].get("label", receiver_id)
                 )
+                await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
                 self._learn_result = None
                 self._learn_test_send_failed = False
@@ -483,6 +493,44 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
         """Capture a command from the selected infrared receiver."""
+        if self._remote is None:
+            return self.async_abort(reason="no_universal_remotes")
+
+        if self._learn_receiver_id is None:
+            return await self.async_step_learn_command()
+
+        if user_input is None and self._learn_capture_task is None:
+            return self._show_learn_capture_form({})
+
+        if self._learn_capture_task is None:
+            self._learn_capture_task = self.hass.async_create_task(
+                self._async_learn_capture_once(self._learn_receiver_id),
+                "Learn Universal Remote infrared command",
+            )
+            return self.async_show_progress(
+                step_id=SOURCE_LEARN_CAPTURE,
+                progress_action=SOURCE_LEARN_CAPTURE,
+                progress_task=self._learn_capture_task,
+                description_placeholders=self._learn_capture_placeholders,
+            )
+
+        if not self._learn_capture_task.done():
+            return self.async_show_progress(
+                step_id=SOURCE_LEARN_CAPTURE,
+                progress_action=SOURCE_LEARN_CAPTURE,
+                progress_task=self._learn_capture_task,
+                description_placeholders=self._learn_capture_placeholders,
+            )
+
+        return self.async_show_progress_done(
+            next_step_id=SOURCE_LEARN_CAPTURE_PROGRESS_DONE
+        )
+
+    async def async_step_learn_capture_progress_done(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle a completed learned-command capture progress task."""
         errors: dict[str, str] = {}
 
         if self._remote is None:
@@ -491,34 +539,31 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         if self._learn_receiver_id is None:
             return await self.async_step_learn_command()
 
-        if user_input is not None:
-            try:
-                self._learn_capture = await LearnSessionManager(
-                    self.hass
-                ).async_capture_once(self._learn_receiver_id)
-                self._learn_result = None
-                self._learn_test_send_failed = False
-            except LearnSessionReceiverUnavailableError:
-                errors["base"] = "infrared_receiver_unavailable"
-            except LearnSessionReceiverBusyError:
-                errors["base"] = "learn_receiver_busy"
-            except LearnSessionTimeoutError:
-                errors["base"] = "learn_timeout"
+        if self._learn_capture_task is None:
+            return await self.async_step_learn_capture()
 
-            if not errors:
-                return await self.async_step_learn_select_decoder()
+        try:
+            capture_result = await self._learn_capture_task
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
+        finally:
+            self._learn_capture_task = None
 
-        return self.async_show_form(
-            step_id=SOURCE_LEARN_CAPTURE,
-            data_schema=vol.Schema({}),
-            errors=errors,
-            description_placeholders={
-                "receiver": learn_capture_receiver_label(
-                    self._learn_receiver_label,
-                    self._learn_receiver_id,
-                ),
-            },
-        )
+        if isinstance(capture_result, LearnSessionReceiverUnavailableError):
+            errors["base"] = "infrared_receiver_unavailable"
+        elif isinstance(capture_result, LearnSessionReceiverBusyError):
+            errors["base"] = "learn_receiver_busy"
+        elif isinstance(capture_result, LearnSessionTimeoutError):
+            errors["base"] = "learn_timeout"
+        else:
+            self._learn_capture = capture_result
+            self._learn_result = None
+            self._learn_test_send_failed = False
+
+        if errors:
+            return self._show_learn_capture_form(errors)
+
+        return await self.async_step_learn_select_decoder()
 
     async def async_step_learn_select_decoder(
         self,
@@ -618,12 +663,14 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                     errors["base"] = "learn_test_send_failed"
 
             elif action == LEARN_REVIEW_ACTION_RETRY_CAPTURE:
+                await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
                 self._learn_result = None
                 self._learn_test_send_failed = False
                 return await self.async_step_learn_capture()
 
             elif action == LEARN_REVIEW_ACTION_DISCARD:
+                await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
                 self._learn_result = None
                 self._learn_test_send_failed = False
@@ -1370,6 +1417,58 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             ),
             errors=errors,
         )
+
+    def _show_learn_capture_form(
+        self,
+        errors: dict[str, str],
+    ) -> config_entries.ConfigFlowResult:
+        """Show the learn capture form."""
+        return self.async_show_form(
+            step_id=SOURCE_LEARN_CAPTURE,
+            data_schema=vol.Schema({}),
+            errors=errors,
+            description_placeholders=self._learn_capture_placeholders,
+        )
+
+    async def _async_learn_capture_once(
+        self, receiver_id: str
+    ) -> LearnCaptureTaskResult:
+        """Capture one learned IR command after yielding to show progress first."""
+        await asyncio.sleep(0)
+        try:
+            return await LearnSessionManager(self.hass).async_capture_once(receiver_id)
+        except (
+            LearnSessionReceiverUnavailableError,
+            LearnSessionReceiverBusyError,
+            LearnSessionTimeoutError,
+        ) as err:
+            return err
+
+    async def _async_cancel_learn_capture_task(self) -> None:
+        """Cancel any pending learned-command capture task."""
+        task = self._learn_capture_task
+        if task is None:
+            return
+
+        self._learn_capture_task = None
+        if task.done():
+            return
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    @property
+    def _learn_capture_placeholders(self) -> dict[str, str]:
+        """Return placeholders for the learn capture form/progress step."""
+        return {
+            "receiver": learn_capture_receiver_label(
+                self._learn_receiver_label,
+                self._learn_receiver_id,
+            )
+        }
 
     async def _async_test_learned_candidate(
         self,

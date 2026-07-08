@@ -387,6 +387,9 @@
         },
         "description": "Review the learned command candidates before saving.\n\n{candidate_details}",
         "title": "Review Learned Command"
+      },
+      "learn_capture_progress_done": {
+        "title": "Capture Complete"
       }
     },
     "selector": {
@@ -400,6 +403,9 @@
           "discard": "Discard"
         }
       }
+    },
+    "progress": {
+      "learn_capture": "Waiting for an infrared command from {receiver}."
     }
   },
   "selector": {
