@@ -146,6 +146,21 @@ def _receiver_options() -> dict[str, dict[str, str]]:
     }
 
 
+def _other_receiver_options() -> dict[str, dict[str, str]]:
+    """Return receiver options that do not include the configured receiver."""
+    return {
+        "infrared.other_receiver": {
+            "value": "infrared.other_receiver",
+            "label": "Other Receiver",
+        }
+    }
+
+
+def _multiple_receiver_options() -> dict[str, dict[str, str]]:
+    """Return available receiver options including an extra receiver."""
+    return {**_receiver_options(), **_other_receiver_options()}
+
+
 SELECT_COMMAND_FOR_EDIT = "select_command_for_edit"
 
 SOURCE_ADD_COMMAND = SOURCE_ADD_RAW_COMMAND
@@ -822,6 +837,47 @@ async def test_learn_command_without_configured_receiver_aborts(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_configured_infrared_receiver"
+
+
+async def test_learn_command_configured_receiver_unavailable_aborts(
+    hass: HomeAssistant,
+) -> None:
+    """Test learn does not fall back to another available receiver."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    with patch(
+        "custom_components.universal_remote.options_flow.available_infrared_receivers",
+        return_value=_other_receiver_options(),
+    ):
+        result = await flow.async_step_learn_command()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "infrared_receiver_unavailable"
+
+
+async def test_learn_command_rejects_unconfigured_receiver(
+    hass: HomeAssistant,
+) -> None:
+    """Test learn cannot switch to a receiver not configured for this remote."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    with patch(
+        "custom_components.universal_remote.options_flow.available_infrared_receivers",
+        return_value=_multiple_receiver_options(),
+    ):
+        result = await flow.async_step_learn_command(
+            {CONF_INFRARED_RECEIVER_ID: "infrared.other_receiver"}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_COMMAND
+    assert result["errors"] == {
+        CONF_INFRARED_RECEIVER_ID: "infrared_receiver_unavailable"
+    }
 
 
 async def test_generic_receiver_no_codeset_starts_learn_capture(

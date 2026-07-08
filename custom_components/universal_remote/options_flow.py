@@ -525,23 +525,28 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         if (remote := self._remote) is None:
             return self.async_abort(reason="no_universal_remotes")
 
-        if not remote.get(CONF_INFRARED_RECEIVER_ID):
+        configured_receiver_id = str(remote.get(CONF_INFRARED_RECEIVER_ID, ""))
+        if not configured_receiver_id:
             return self.async_abort(reason="no_configured_infrared_receiver")
 
         receiver_options = available_infrared_receivers(self.hass)
         if not receiver_options:
             return self.async_abort(reason="no_available_infrared_receivers")
 
+        configured_receiver_option = receiver_options.get(configured_receiver_id)
+        if configured_receiver_option is None:
+            return self.async_abort(reason="infrared_receiver_unavailable")
+
         if user_input is not None:
             receiver_id = str(user_input[CONF_INFRARED_RECEIVER_ID])
 
-            if receiver_id not in receiver_options:
+            if receiver_id != configured_receiver_id:
                 errors[CONF_INFRARED_RECEIVER_ID] = "infrared_receiver_unavailable"
 
             if not errors:
-                self._learn_receiver_id = receiver_id
+                self._learn_receiver_id = configured_receiver_id
                 self._learn_receiver_label = str(
-                    receiver_options[receiver_id].get("label", receiver_id)
+                    configured_receiver_option.get("label", configured_receiver_id)
                 )
                 await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
@@ -550,25 +555,16 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._clear_learn_test_send_state()
                 return await self.async_step_learn_capture()
 
-        current_receiver_id = str(remote.get(CONF_INFRARED_RECEIVER_ID, ""))
-        receiver_default = (
-            str(user_input.get(CONF_INFRARED_RECEIVER_ID, current_receiver_id))
-            if user_input
-            else current_receiver_id
-        )
-        if receiver_default not in receiver_options:
-            receiver_default = next(iter(receiver_options))
-
         return self.async_show_form(
             step_id=SOURCE_LEARN_COMMAND,
             data_schema=vol.Schema(
                 {
                     vol.Required(
                         CONF_INFRARED_RECEIVER_ID,
-                        default=receiver_default,
+                        default=configured_receiver_id,
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=list(receiver_options.values()),
+                            options=[configured_receiver_option],
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),

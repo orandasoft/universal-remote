@@ -196,7 +196,8 @@
       "no_universal_remotes": "No universal remotes are configured.",
       "no_available_infrared_receivers": "No infrared receivers are available.",
       "learn_failed": "The learned command did not produce a usable command candidate.",
-      "no_configured_infrared_receiver": "This universal remote does not have an infrared receiver configured."
+      "no_configured_infrared_receiver": "This universal remote does not have an infrared receiver configured.",
+      "infrared_receiver_unavailable": "Selected infrared receiver is unavailable."
     },
     "error": {
       "command_data_required": "Command data is required.",
