@@ -36,12 +36,23 @@ LEARN_DECODER_AUTO = "auto"
 LEARN_DECODER_NONE = "none"
 LEARN_DECODER_NEC = PROTOCOL_NEC
 LEARN_DECODER_NEC1_F16 = PROTOCOL_NEC1_F16
-LEARN_DECODERS = (
-    LEARN_DECODER_AUTO,
-    LEARN_DECODER_NONE,
-    LEARN_DECODER_NEC,
-    LEARN_DECODER_NEC1_F16,
+
+
+@dataclass(frozen=True, slots=True)
+class LearnDecoderDefinition:
+    """Metadata for a learned-command decoder exposed in the UI."""
+
+    key: str
+    label_key: str
+
+
+LEARN_DECODER_REGISTRY = (
+    LearnDecoderDefinition(LEARN_DECODER_AUTO, "auto"),
+    LearnDecoderDefinition(LEARN_DECODER_NONE, "none"),
+    LearnDecoderDefinition(LEARN_DECODER_NEC, "nec"),
+    LearnDecoderDefinition(LEARN_DECODER_NEC1_F16, "nec1_f16"),
 )
+LEARN_DECODERS = tuple(decoder.key for decoder in LEARN_DECODER_REGISTRY)
 _LEARN_RECEIVER_LOCKS = "learn_receiver_locks"
 _LEARN_CAPTURE_TOKENS = "learn_capture_tokens"
 

@@ -35,9 +35,7 @@ from .helpers import (
 )
 from .learn import (
     LEARN_DECODER_AUTO,
-    LEARN_DECODER_NEC,
-    LEARN_DECODER_NEC1_F16,
-    LEARN_DECODER_NONE,
+    LEARN_DECODER_REGISTRY,
     LEARN_DECODERS,
     LearnCapture,
     LearnResult,
@@ -141,16 +139,44 @@ def library_command_default(
     return str(library_command_options[0]["value"])
 
 
+_LEARN_DECODER_OPTION_LABELS: Mapping[str, str] = {
+    LEARN_DECODER_AUTO: "Auto (recommended)",
+    "none": "None / captured only",
+    "nec": "NEC",
+    "nec1_f16": "NEC1-F16",
+}
+_LEARN_REVIEW_ACTION_OPTION_LABELS: Mapping[str, str] = {
+    LEARN_REVIEW_ACTION_TEST_CAPTURED: "Test captured candidate",
+    LEARN_REVIEW_ACTION_TEST_NORMALIZED: "Test normalized candidate",
+    LEARN_REVIEW_ACTION_CONTINUE_SAVE: "Continue to save",
+    LEARN_REVIEW_ACTION_SAVE_ANYWAY: "Save anyway",
+    LEARN_REVIEW_ACTION_RETRY_CAPTURE: "Retry capture",
+    LEARN_REVIEW_ACTION_DISCARD: "Discard",
+}
+_LEARN_OVERWRITE_ACTION_OPTION_LABELS: Mapping[str, str] = {
+    LEARN_OVERWRITE_ACTION_CONFIRM: "Replace existing command",
+    LEARN_OVERWRITE_ACTION_BACK: "Go back",
+    LEARN_OVERWRITE_ACTION_DISCARD: "Discard learned command",
+}
+_LEARN_FAILURE_ACTION_OPTION_LABELS: Mapping[str, str] = {
+    LEARN_REVIEW_ACTION_RETRY_CAPTURE: "Retry capture",
+    LEARN_REVIEW_ACTION_DISCARD: "Discard learned command",
+}
+
+
+def _translated_selector_option(
+    value: str,
+    labels: Mapping[str, str],
+) -> selector.SelectOptionDict:
+    """Return a translation-key based selector option with a required fallback label."""
+    return selector.SelectOptionDict(value=value, label=labels[value])
+
+
 def learn_decoder_options() -> list[selector.SelectOptionDict]:
     """Return selector options for learned-command decoders."""
     return [
-        selector.SelectOptionDict(value=LEARN_DECODER_AUTO, label="Auto (recommended)"),
-        selector.SelectOptionDict(
-            value=LEARN_DECODER_NONE,
-            label="None / captured only",
-        ),
-        selector.SelectOptionDict(value=LEARN_DECODER_NEC, label="NEC"),
-        selector.SelectOptionDict(value=LEARN_DECODER_NEC1_F16, label="NEC1-F16"),
+        _translated_selector_option(decoder.key, _LEARN_DECODER_OPTION_LABELS)
+        for decoder in LEARN_DECODER_REGISTRY
     ]
 
 
@@ -197,44 +223,44 @@ def learn_review_action_options(
     if can_test_send:
         if candidate_by_key(candidates, CANDIDATE_CAPTURED) is not None:
             options.append(
-                selector.SelectOptionDict(
-                    value=LEARN_REVIEW_ACTION_TEST_CAPTURED,
-                    label="Test captured candidate",
+                _translated_selector_option(
+                    LEARN_REVIEW_ACTION_TEST_CAPTURED,
+                    _LEARN_REVIEW_ACTION_OPTION_LABELS,
                 )
             )
 
         if candidate_by_key(candidates, CANDIDATE_NORMALIZED) is not None:
             options.append(
-                selector.SelectOptionDict(
-                    value=LEARN_REVIEW_ACTION_TEST_NORMALIZED,
-                    label="Test normalized candidate",
+                _translated_selector_option(
+                    LEARN_REVIEW_ACTION_TEST_NORMALIZED,
+                    _LEARN_REVIEW_ACTION_OPTION_LABELS,
                 )
             )
 
     if test_send_failed:
         options.append(
-            selector.SelectOptionDict(
-                value=LEARN_REVIEW_ACTION_SAVE_ANYWAY,
-                label="Save anyway",
+            _translated_selector_option(
+                LEARN_REVIEW_ACTION_SAVE_ANYWAY,
+                _LEARN_REVIEW_ACTION_OPTION_LABELS,
             )
         )
     else:
         options.append(
-            selector.SelectOptionDict(
-                value=LEARN_REVIEW_ACTION_CONTINUE_SAVE,
-                label="Continue to save",
+            _translated_selector_option(
+                LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+                _LEARN_REVIEW_ACTION_OPTION_LABELS,
             )
         )
 
     options.extend(
         [
-            selector.SelectOptionDict(
-                value=LEARN_REVIEW_ACTION_RETRY_CAPTURE,
-                label="Retry capture",
+            _translated_selector_option(
+                LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+                _LEARN_REVIEW_ACTION_OPTION_LABELS,
             ),
-            selector.SelectOptionDict(
-                value=LEARN_REVIEW_ACTION_DISCARD,
-                label="Discard",
+            _translated_selector_option(
+                LEARN_REVIEW_ACTION_DISCARD,
+                _LEARN_REVIEW_ACTION_OPTION_LABELS,
             ),
         ]
     )
@@ -244,17 +270,17 @@ def learn_review_action_options(
 def learn_overwrite_action_options() -> list[selector.SelectOptionDict]:
     """Return selector options for learned-command overwrite confirmation."""
     return [
-        selector.SelectOptionDict(
-            value=LEARN_OVERWRITE_ACTION_CONFIRM,
-            label="Replace existing command",
+        _translated_selector_option(
+            LEARN_OVERWRITE_ACTION_CONFIRM,
+            _LEARN_OVERWRITE_ACTION_OPTION_LABELS,
         ),
-        selector.SelectOptionDict(
-            value=LEARN_OVERWRITE_ACTION_BACK,
-            label="Go back",
+        _translated_selector_option(
+            LEARN_OVERWRITE_ACTION_BACK,
+            _LEARN_OVERWRITE_ACTION_OPTION_LABELS,
         ),
-        selector.SelectOptionDict(
-            value=LEARN_OVERWRITE_ACTION_DISCARD,
-            label="Discard learned command",
+        _translated_selector_option(
+            LEARN_OVERWRITE_ACTION_DISCARD,
+            _LEARN_OVERWRITE_ACTION_OPTION_LABELS,
         ),
     ]
 
@@ -262,13 +288,13 @@ def learn_overwrite_action_options() -> list[selector.SelectOptionDict]:
 def learn_failure_action_options() -> list[selector.SelectOptionDict]:
     """Return selector options for learned-command conversion failures."""
     return [
-        selector.SelectOptionDict(
-            value=LEARN_REVIEW_ACTION_RETRY_CAPTURE,
-            label="Retry capture",
+        _translated_selector_option(
+            LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+            _LEARN_FAILURE_ACTION_OPTION_LABELS,
         ),
-        selector.SelectOptionDict(
-            value=LEARN_REVIEW_ACTION_DISCARD,
-            label="Discard learned command",
+        _translated_selector_option(
+            LEARN_REVIEW_ACTION_DISCARD,
+            _LEARN_FAILURE_ACTION_OPTION_LABELS,
         ),
     ]
 
@@ -658,6 +684,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                         selector.SelectSelectorConfig(
                             options=learn_decoder_options(),
                             mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="learn_decoder",
                         )
                     ),
                 }
@@ -723,6 +750,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                         selector.SelectSelectorConfig(
                             options=action_options,
                             mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="learn_failure_action",
                         )
                     ),
                 }
@@ -821,6 +849,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                         selector.SelectSelectorConfig(
                             options=action_options,
                             mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="learn_review_action",
                         )
                     ),
                 }
@@ -904,6 +933,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                         selector.SelectSelectorConfig(
                             options=learned_candidate_options(candidates),
                             mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="learn_candidate",
                         )
                     ),
                     vol.Optional(
@@ -992,6 +1022,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                         selector.SelectSelectorConfig(
                             options=learn_overwrite_action_options(),
                             mode=selector.SelectSelectorMode.DROPDOWN,
+                            translation_key="learn_overwrite_action",
                         )
                     ),
                 }

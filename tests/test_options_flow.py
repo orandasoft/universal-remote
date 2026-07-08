@@ -25,6 +25,7 @@ from custom_components.universal_remote.infrared_library import (
 )
 from custom_components.universal_remote.learn import (
     LEARN_DECODER_AUTO,
+    LEARN_DECODER_REGISTRY,
     LEARN_DECODER_NEC,
     LEARN_DECODER_NEC1_F16,
     LEARN_DECODER_NONE,
@@ -267,14 +268,22 @@ def _form_field_names(result: Mapping[str, Any]) -> set[str]:
 
 def _learn_review_action_values(result: Mapping[str, Any]) -> list[str]:
     """Return configured learn-review action values from a form result."""
+    return [
+        str(option["value"])
+        for option in _selector_config(result, COMMAND_LEARN_REVIEW_ACTION)["options"]
+    ]
+
+
+def _selector_config(
+    result: Mapping[str, Any],
+    field_name: str,
+) -> Mapping[str, Any]:
+    """Return selector config for a field from a form result."""
     schema = result["data_schema"].schema
     for field, field_selector in schema.items():
-        if getattr(field, "schema", None) == COMMAND_LEARN_REVIEW_ACTION:
-            return [
-                str(option["value"])
-                for option in field_selector.config["options"]
-            ]
-    raise AssertionError("Learn review action selector was not found")
+        if getattr(field, "schema", None) == field_name:
+            return field_selector.config
+    raise AssertionError(f"Selector was not found for {field_name}")
 
 
 async def _finish_learn_capture_progress(
@@ -2040,6 +2049,43 @@ async def test_learn_steps_without_remote_abort(hass: HomeAssistant) -> None:
     assert result["reason"] == "no_universal_remotes"
 
 
+async def test_learn_selector_translation_keys(hass: HomeAssistant) -> None:
+    """Test learned-command selectors declare translation keys."""
+    entry = _receiver_and_emitter_entry(hass, "infrared.test_emitter")
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+
+    result = await flow.async_step_learn_select_decoder()
+    assert _selector_config(result, COMMAND_LEARN_DECODER)["translation_key"] == (
+        "learn_decoder"
+    )
+
+    flow._learn_result = _learn_result_with_captured_and_normalized()
+    result = await flow.async_step_learn_review()
+    assert _selector_config(result, COMMAND_LEARN_REVIEW_ACTION)[
+        "translation_key"
+    ] == "learn_review_action"
+
+    result = await flow.async_step_learn_select_candidate()
+    assert _selector_config(result, COMMAND_LEARN_CANDIDATE)["translation_key"] == (
+        "learn_candidate"
+    )
+
+    flow._learn_pending_command_name = "POWER_ON"
+    flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
+    result = await flow.async_step_learn_confirm_overwrite()
+    assert _selector_config(result, COMMAND_OVERWRITE_ACTION)["translation_key"] == (
+        "learn_overwrite_action"
+    )
+
+    flow._learn_result = None
+    result = await flow.async_step_learn_conversion_failed()
+    assert _selector_config(result, COMMAND_LEARN_FAILURE_ACTION)[
+        "translation_key"
+    ] == "learn_failure_action"
+
+
 def test_learned_candidate_options_include_metadata() -> None:
     """Test learned candidate labels include safe metadata."""
     options = learned_candidate_options(
@@ -2099,7 +2145,19 @@ def test_learned_candidate_details_handles_minimal_metadata() -> None:
 
 
 def test_learn_decoder_options() -> None:
-    """Test decoder selector options."""
+    """Test decoder selector options come from the decoder registry."""
+    assert [decoder.key for decoder in LEARN_DECODER_REGISTRY] == [
+        LEARN_DECODER_AUTO,
+        LEARN_DECODER_NONE,
+        LEARN_DECODER_NEC,
+        LEARN_DECODER_NEC1_F16,
+    ]
+    assert [decoder.label_key for decoder in LEARN_DECODER_REGISTRY] == [
+        "auto",
+        "none",
+        "nec",
+        "nec1_f16",
+    ]
     assert learn_decoder_options() == [
         {"value": LEARN_DECODER_AUTO, "label": "Auto (recommended)"},
         {"value": LEARN_DECODER_NONE, "label": "None / captured only"},
@@ -2127,10 +2185,7 @@ def test_learn_failure_action_options() -> None:
     """Test learned-command conversion-failure action options."""
     assert learn_failure_action_options() == [
         {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
-        {
-            "value": LEARN_REVIEW_ACTION_DISCARD,
-            "label": "Discard learned command",
-        },
+        {"value": LEARN_REVIEW_ACTION_DISCARD, "label": "Discard learned command"},
     ]
 
 
