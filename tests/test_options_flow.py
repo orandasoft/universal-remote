@@ -208,6 +208,24 @@ def _receiver_only_entry(hass: HomeAssistant) -> MockConfigEntry:
     return entry
 
 
+def _generic_receiver_only_entry(hass: HomeAssistant) -> MockConfigEntry:
+    """Create a generic receiver-only config entry without a codeset."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Learning Receiver",
+        data={
+            CONF_REMOTE_ID: "learning_receiver",
+            CONF_REMOTE_NAME: "Learning Receiver",
+            CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+        },
+        options={},
+        unique_id="learning_receiver",
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
 def _receiver_and_emitter_entry(
     hass: HomeAssistant,
     infrared_emitter: str,
@@ -471,6 +489,22 @@ async def test_manage_commands_menu_generic_remote_hides_library_import(
 
     assert result["type"] is FlowResultType.MENU
     assert result["menu_options"] == [SOURCE_ADD_RAW_COMMAND]
+
+
+async def test_manage_commands_menu_generic_receiver_no_codeset_shows_learn(
+    hass: HomeAssistant,
+) -> None:
+    """Test generic receiver-only entries can learn without library import."""
+    entry = _generic_receiver_only_entry(hass)
+
+    result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
+
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == SOURCE_MANAGE_COMMANDS
+    assert result["menu_options"] == [
+        SOURCE_ADD_RAW_COMMAND,
+        SOURCE_LEARN_COMMAND,
+    ]
 
 
 async def test_manage_commands_without_remote_aborts(hass: HomeAssistant) -> None:
@@ -765,6 +799,121 @@ async def test_learn_command_without_available_receivers_aborts(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_available_infrared_receivers"
+
+
+async def test_learn_command_without_configured_receiver_aborts(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test direct learn access is blocked without a configured receiver."""
+    entry = _single_entry_without_commands(hass, infrared_emitter)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    with patch(
+        "custom_components.universal_remote.options_flow.available_infrared_receivers",
+        return_value=_receiver_options(),
+    ):
+        result = await flow.async_step_learn_command()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_configured_infrared_receiver"
+
+
+async def test_generic_receiver_no_codeset_starts_learn_capture(
+    hass: HomeAssistant,
+) -> None:
+    """Test generic receiver-only entries can start learning without a codeset."""
+    entry = _generic_receiver_only_entry(hass)
+
+    result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
+    with patch(
+        "custom_components.universal_remote.options_flow.available_infrared_receivers",
+        return_value=_receiver_options(),
+    ):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"next_step_id": SOURCE_LEARN_COMMAND},
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == SOURCE_LEARN_COMMAND
+
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver"},
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_CAPTURE
+    assert result["description_placeholders"] == {"receiver": "Test Receiver"}
+
+
+async def test_generic_receiver_no_codeset_completes_learned_save(
+    hass: HomeAssistant,
+) -> None:
+    """Test generic receiver-only entries can save learned commands."""
+    entry = _generic_receiver_only_entry(hass)
+
+    result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
+    with (
+        patch(
+            "custom_components.universal_remote.options_flow.available_infrared_receivers",
+            return_value=_receiver_options(),
+        ),
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "LearnSessionManager.async_capture_once",
+            return_value=_learn_result().capture,
+        ),
+    ):
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {"next_step_id": SOURCE_LEARN_COMMAND},
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver"},
+        )
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            {},
+        )
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+
+        result = await _finish_learn_capture_config_flow(
+            hass, str(result["flow_id"])
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {COMMAND_LEARN_DECODER: LEARN_DECODER_NONE},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_REVIEW
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_CONTINUE_SAVE},
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            COMMAND_NAME: "Learned Power",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
+        },
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"][CONF_REMOTE_COMMANDS] == {
+        "LEARNED_POWER": _command_object(LEARNED_COMMAND)
+    }
 
 
 async def test_learn_command_rejects_unavailable_receiver(

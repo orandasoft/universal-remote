@@ -509,6 +509,9 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         if (remote := self._remote) is None:
             return self.async_abort(reason="no_universal_remotes")
 
+        if not remote.get(CONF_INFRARED_RECEIVER_ID):
+            return self.async_abort(reason="no_configured_infrared_receiver")
+
         receiver_options = available_infrared_receivers(self.hass)
         if not receiver_options:
             return self.async_abort(reason="no_available_infrared_receivers")
