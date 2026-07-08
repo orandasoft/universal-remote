@@ -35,6 +35,7 @@ from custom_components.universal_remote.learn_candidates import (
     CANDIDATE_CAPTURED,
     CANDIDATE_NORMALIZED,
     LearnCandidate,
+    LearnCandidateError,
 )
 from custom_components.universal_remote.options_flow import (
     COMMAND_DATA,
@@ -43,13 +44,17 @@ from custom_components.universal_remote.options_flow import (
     COMMAND_LIBRARY_COMMANDS,
     COMMAND_LEARN_CANDIDATE,
     COMMAND_LEARN_DECODER,
+    COMMAND_LEARN_FAILURE_ACTION,
     COMMAND_LEARN_REVIEW_ACTION,
     COMMAND_NAME,
-    COMMAND_OVERWRITE_EXISTING,
+    COMMAND_OVERWRITE_ACTION,
     COMMAND_REPEAT_COUNT,
     COMMAND_SOURCE,
     COMMAND_SOURCE_INFRARED_LIBRARY,
     COMMAND_SOURCE_RAW,
+    LEARN_OVERWRITE_ACTION_BACK,
+    LEARN_OVERWRITE_ACTION_CONFIRM,
+    LEARN_OVERWRITE_ACTION_DISCARD,
     LEARN_REVIEW_ACTION_CONTINUE_SAVE,
     LEARN_REVIEW_ACTION_DISCARD,
     LEARN_REVIEW_ACTION_RETRY_CAPTURE,
@@ -65,6 +70,8 @@ from custom_components.universal_remote.options_flow import (
     SOURCE_IMPORT_LIBRARY_COMMANDS,
     SOURCE_LEARN_CAPTURE,
     SOURCE_LEARN_COMMAND,
+    SOURCE_LEARN_CONFIRM_OVERWRITE,
+    SOURCE_LEARN_CONVERSION_FAILED,
     SOURCE_LEARN_REVIEW,
     SOURCE_LEARN_SELECT_CANDIDATE,
     SOURCE_LEARN_SELECT_DECODER,
@@ -74,6 +81,8 @@ from custom_components.universal_remote.options_flow import (
     learn_capture_details,
     learn_capture_receiver_label,
     learn_decoder_options,
+    learn_failure_action_options,
+    learn_overwrite_action_options,
     learn_review_action_options,
     learned_candidate_details,
     learned_candidate_options,
@@ -246,6 +255,14 @@ def _learn_result_with_captured_and_normalized() -> LearnResult:
             ),
         )
     )
+
+
+def _form_field_names(result: Mapping[str, Any]) -> set[str]:
+    """Return field names from a form result schema."""
+    return {
+        str(getattr(field, "schema", field))
+        for field in result["data_schema"].schema
+    }
 
 
 def _learn_review_action_values(result: Mapping[str, Any]) -> list[str]:
@@ -977,6 +994,144 @@ async def test_learn_select_decoder_rejects_invalid_decoder(
     assert result["errors"] == {COMMAND_LEARN_DECODER: "invalid_learn_decoder"}
 
 
+async def test_learn_select_decoder_handles_candidate_conversion_error(
+    hass: HomeAssistant,
+) -> None:
+    """Test Pronto conversion failures open a retry/discard recovery step."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+    flow._learn_result = _learn_result()
+    flow._learn_pending_command_name = "POWER_ON"
+    flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
+    flow._learn_test_send_failed = True
+
+    with patch(
+        "custom_components.universal_remote.options_flow.build_learn_result",
+        side_effect=LearnCandidateError("invalid pronto"),
+    ):
+        result = await flow.async_step_learn_select_decoder(
+            {COMMAND_LEARN_DECODER: LEARN_DECODER_NONE}
+        )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_CONVERSION_FAILED
+    assert result["errors"] == {"base": "learn_pronto_conversion_failed"}
+    assert flow._learn_result is None
+    assert flow._learn_pending_command_name is None
+    assert flow._learn_pending_candidate_key is None
+    assert flow._learn_test_send_failed is False
+    assert entry.options[CONF_REMOTE_COMMANDS]["POWER_ON"] == RAW_COMMAND
+
+
+async def test_learn_conversion_failed_retry_capture(
+    hass: HomeAssistant,
+) -> None:
+    """Test retrying after conversion failure clears state and restarts capture."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_receiver_id = "infrared.test_receiver"
+    flow._learn_capture = _learn_result().capture
+    flow._learn_result = _learn_result()
+    flow._learn_pending_command_name = "POWER_ON"
+    flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
+    flow._learn_test_send_failed = True
+
+    result = await flow.async_step_learn_conversion_failed(
+        {COMMAND_LEARN_FAILURE_ACTION: LEARN_REVIEW_ACTION_RETRY_CAPTURE}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_CAPTURE
+    assert flow._learn_capture is None
+    assert flow._learn_result is None
+    assert flow._learn_pending_command_name is None
+    assert flow._learn_pending_candidate_key is None
+    assert flow._learn_test_send_failed is False
+
+
+async def test_learn_conversion_failed_discard_leaves_options_unchanged(
+    hass: HomeAssistant,
+) -> None:
+    """Test discarding after conversion failure saves no learned command."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+    flow._learn_result = _learn_result()
+    flow._learn_pending_command_name = "POWER_ON"
+    flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
+    flow._learn_test_send_failed = True
+
+    result = await flow.async_step_learn_conversion_failed(
+        {COMMAND_LEARN_FAILURE_ACTION: LEARN_REVIEW_ACTION_DISCARD}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == dict(entry.options)
+    assert flow._learn_capture is None
+    assert flow._learn_result is None
+    assert flow._learn_pending_command_name is None
+    assert flow._learn_pending_candidate_key is None
+    assert flow._learn_test_send_failed is False
+
+
+async def test_learn_conversion_failed_rejects_invalid_action(
+    hass: HomeAssistant,
+) -> None:
+    """Test conversion-failure action validation."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+
+    result = await flow.async_step_learn_conversion_failed(
+        {COMMAND_LEARN_FAILURE_ACTION: "missing"}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_CONVERSION_FAILED
+    assert result["errors"] == {
+        COMMAND_LEARN_FAILURE_ACTION: "invalid_learn_failure_action"
+    }
+
+
+async def test_learn_conversion_failed_without_remote_aborts(
+    hass: HomeAssistant,
+) -> None:
+    """Test conversion-failure recovery aborts when no remote is configured."""
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.add_to_hass(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+
+    result = await flow.async_step_learn_conversion_failed({})
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_universal_remotes"
+
+
+async def test_learn_conversion_failed_without_pending_state_returns_learn_command_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test conversion-failure recovery redirects when capture is missing."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    with patch(
+        "custom_components.universal_remote.options_flow.available_infrared_receivers",
+        return_value=_receiver_options(),
+    ):
+        result = await flow.async_step_learn_conversion_failed({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_COMMAND
+
+
 async def test_learn_select_decoder_without_pending_capture_returns_learn_command_form(
     hass: HomeAssistant,
 ) -> None:
@@ -1441,10 +1596,10 @@ async def test_learn_select_candidate_rejects_empty_command_name(
     assert result["errors"] == {COMMAND_NAME: "command_name_required"}
 
 
-async def test_learn_select_candidate_rejects_duplicate_command_name(
+async def test_learn_select_candidate_duplicate_command_requires_confirmation(
     hass: HomeAssistant,
 ) -> None:
-    """Test learned commands cannot replace an existing command accidentally."""
+    """Test duplicate learned command names open overwrite confirmation."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -1458,14 +1613,18 @@ async def test_learn_select_candidate_rejects_duplicate_command_name(
     )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
-    assert result["errors"] == {COMMAND_NAME: "command_name_exists"}
+    assert result["step_id"] == SOURCE_LEARN_CONFIRM_OVERWRITE
+    description_placeholders = result["description_placeholders"]
+    assert description_placeholders is not None
+    assert description_placeholders["command_name"] == "POWER_ON"
+    assert flow._learn_pending_command_name == "POWER_ON"
+    assert flow._learn_pending_candidate_key == CANDIDATE_CAPTURED
 
 
-async def test_learn_select_candidate_overwrites_existing_command_when_confirmed(
+async def test_learn_confirm_overwrite_replaces_existing_command(
     hass: HomeAssistant,
 ) -> None:
-    """Test learned commands can replace an existing command when confirmed."""
+    """Test overwrite confirmation replaces the exact pending command."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -1475,14 +1634,177 @@ async def test_learn_select_candidate_overwrites_existing_command_when_confirmed
         {
             COMMAND_NAME: "Power On",
             COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
-            COMMAND_OVERWRITE_EXISTING: True,
+            CONF_COMMAND_CREATE_BUTTON: True,
         }
+    )
+    assert result["step_id"] == SOURCE_LEARN_CONFIRM_OVERWRITE
+
+    result = await flow.async_step_learn_confirm_overwrite(
+        {COMMAND_OVERWRITE_ACTION: LEARN_OVERWRITE_ACTION_CONFIRM}
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"][CONF_REMOTE_COMMANDS]["POWER_ON"] == _command_object(
-        LEARNED_COMMAND
+        LEARNED_COMMAND,
+        create_button=True,
     )
+    assert flow._learn_pending_command_name is None
+
+
+async def test_learn_confirm_overwrite_back_clears_confirmation_state(
+    hass: HomeAssistant,
+) -> None:
+    """Test going back from overwrite confirmation clears stale confirmation."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_learn_select_candidate(
+        {
+            COMMAND_NAME: "Power On",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
+        }
+    )
+    assert result["step_id"] == SOURCE_LEARN_CONFIRM_OVERWRITE
+
+    result = await flow.async_step_learn_confirm_overwrite(
+        {COMMAND_OVERWRITE_ACTION: LEARN_OVERWRITE_ACTION_BACK}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+    assert flow._learn_pending_command_name is None
+
+    result = await flow.async_step_learn_select_candidate(
+        {
+            COMMAND_NAME: "Mute",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
+        }
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "MUTE" in result["data"][CONF_REMOTE_COMMANDS]
+    assert result["data"][CONF_REMOTE_COMMANDS]["POWER_ON"] == _command_object(
+        RAW_COMMAND
+    )
+
+
+async def test_learn_confirm_overwrite_discard_leaves_options_unchanged(
+    hass: HomeAssistant,
+) -> None:
+    """Test discarding from overwrite confirmation saves no learned command."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_learn_select_candidate(
+        {
+            COMMAND_NAME: "Power On",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
+        }
+    )
+    assert result["step_id"] == SOURCE_LEARN_CONFIRM_OVERWRITE
+
+    result = await flow.async_step_learn_confirm_overwrite(
+        {COMMAND_OVERWRITE_ACTION: LEARN_OVERWRITE_ACTION_DISCARD}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == entry.options
+    assert flow._learn_capture is None
+    assert flow._learn_result is None
+    assert flow._learn_pending_command_name is None
+
+
+async def test_learn_confirm_overwrite_rejects_invalid_action(
+    hass: HomeAssistant,
+) -> None:
+    """Test overwrite confirmation validates submitted action."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+    flow._learn_pending_command_name = "POWER_ON"
+    flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
+
+    result = await flow.async_step_learn_confirm_overwrite(
+        {COMMAND_OVERWRITE_ACTION: "invalid"}
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_CONFIRM_OVERWRITE
+    assert result["errors"] == {
+        COMMAND_OVERWRITE_ACTION: "invalid_learn_overwrite_action"
+    }
+
+
+async def test_learn_confirm_overwrite_without_result_returns_decoder_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test overwrite confirmation redirects when only a capture is pending."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_capture = _learn_result().capture
+
+    result = await flow.async_step_learn_confirm_overwrite({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
+
+
+async def test_learn_confirm_overwrite_without_pending_state_returns_learn_command_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test overwrite confirmation redirects when no learn state exists."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    with patch(
+        "custom_components.universal_remote.options_flow.available_infrared_receivers",
+        return_value=_receiver_options(),
+    ):
+        result = await flow.async_step_learn_confirm_overwrite({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_COMMAND
+
+
+async def test_learn_confirm_overwrite_without_pending_state_returns_save_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test overwrite confirmation redirects when pending state is missing."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_learn_confirm_overwrite({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+
+
+async def test_learn_confirm_overwrite_without_candidate_returns_save_form(
+    hass: HomeAssistant,
+) -> None:
+    """Test overwrite confirmation redirects when pending candidate is stale."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+    flow._learn_pending_command_name = "POWER_ON"
+    flow._learn_pending_candidate_key = "missing"
+
+    result = await flow.async_step_learn_confirm_overwrite({})
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+    assert flow._learn_pending_command_name is None
 
 
 async def test_learn_select_candidate_rejects_invalid_candidate(
@@ -1544,6 +1866,7 @@ async def test_learn_select_candidate_form_shows_candidate_details(
     result = await flow.async_step_learn_select_candidate()
 
     assert result["type"] is FlowResultType.FORM
+    assert "overwrite_existing_command" not in _form_field_names(result)
     description_placeholders = result["description_placeholders"]
     assert description_placeholders is not None
     details = description_placeholders["candidate_details"]
@@ -1712,6 +2035,10 @@ async def test_learn_steps_without_remote_abort(hass: HomeAssistant) -> None:
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "no_universal_remotes"
 
+    result = await flow.async_step_learn_confirm_overwrite({})
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_universal_remotes"
+
 
 def test_learned_candidate_options_include_metadata() -> None:
     """Test learned candidate labels include safe metadata."""
@@ -1778,6 +2105,32 @@ def test_learn_decoder_options() -> None:
         {"value": LEARN_DECODER_NONE, "label": "None / captured only"},
         {"value": LEARN_DECODER_NEC, "label": "NEC"},
         {"value": LEARN_DECODER_NEC1_F16, "label": "NEC1-F16"},
+    ]
+
+
+def test_learn_overwrite_action_options() -> None:
+    """Test learned-command overwrite action selector options."""
+    assert learn_overwrite_action_options() == [
+        {
+            "value": LEARN_OVERWRITE_ACTION_CONFIRM,
+            "label": "Replace existing command",
+        },
+        {"value": LEARN_OVERWRITE_ACTION_BACK, "label": "Go back"},
+        {
+            "value": LEARN_OVERWRITE_ACTION_DISCARD,
+            "label": "Discard learned command",
+        },
+    ]
+
+
+def test_learn_failure_action_options() -> None:
+    """Test learned-command conversion-failure action options."""
+    assert learn_failure_action_options() == [
+        {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
+        {
+            "value": LEARN_REVIEW_ACTION_DISCARD,
+            "label": "Discard learned command",
+        },
     ]
 
 

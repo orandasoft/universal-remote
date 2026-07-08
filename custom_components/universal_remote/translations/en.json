@@ -220,7 +220,10 @@
       "invalid_learn_candidate": "Selected learned command candidate is invalid.",
       "invalid_learn_decoder": "Selected learned-command decoder is invalid.",
       "invalid_learn_review_action": "Selected learned-command review action is invalid.",
-      "learn_test_send_failed": "The learned command test send failed. You can retry capture, save anyway, or discard the learned command."
+      "learn_test_send_failed": "The learned command test send failed. You can retry capture, save anyway, or discard the learned command.",
+      "invalid_learn_overwrite_action": "Selected learned-command overwrite action is invalid.",
+      "learn_pronto_conversion_failed": "The captured signal could not be converted to a valid Pronto HEX command. Retry capture or discard the learned command.",
+      "invalid_learn_failure_action": "Selected learned-command recovery action is invalid."
     },
     "step": {
       "add_raw_command": {
@@ -356,14 +359,12 @@
         "data": {
           "command_name": "Command name",
           "learn_candidate": "Learned command candidate",
-          "create_button": "Create button entity",
-          "overwrite_existing_command": "Overwrite existing command"
+          "create_button": "Create button entity"
         },
         "data_description": {
           "command_name": "Name used with remote.send_command.",
           "learn_candidate": "Select the Pronto HEX candidate to save for this command.",
-          "create_button": "Create a button entity for this learned command.",
-          "overwrite_existing_command": "Replace the existing command with this learned command."
+          "create_button": "Create a button entity for this learned command."
         },
         "description": "Select the learned command candidate to save.\n\n{candidate_details}",
         "title": "Save Learned Command"
@@ -390,6 +391,26 @@
       },
       "learn_capture_progress_done": {
         "title": "Capture Complete"
+      },
+      "learn_confirm_overwrite": {
+        "data": {
+          "learn_overwrite_action": "Action"
+        },
+        "data_description": {
+          "learn_overwrite_action": "Choose whether to replace the existing command, go back and change the learned command name, or discard the learned command."
+        },
+        "description": "Command {command_name} already exists. Confirm before replacing it with this learned command.\n\n{candidate_details}",
+        "title": "Replace Existing Command"
+      },
+      "learn_conversion_failed": {
+        "title": "Learned Command Conversion Failed",
+        "description": "The captured signal could not be converted to a valid Pronto HEX command. No command was saved.\n\nCaptured signal: {capture_details}",
+        "data": {
+          "learn_failure_action": "Action"
+        },
+        "data_description": {
+          "learn_failure_action": "Choose whether to retry capture or discard the learned command without changing the remote."
+        }
       }
     },
     "selector": {
@@ -401,6 +422,13 @@
           "save_anyway": "Save anyway",
           "retry_capture": "Retry capture",
           "discard": "Discard"
+        }
+      },
+      "learn_overwrite_action": {
+        "options": {
+          "confirm": "Replace existing command",
+          "back": "Go back",
+          "discard": "Discard learned command"
         }
       }
     },

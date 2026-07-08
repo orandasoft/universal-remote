@@ -51,6 +51,7 @@ from .learn_candidates import (
     CANDIDATE_CAPTURED,
     CANDIDATE_NORMALIZED,
     LearnCandidate,
+    LearnCandidateError,
     candidate_by_key,
 )
 from .infrared_library import (
@@ -69,7 +70,7 @@ from .send import async_send_infrared_command
 COMMAND_NAME = "command_name"
 COMMAND_DATA = "command_data"
 COMMAND_CREATE_BUTTON = "create_button"
-COMMAND_OVERWRITE_EXISTING = "overwrite_existing_command"
+COMMAND_OVERWRITE_ACTION = "learn_overwrite_action"
 
 COMMAND_SOURCE = "command_source"
 COMMAND_SOURCE_RAW = "raw"
@@ -82,6 +83,7 @@ COMMAND_REPEAT_COUNT = "repeat_count"
 COMMAND_LEARN_CANDIDATE = "learn_candidate"
 COMMAND_LEARN_DECODER = "learn_decoder"
 COMMAND_LEARN_REVIEW_ACTION = "learn_review_action"
+COMMAND_LEARN_FAILURE_ACTION = "learn_failure_action"
 
 LEARN_REVIEW_ACTION_CONTINUE_SAVE = "continue_save"
 LEARN_REVIEW_ACTION_TEST_CAPTURED = "test_captured"
@@ -90,6 +92,10 @@ LEARN_REVIEW_ACTION_SAVE_ANYWAY = "save_anyway"
 LEARN_REVIEW_ACTION_RETRY_CAPTURE = "retry_capture"
 LEARN_REVIEW_ACTION_DISCARD = "discard"
 
+LEARN_OVERWRITE_ACTION_CONFIRM = "confirm"
+LEARN_OVERWRITE_ACTION_BACK = "back"
+LEARN_OVERWRITE_ACTION_DISCARD = "discard"
+
 SOURCE_MANAGE_COMMANDS = "manage_commands"
 SOURCE_ADD_RAW_COMMAND = "add_raw_command"
 SOURCE_LEARN_COMMAND = "learn_command"
@@ -97,7 +103,9 @@ SOURCE_LEARN_CAPTURE = "learn_capture"
 SOURCE_LEARN_CAPTURE_PROGRESS_DONE = "learn_capture_progress_done"
 SOURCE_LEARN_SELECT_DECODER = "learn_select_decoder"
 SOURCE_LEARN_REVIEW = "learn_review"
+SOURCE_LEARN_CONVERSION_FAILED = "learn_conversion_failed"
 SOURCE_LEARN_SELECT_CANDIDATE = "learn_select_candidate"
+SOURCE_LEARN_CONFIRM_OVERWRITE = "learn_confirm_overwrite"
 SOURCE_IMPORT_LIBRARY_COMMANDS = "import_library_commands"
 SOURCE_IMPORT_LIBRARY_COMMAND_SELECT = "import_library_command_select"
 SOURCE_EDIT_COMMAND = "edit_command"
@@ -233,6 +241,38 @@ def learn_review_action_options(
     return options
 
 
+def learn_overwrite_action_options() -> list[selector.SelectOptionDict]:
+    """Return selector options for learned-command overwrite confirmation."""
+    return [
+        selector.SelectOptionDict(
+            value=LEARN_OVERWRITE_ACTION_CONFIRM,
+            label="Replace existing command",
+        ),
+        selector.SelectOptionDict(
+            value=LEARN_OVERWRITE_ACTION_BACK,
+            label="Go back",
+        ),
+        selector.SelectOptionDict(
+            value=LEARN_OVERWRITE_ACTION_DISCARD,
+            label="Discard learned command",
+        ),
+    ]
+
+
+def learn_failure_action_options() -> list[selector.SelectOptionDict]:
+    """Return selector options for learned-command conversion failures."""
+    return [
+        selector.SelectOptionDict(
+            value=LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+            label="Retry capture",
+        ),
+        selector.SelectOptionDict(
+            value=LEARN_REVIEW_ACTION_DISCARD,
+            label="Discard learned command",
+        ),
+    ]
+
+
 def learn_capture_receiver_label(
     receiver_label: str | None,
     receiver_id: str | None,
@@ -318,6 +358,9 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._learn_capture: LearnCapture | None = None
         self._learn_result: LearnResult | None = None
         self._learn_test_send_failed = False
+        self._learn_pending_command_name: str | None = None
+        self._learn_pending_candidate_key: str | None = None
+        self._learn_pending_create_button = False
 
     async def async_step_init(
         self,
@@ -458,6 +501,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
                 self._learn_result = None
+                self._clear_learn_pending_save()
                 self._learn_test_send_failed = False
                 return await self.async_step_learn_capture()
 
@@ -558,6 +602,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         else:
             self._learn_capture = capture_result
             self._learn_result = None
+            self._clear_learn_pending_save()
             self._learn_test_send_failed = False
 
         if errors:
@@ -585,10 +630,20 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 errors[COMMAND_LEARN_DECODER] = "invalid_learn_decoder"
 
             if not errors:
-                self._learn_result = build_learn_result(
-                    self._learn_capture,
-                    decoder=decoder,
-                )
+                try:
+                    self._learn_result = build_learn_result(
+                        self._learn_capture,
+                        decoder=decoder,
+                    )
+                except LearnCandidateError:
+                    self._learn_result = None
+                    self._clear_learn_pending_save()
+                    self._learn_test_send_failed = False
+                    return await self.async_step_learn_conversion_failed(
+                        errors={"base": "learn_pronto_conversion_failed"}
+                    )
+
+                self._clear_learn_pending_save()
                 self._learn_test_send_failed = False
                 return await self.async_step_learn_review()
 
@@ -612,6 +667,72 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 "capture_details": learn_capture_details(self._learn_capture),
             },
         )
+
+    async def async_step_learn_conversion_failed(
+        self,
+        user_input: dict[str, Any] | None = None,
+        errors: dict[str, str] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Handle a learned-command candidate conversion failure."""
+        form_errors = dict(errors or {})
+
+        if self._remote is None:
+            return self.async_abort(reason="no_universal_remotes")
+
+        if self._learn_capture is None:
+            return await self.async_step_learn_command()
+
+        action_options = learn_failure_action_options()
+
+        if user_input is not None:
+            action = str(user_input[COMMAND_LEARN_FAILURE_ACTION])
+            valid_actions = {str(option["value"]) for option in action_options}
+
+            if action not in valid_actions:
+                form_errors[COMMAND_LEARN_FAILURE_ACTION] = (
+                    "invalid_learn_failure_action"
+                )
+
+            elif action == LEARN_REVIEW_ACTION_RETRY_CAPTURE:
+                await self._async_cancel_learn_capture_task()
+                self._learn_capture = None
+                self._learn_result = None
+                self._clear_learn_pending_save()
+                self._learn_test_send_failed = False
+                return await self.async_step_learn_capture()
+
+            elif action == LEARN_REVIEW_ACTION_DISCARD:
+                await self._async_cancel_learn_capture_task()
+                self._learn_capture = None
+                self._learn_result = None
+                self._clear_learn_pending_save()
+                self._learn_test_send_failed = False
+                return self.async_create_entry(
+                    title="",
+                    data=dict(self._config_entry.options),
+                )
+
+        return self.async_show_form(
+            step_id=SOURCE_LEARN_CONVERSION_FAILED,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        COMMAND_LEARN_FAILURE_ACTION,
+                        default=LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=action_options,
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+            errors=form_errors,
+            description_placeholders={
+                "capture_details": learn_capture_details(self._learn_capture),
+            },
+        )
+
 
     async def async_step_learn_review(
         self,
@@ -666,6 +787,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
                 self._learn_result = None
+                self._clear_learn_pending_save()
                 self._learn_test_send_failed = False
                 return await self.async_step_learn_capture()
 
@@ -673,6 +795,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
                 self._learn_result = None
+                self._clear_learn_pending_save()
                 self._learn_test_send_failed = False
                 return self.async_create_entry(
                     title="",
@@ -733,28 +856,32 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 candidates,
                 str(user_input[COMMAND_LEARN_CANDIDATE]),
             )
-            overwrite_existing = bool(user_input.get(COMMAND_OVERWRITE_EXISTING, False))
+            create_button = bool(user_input.get(COMMAND_CREATE_BUTTON, False))
+            self._clear_learn_pending_save()
 
             if not command_name:
                 errors[COMMAND_NAME] = "command_name_required"
 
-            if (
-                not errors
-                and find_command_key(self._commands, command_name) is not None
-                and not overwrite_existing
-            ):
-                errors[COMMAND_NAME] = "command_name_exists"
-
             if selected_candidate is None:
                 errors[COMMAND_LEARN_CANDIDATE] = "invalid_learn_candidate"
 
+            if (
+                not errors
+                and find_command_key(self._commands, command_name) is not None
+                and selected_candidate is not None
+            ):
+                self._learn_pending_command_name = command_name
+                self._learn_pending_candidate_key = selected_candidate.key
+                self._learn_pending_create_button = create_button
+                return await self.async_step_learn_confirm_overwrite()
+
             if not errors and selected_candidate is not None:
-                command_objects = self._command_objects
-                command_objects[command_name] = command_object(
-                    selected_candidate.payload,
-                    create_button=bool(user_input.get(COMMAND_CREATE_BUTTON, False)),
+                self._save_learned_command(
+                    remote,
+                    command_name,
+                    selected_candidate,
+                    create_button=create_button,
                 )
-                remote[CONF_REMOTE_COMMANDS] = command_objects
                 return self._create_options_entry()
 
         recommended_candidate = next(
@@ -785,17 +912,96 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                         if user_input
                         else False,
                     ): bool,
-                    vol.Optional(
-                        COMMAND_OVERWRITE_EXISTING,
-                        default=bool(user_input.get(COMMAND_OVERWRITE_EXISTING, False))
-                        if user_input
-                        else False,
-                    ): bool,
                 }
             ),
             errors=errors,
             description_placeholders={
                 "candidate_details": learned_candidate_details(candidates),
+            },
+        )
+
+    async def async_step_learn_confirm_overwrite(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Confirm replacing an existing command with a learned command."""
+        errors: dict[str, str] = {}
+
+        if (remote := self._remote) is None:
+            return self.async_abort(reason="no_universal_remotes")
+
+        if self._learn_result is None:
+            if self._learn_capture is not None:
+                return await self.async_step_learn_select_decoder()
+            return await self.async_step_learn_command()
+
+        command_name = self._learn_pending_command_name
+        candidate_key = self._learn_pending_candidate_key
+        if command_name is None or candidate_key is None:
+            return await self.async_step_learn_select_candidate()
+
+        selected_candidate = candidate_by_key(
+            self._learn_result.candidates, candidate_key
+        )
+        if selected_candidate is None:
+            self._clear_learn_pending_save()
+            return await self.async_step_learn_select_candidate()
+
+        if user_input is not None:
+            action = str(user_input[COMMAND_OVERWRITE_ACTION])
+            valid_actions = {
+                str(option["value"]) for option in learn_overwrite_action_options()
+            }
+
+            if action not in valid_actions:
+                errors[COMMAND_OVERWRITE_ACTION] = "invalid_learn_overwrite_action"
+
+            elif action == LEARN_OVERWRITE_ACTION_CONFIRM:
+                self._save_learned_command(
+                    remote,
+                    command_name,
+                    selected_candidate,
+                    create_button=self._learn_pending_create_button,
+                )
+                self._clear_learn_pending_save()
+                return self._create_options_entry()
+
+            elif action == LEARN_OVERWRITE_ACTION_BACK:
+                self._clear_learn_pending_save()
+                return await self.async_step_learn_select_candidate()
+
+            elif action == LEARN_OVERWRITE_ACTION_DISCARD:
+                await self._async_cancel_learn_capture_task()
+                self._learn_capture = None
+                self._learn_result = None
+                self._clear_learn_pending_save()
+                self._learn_test_send_failed = False
+                return self.async_create_entry(
+                    title="",
+                    data=dict(self._config_entry.options),
+                )
+
+        return self.async_show_form(
+            step_id=SOURCE_LEARN_CONFIRM_OVERWRITE,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        COMMAND_OVERWRITE_ACTION,
+                        default=LEARN_OVERWRITE_ACTION_CONFIRM,
+                    ): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=learn_overwrite_action_options(),
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "command_name": command_name,
+                "candidate_details": learned_candidate_details(
+                    (selected_candidate,),
+                ),
             },
         )
 
@@ -1469,6 +1675,28 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_receiver_id,
             )
         }
+
+    def _save_learned_command(
+        self,
+        remote: dict[str, Any],
+        command_name: str,
+        selected_candidate: LearnCandidate,
+        *,
+        create_button: bool,
+    ) -> None:
+        """Save a learned command candidate to the current remote."""
+        command_objects = self._command_objects
+        command_objects[command_name] = command_object(
+            selected_candidate.payload,
+            create_button=create_button,
+        )
+        remote[CONF_REMOTE_COMMANDS] = command_objects
+
+    def _clear_learn_pending_save(self) -> None:
+        """Clear pending learned-command save confirmation state."""
+        self._learn_pending_command_name = None
+        self._learn_pending_candidate_key = None
+        self._learn_pending_create_button = False
 
     async def _async_test_learned_candidate(
         self,
