@@ -139,12 +139,6 @@ def library_command_default(
     return str(library_command_options[0]["value"])
 
 
-_LEARN_DECODER_OPTION_LABELS: Mapping[str, str] = {
-    LEARN_DECODER_AUTO: "Auto (recommended)",
-    "none": "None / captured only",
-    "nec": "NEC",
-    "nec1_f16": "NEC1-F16",
-}
 _LEARN_REVIEW_ACTION_OPTION_LABELS: Mapping[str, str] = {
     LEARN_REVIEW_ACTION_TEST_CAPTURED: "Test captured candidate",
     LEARN_REVIEW_ACTION_TEST_NORMALIZED: "Test normalized candidate",
@@ -175,7 +169,7 @@ def _translated_selector_option(
 def learn_decoder_options() -> list[selector.SelectOptionDict]:
     """Return selector options for learned-command decoders."""
     return [
-        _translated_selector_option(decoder.key, _LEARN_DECODER_OPTION_LABELS)
+        selector.SelectOptionDict(value=decoder.key, label=decoder.fallback_label)
         for decoder in LEARN_DECODER_REGISTRY
     ]
 
@@ -1692,6 +1686,8 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
 
         self._learn_capture_task = None
         if task.done():
+            if not task.cancelled():
+                task.exception()
             return
 
         task.cancel()
@@ -1756,6 +1752,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self.hass,
                 emitter_id,
                 candidate.payload,
+                check_available=True,
             )
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise

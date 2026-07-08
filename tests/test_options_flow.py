@@ -1431,6 +1431,7 @@ async def test_learn_review_test_captured_candidate(
         hass,
         infrared_emitter,
         "captured-payload",
+        check_available=True,
     )
 
 
@@ -1459,6 +1460,7 @@ async def test_learn_review_test_normalized_candidate(
         hass,
         infrared_emitter,
         LEARNED_COMMAND,
+        check_available=True,
     )
 
 
@@ -2098,6 +2100,7 @@ async def test_learn_capture_cancel_done_task_only_clears_state(
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
+
     async def _done_capture() -> LearnCapture:
         return _learn_result().capture
 
@@ -2109,6 +2112,29 @@ async def test_learn_capture_cancel_done_task_only_clears_state(
 
     assert flow._learn_capture_task is None
     assert task.done()
+
+
+async def test_learn_capture_cancel_done_task_observes_exception(
+    hass: HomeAssistant,
+) -> None:
+    """Test cancelling a failed completed capture task observes its exception."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+
+    async def _failed_capture() -> LearnCapture:
+        raise HomeAssistantError("boom")
+
+    task = hass.async_create_task(_failed_capture())
+    done, pending = await asyncio.wait({task}, timeout=1)
+    assert task in done
+    assert not pending
+    flow._learn_capture_task = task
+
+    await flow._async_cancel_learn_capture_task()
+
+    assert flow._learn_capture_task is None
+    assert isinstance(task.exception(), HomeAssistantError)
 
 
 async def test_learn_capture_without_pending_state_returns_learn_command_form(
@@ -2306,6 +2332,12 @@ def test_learn_decoder_options() -> None:
         "none",
         "nec",
         "nec1_f16",
+    ]
+    assert [decoder.fallback_label for decoder in LEARN_DECODER_REGISTRY] == [
+        "Auto (recommended)",
+        "None / captured only",
+        "NEC",
+        "NEC1-F16",
     ]
     assert learn_decoder_options() == [
         {"value": LEARN_DECODER_AUTO, "label": "Auto (recommended)"},

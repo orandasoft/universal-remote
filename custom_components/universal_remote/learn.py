@@ -44,13 +44,14 @@ class LearnDecoderDefinition:
 
     key: str
     label_key: str
+    fallback_label: str
 
 
 LEARN_DECODER_REGISTRY = (
-    LearnDecoderDefinition(LEARN_DECODER_AUTO, "auto"),
-    LearnDecoderDefinition(LEARN_DECODER_NONE, "none"),
-    LearnDecoderDefinition(LEARN_DECODER_NEC, "nec"),
-    LearnDecoderDefinition(LEARN_DECODER_NEC1_F16, "nec1_f16"),
+    LearnDecoderDefinition(LEARN_DECODER_AUTO, "auto", "Auto (recommended)"),
+    LearnDecoderDefinition(LEARN_DECODER_NONE, "none", "None / captured only"),
+    LearnDecoderDefinition(LEARN_DECODER_NEC, "nec", "NEC"),
+    LearnDecoderDefinition(LEARN_DECODER_NEC1_F16, "nec1_f16", "NEC1-F16"),
 )
 LEARN_DECODERS = tuple(decoder.key for decoder in LEARN_DECODER_REGISTRY)
 _LEARN_RECEIVER_LOCKS = "learn_receiver_locks"
