@@ -62,6 +62,9 @@ from custom_components.universal_remote.options_flow import (
     LEARN_REVIEW_ACTION_SAVE_ANYWAY,
     LEARN_REVIEW_ACTION_TEST_CAPTURED,
     LEARN_REVIEW_ACTION_TEST_NORMALIZED,
+    LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED,
+    LEARN_TEST_SEND_RESULT_FAILED,
+    LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED,
     SOURCE_ADD_RAW_COMMAND,
     SOURCE_EDIT_COMMAND,
     SOURCE_EDIT_LIBRARY_CODESET,
@@ -85,6 +88,7 @@ from custom_components.universal_remote.options_flow import (
     learn_failure_action_options,
     learn_overwrite_action_options,
     learn_review_action_options,
+    learn_test_send_result_details,
     learned_candidate_details,
     learned_candidate_options,
     library_command_default,
@@ -1164,6 +1168,7 @@ async def test_learn_select_decoder_handles_candidate_conversion_error(
     flow._learn_pending_command_name = "POWER_ON"
     flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
     flow._learn_test_send_failed = True
+    flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_FAILED
 
     with patch(
         "custom_components.universal_remote.options_flow.build_learn_result",
@@ -1180,6 +1185,7 @@ async def test_learn_select_decoder_handles_candidate_conversion_error(
     assert flow._learn_pending_command_name is None
     assert flow._learn_pending_candidate_key is None
     assert flow._learn_test_send_failed is False
+    assert flow._learn_test_send_result is None
     assert entry.options[CONF_REMOTE_COMMANDS]["POWER_ON"] == RAW_COMMAND
 
 
@@ -1196,6 +1202,7 @@ async def test_learn_conversion_failed_retry_capture(
     flow._learn_pending_command_name = "POWER_ON"
     flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
     flow._learn_test_send_failed = True
+    flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_FAILED
 
     result = await flow.async_step_learn_conversion_failed(
         {COMMAND_LEARN_FAILURE_ACTION: LEARN_REVIEW_ACTION_RETRY_CAPTURE}
@@ -1208,6 +1215,7 @@ async def test_learn_conversion_failed_retry_capture(
     assert flow._learn_pending_command_name is None
     assert flow._learn_pending_candidate_key is None
     assert flow._learn_test_send_failed is False
+    assert flow._learn_test_send_result is None
 
 
 async def test_learn_conversion_failed_discard_leaves_options_unchanged(
@@ -1222,6 +1230,7 @@ async def test_learn_conversion_failed_discard_leaves_options_unchanged(
     flow._learn_pending_command_name = "POWER_ON"
     flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
     flow._learn_test_send_failed = True
+    flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_FAILED
 
     result = await flow.async_step_learn_conversion_failed(
         {COMMAND_LEARN_FAILURE_ACTION: LEARN_REVIEW_ACTION_DISCARD}
@@ -1234,6 +1243,7 @@ async def test_learn_conversion_failed_discard_leaves_options_unchanged(
     assert flow._learn_pending_command_name is None
     assert flow._learn_pending_candidate_key is None
     assert flow._learn_test_send_failed is False
+    assert flow._learn_test_send_result is None
 
 
 async def test_learn_conversion_failed_rejects_invalid_action(
@@ -1316,6 +1326,7 @@ async def test_learn_review_continue_to_save(
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_result = _learn_result()
+    flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
 
     result = await flow.async_step_learn_review(
         {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_CONTINUE_SAVE}
@@ -1323,6 +1334,7 @@ async def test_learn_review_continue_to_save(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+    assert flow._learn_test_send_result is None
 
 
 async def test_learn_review_retry_capture(
@@ -1335,6 +1347,7 @@ async def test_learn_review_retry_capture(
     flow._learn_receiver_id = "infrared.test_receiver"
     flow._learn_capture = _learn_result().capture
     flow._learn_result = _learn_result()
+    flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
 
     result = await flow.async_step_learn_review(
         {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_RETRY_CAPTURE}
@@ -1344,6 +1357,7 @@ async def test_learn_review_retry_capture(
     assert result["step_id"] == SOURCE_LEARN_CAPTURE
     assert flow._learn_capture is None
     assert flow._learn_result is None
+    assert flow._learn_test_send_result is None
 
 
 async def test_learn_review_discard_leaves_options_unchanged(
@@ -1355,6 +1369,7 @@ async def test_learn_review_discard_leaves_options_unchanged(
     flow.hass = hass
     flow._learn_capture = _learn_result().capture
     flow._learn_result = _learn_result()
+    flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
 
     result = await flow.async_step_learn_review(
         {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_DISCARD}
@@ -1364,6 +1379,7 @@ async def test_learn_review_discard_leaves_options_unchanged(
     assert result["data"] == dict(entry.options)
     assert flow._learn_capture is None
     assert flow._learn_result is None
+    assert flow._learn_test_send_result is None
 
 
 async def test_learn_review_rejects_invalid_action(
@@ -1427,6 +1443,14 @@ async def test_learn_review_test_captured_candidate(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_REVIEW
     assert result["errors"] == {}
+    assert flow._learn_test_send_failed is False
+    assert flow._learn_test_send_result == LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
+    description_placeholders = result["description_placeholders"]
+    assert description_placeholders is not None
+    assert (
+        description_placeholders["test_send_result"]
+        == "Last test send: captured candidate sent successfully."
+    )
     send_command.assert_awaited_once_with(
         hass,
         infrared_emitter,
@@ -1456,6 +1480,14 @@ async def test_learn_review_test_normalized_candidate(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_REVIEW
     assert result["errors"] == {}
+    assert flow._learn_test_send_failed is False
+    assert flow._learn_test_send_result == LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED
+    description_placeholders = result["description_placeholders"]
+    assert description_placeholders is not None
+    assert (
+        description_placeholders["test_send_result"]
+        == "Last test send: normalized candidate sent successfully."
+    )
     send_command.assert_awaited_once_with(
         hass,
         infrared_emitter,
@@ -1486,6 +1518,10 @@ async def test_learn_review_test_send_failure_allows_save_anyway(
     assert result["step_id"] == SOURCE_LEARN_REVIEW
     assert result["errors"] == {"base": "learn_test_send_failed"}
     assert flow._learn_test_send_failed is True
+    assert flow._learn_test_send_result == LEARN_TEST_SEND_RESULT_FAILED
+    description_placeholders = result["description_placeholders"]
+    assert description_placeholders is not None
+    assert description_placeholders["test_send_result"] == "Last test send failed."
     assert LEARN_REVIEW_ACTION_SAVE_ANYWAY in _learn_review_action_values(result)
     assert LEARN_REVIEW_ACTION_CONTINUE_SAVE not in _learn_review_action_values(result)
 
@@ -1495,6 +1531,8 @@ async def test_learn_review_test_send_failure_allows_save_anyway(
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
+    assert flow._learn_test_send_failed is False
+    assert flow._learn_test_send_result is None
 
 
 async def test_learn_review_hides_test_actions_without_emitter(
@@ -1635,6 +1673,7 @@ async def test_learn_review_form_shows_candidate_details(
     description_placeholders = result["description_placeholders"]
     assert description_placeholders is not None
     assert "4 timings" in description_placeholders["candidate_details"]
+    assert description_placeholders["test_send_result"] == ""
 
 
 async def test_learn_review_without_candidates_aborts(
@@ -2414,6 +2453,23 @@ def test_learn_review_action_options_show_save_anyway_after_test_send_failure() 
         {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
         {"value": LEARN_REVIEW_ACTION_DISCARD, "label": "Discard"},
     ]
+
+
+def test_learn_test_send_result_details() -> None:
+    """Test learned-command test-send result details."""
+    assert learn_test_send_result_details(None) == ""
+    assert (
+        learn_test_send_result_details(LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED)
+        == "Last test send: captured candidate sent successfully."
+    )
+    assert (
+        learn_test_send_result_details(LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED)
+        == "Last test send: normalized candidate sent successfully."
+    )
+    assert (
+        learn_test_send_result_details(LEARN_TEST_SEND_RESULT_FAILED)
+        == "Last test send failed."
+    )
 
 
 def test_learn_capture_details() -> None:

@@ -384,7 +384,7 @@
         "data_description": {
           "learn_review_action": "Choose whether to test a learned candidate, save it, retry capture, or discard it without changing the remote."
         },
-        "description": "Review the learned command candidates before saving.\n\n{candidate_details}",
+        "description": "Review the learned command candidates before saving.\n\n{candidate_details}\n\n{test_send_result}",
         "title": "Review Learned Command"
       },
       "learn_capture_progress_done": {

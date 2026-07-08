@@ -90,6 +90,10 @@ LEARN_REVIEW_ACTION_SAVE_ANYWAY = "save_anyway"
 LEARN_REVIEW_ACTION_RETRY_CAPTURE = "retry_capture"
 LEARN_REVIEW_ACTION_DISCARD = "discard"
 
+LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED = "captured_succeeded"
+LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED = "normalized_succeeded"
+LEARN_TEST_SEND_RESULT_FAILED = "failed"
+
 LEARN_OVERWRITE_ACTION_CONFIRM = "confirm"
 LEARN_OVERWRITE_ACTION_BACK = "back"
 LEARN_OVERWRITE_ACTION_DISCARD = "discard"
@@ -156,6 +160,15 @@ _LEARN_FAILURE_ACTION_OPTION_LABELS: Mapping[str, str] = {
     LEARN_REVIEW_ACTION_RETRY_CAPTURE: "Retry capture",
     LEARN_REVIEW_ACTION_DISCARD: "Discard learned command",
 }
+_LEARN_TEST_SEND_RESULT_MESSAGES: Mapping[str, str] = {
+    LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED: (
+        "Last test send: captured candidate sent successfully."
+    ),
+    LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED: (
+        "Last test send: normalized candidate sent successfully."
+    ),
+    LEARN_TEST_SEND_RESULT_FAILED: "Last test send failed.",
+}
 
 
 def _translated_selector_option(
@@ -183,6 +196,14 @@ def learn_capture_details(capture: LearnCapture) -> str:
         details.append(f"likely {capture.likely_protocol.replace('_', '-')}")
 
     return ", ".join(details)
+
+
+def learn_test_send_result_details(test_send_result: str | None) -> str:
+    """Return user-facing details for the last learned-command test send."""
+    if test_send_result is None:
+        return ""
+
+    return _LEARN_TEST_SEND_RESULT_MESSAGES[test_send_result]
 
 
 def learned_candidate_options(
@@ -378,6 +399,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._learn_capture: LearnCapture | None = None
         self._learn_result: LearnResult | None = None
         self._learn_test_send_failed = False
+        self._learn_test_send_result: str | None = None
         self._learn_pending_command_name: str | None = None
         self._learn_pending_candidate_key: str | None = None
         self._learn_pending_create_button = False
@@ -525,7 +547,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_capture = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
-                self._learn_test_send_failed = False
+                self._clear_learn_test_send_state()
                 return await self.async_step_learn_capture()
 
         current_receiver_id = str(remote.get(CONF_INFRARED_RECEIVER_ID, ""))
@@ -626,7 +648,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             self._learn_capture = capture_result
             self._learn_result = None
             self._clear_learn_pending_save()
-            self._learn_test_send_failed = False
+            self._clear_learn_test_send_state()
 
         if errors:
             return self._show_learn_capture_form(errors)
@@ -661,13 +683,13 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 except LearnCandidateError:
                     self._learn_result = None
                     self._clear_learn_pending_save()
-                    self._learn_test_send_failed = False
+                    self._clear_learn_test_send_state()
                     return await self.async_step_learn_conversion_failed(
                         errors={"base": "learn_pronto_conversion_failed"}
                     )
 
                 self._clear_learn_pending_save()
-                self._learn_test_send_failed = False
+                self._clear_learn_test_send_state()
                 return await self.async_step_learn_review()
 
         return self.async_show_form(
@@ -722,7 +744,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_capture = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
-                self._learn_test_send_failed = False
+                self._clear_learn_test_send_state()
                 return await self.async_step_learn_capture()
 
             elif action == LEARN_REVIEW_ACTION_DISCARD:
@@ -730,7 +752,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_capture = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
-                self._learn_test_send_failed = False
+                self._clear_learn_test_send_state()
                 return self.async_create_entry(
                     title="",
                     data=dict(self._config_entry.options),
@@ -796,6 +818,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 LEARN_REVIEW_ACTION_CONTINUE_SAVE,
                 LEARN_REVIEW_ACTION_SAVE_ANYWAY,
             ):
+                self._clear_learn_test_send_state()
                 return await self.async_step_learn_select_candidate()
 
             elif action in (
@@ -804,8 +827,14 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             ):
                 if await self._async_test_learned_candidate(action, candidates):
                     self._learn_test_send_failed = False
+                    self._learn_test_send_result = (
+                        LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
+                        if action == LEARN_REVIEW_ACTION_TEST_CAPTURED
+                        else LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED
+                    )
                 else:
                     self._learn_test_send_failed = True
+                    self._learn_test_send_result = LEARN_TEST_SEND_RESULT_FAILED
                     errors["base"] = "learn_test_send_failed"
 
             elif action == LEARN_REVIEW_ACTION_RETRY_CAPTURE:
@@ -813,7 +842,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_capture = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
-                self._learn_test_send_failed = False
+                self._clear_learn_test_send_state()
                 return await self.async_step_learn_capture()
 
             elif action == LEARN_REVIEW_ACTION_DISCARD:
@@ -821,7 +850,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_capture = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
-                self._learn_test_send_failed = False
+                self._clear_learn_test_send_state()
                 return self.async_create_entry(
                     title="",
                     data=dict(self._config_entry.options),
@@ -854,6 +883,9 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             errors=errors,
             description_placeholders={
                 "candidate_details": learned_candidate_details(candidates),
+                "test_send_result": learn_test_send_result_details(
+                    self._learn_test_send_result
+                ),
             },
         )
 
@@ -1002,7 +1034,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                 self._learn_capture = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
-                self._learn_test_send_failed = False
+                self._clear_learn_test_send_state()
                 return self.async_create_entry(
                     title="",
                     data=dict(self._config_entry.options),
@@ -1727,6 +1759,11 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._learn_pending_command_name = None
         self._learn_pending_candidate_key = None
         self._learn_pending_create_button = False
+
+    def _clear_learn_test_send_state(self) -> None:
+        """Clear the learned-command test-send result state."""
+        self._learn_test_send_failed = False
+        self._learn_test_send_result = None
 
     async def _async_test_learned_candidate(
         self,
