@@ -8,7 +8,7 @@ from typing import Any
 from infrared_protocols.commands import Command
 
 from .command import CommandParseError, validate_remote_command_payload
-from .pronto import ProntoError, encode_learned_pronto
+from .pronto import ProntoError, encode_pronto_hex
 
 CANDIDATE_CAPTURED = "captured"
 CANDIDATE_NORMALIZED = "normalized"
@@ -155,7 +155,7 @@ def candidate_by_key(
 def _encode_and_validate_pronto(timings: Iterable[int], modulation: int) -> str:
     """Encode timings as Pronto HEX and validate with the existing parser."""
     try:
-        payload = encode_learned_pronto(timings, modulation)
+        payload = encode_pronto_hex(timings, modulation)
         validate_remote_command_payload(payload)
     except (ProntoError, CommandParseError) as err:
         raise LearnCandidateError(str(err)) from err
