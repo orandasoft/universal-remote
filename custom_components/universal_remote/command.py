@@ -7,7 +7,7 @@ from typing import Any
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .pronto import ProntoError, decode_learned_pronto
+from .pronto import ProntoError, decode_pronto_hex
 
 DEFAULT_CARRIER_FREQUENCY = 38_000
 
@@ -191,11 +191,11 @@ def _is_hex_word(word: str) -> bool:
 def _parse_pronto_command(command: str) -> tuple[int, list[int]]:
     """Parse learned raw Pronto HEX into carrier frequency and timings."""
     try:
-        decoded = decode_learned_pronto(command)
+        decoded = decode_pronto_hex(command)
     except ProntoError as err:
         raise _command_error(str(err)) from err
 
-    return decoded.modulation, list(decoded.timings)
+    return decoded.modulation, [abs(timing) for timing in decoded.timings]
 
 
 def _coerce_int(value: Any, field: str) -> int:

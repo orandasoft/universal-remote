@@ -95,7 +95,7 @@ def test_build_captured_candidate() -> None:
 
 def test_build_captured_candidate_rejects_invalid_pronto() -> None:
     """Test invalid captured timings are rejected."""
-    with pytest.raises(LearnCandidateError, match="timings must be greater than zero"):
+    with pytest.raises(LearnCandidateError, match="timings must be non-zero"):
         build_captured_candidate([9000, 0], 38_000)
 
 
