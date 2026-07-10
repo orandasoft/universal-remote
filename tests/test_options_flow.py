@@ -46,7 +46,6 @@ from custom_components.universal_remote.options_flow import (
     COMMAND_LEARN_CANDIDATE,
     COMMAND_LEARN_DECODER,
     COMMAND_LEARN_FAILURE_ACTION,
-    COMMAND_LEARN_REVIEW_ACTION,
     COMMAND_NAME,
     COMMAND_OVERWRITE_ACTION,
     COMMAND_REPEAT_COUNT,
@@ -84,6 +83,7 @@ from custom_components.universal_remote.options_flow import (
     UniversalRemoteOptionsFlow,
     learn_capture_details,
     learn_capture_receiver_label,
+    learn_decoder_label,
     learn_decoder_options,
     learn_failure_action_options,
     learn_overwrite_action_options,
@@ -207,8 +207,6 @@ def _single_entry(hass: HomeAssistant, infrared_emitter: str) -> MockConfigEntry
     return entry
 
 
-
-
 def _receiver_only_entry(hass: HomeAssistant) -> MockConfigEntry:
     """Create a receiver-only one-remote config entry."""
     entry = MockConfigEntry(
@@ -298,17 +296,13 @@ def _learn_result_with_captured_and_normalized() -> LearnResult:
 def _form_field_names(result: Mapping[str, Any]) -> set[str]:
     """Return field names from a form result schema."""
     return {
-        str(getattr(field, "schema", field))
-        for field in result["data_schema"].schema
+        str(getattr(field, "schema", field)) for field in result["data_schema"].schema
     }
 
 
 def _learn_review_action_values(result: Mapping[str, Any]) -> list[str]:
-    """Return configured learn-review action values from a form result."""
-    return [
-        str(option["value"])
-        for option in _selector_config(result, COMMAND_LEARN_REVIEW_ACTION)["options"]
-    ]
+    """Return configured learned-command review menu options."""
+    return [str(option) for option in result["menu_options"]]
 
 
 def _selector_config(
@@ -321,6 +315,18 @@ def _selector_config(
         if getattr(field, "schema", None) == field_name:
             return field_selector.config
     raise AssertionError(f"Selector was not found for {field_name}")
+
+
+def _form_field_default(result: Mapping[str, Any], field_name: str) -> Any:
+    """Return the configured default for a form field."""
+    for field in result["data_schema"].schema:
+        if getattr(field, "schema", None) == field_name:
+            default = field.default
+            try:
+                return default()
+            except TypeError:
+                return None
+    raise AssertionError(f"Form field was not found for {field_name}")
 
 
 async def _finish_learn_capture_progress(
@@ -446,8 +452,6 @@ async def test_manage_commands_menu_with_commands(
         SOURCE_EDIT_COMMAND,
         SOURCE_REMOVE_COMMAND,
     ]
-
-
 
 
 async def test_receiver_only_entry_options_flow_manages_commands(
@@ -721,9 +725,17 @@ async def test_learn_command_success(
     entry = _receiver_only_entry(hass)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
-    with patch(
-        "custom_components.universal_remote.options_flow.available_infrared_receivers",
-        return_value=_receiver_options(),
+    with (
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "available_infrared_receivers",
+            return_value=_multiple_receiver_options(),
+        ),
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "LearnSessionManager.async_capture_once",
+            return_value=_learn_result().capture,
+        ) as capture_once,
     ):
         result = await hass.config_entries.options.async_configure(
             result["flow_id"],
@@ -732,33 +744,27 @@ async def test_learn_command_success(
 
         assert result["type"] is FlowResultType.FORM
         assert result["step_id"] == SOURCE_LEARN_COMMAND
+        receiver_config = _selector_config(result, CONF_INFRARED_RECEIVER_ID)
+        assert [option["value"] for option in receiver_config["options"]] == [
+            "infrared.test_receiver",
+            "infrared.other_receiver",
+        ]
+        assert (
+            _form_field_default(result, CONF_INFRARED_RECEIVER_ID)
+            == "infrared.test_receiver"
+        )
 
         result = await hass.config_entries.options.async_configure(
             result["flow_id"],
             {CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver"},
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_CAPTURE
-    assert result["description_placeholders"] == {"receiver": "Test Receiver"}
-
-    with patch(
-        "custom_components.universal_remote.options_flow."
-        "LearnSessionManager.async_capture_once",
-        return_value=_learn_result().capture,
-    ) as capture_once:
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {},
-        )
-
         assert result["type"] is FlowResultType.SHOW_PROGRESS
         assert result["step_id"] == SOURCE_LEARN_CAPTURE
         assert result["progress_action"] == SOURCE_LEARN_CAPTURE
         assert result["description_placeholders"] == {"receiver": "Test Receiver"}
-        result = await _finish_learn_capture_config_flow(
-            hass, str(result["flow_id"])
-        )
+
+        result = await _finish_learn_capture_config_flow(hass, str(result["flow_id"]))
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
@@ -772,15 +778,18 @@ async def test_learn_command_success(
         {COMMAND_LEARN_DECODER: LEARN_DECODER_NONE},
     )
 
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == SOURCE_LEARN_REVIEW
     description_placeholders = result["description_placeholders"]
     assert description_placeholders is not None
+    assert description_placeholders["receiver"] == "Test Receiver"
+    assert description_placeholders["decoder"] == "None / captured only"
+    assert "4 timings" in description_placeholders["capture_details"]
     assert "4 timings" in description_placeholders["candidate_details"]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_CONTINUE_SAVE},
+        {"next_step_id": LEARN_REVIEW_ACTION_CONTINUE_SAVE},
     )
 
     assert result["type"] is FlowResultType.FORM
@@ -839,10 +848,10 @@ async def test_learn_command_without_configured_receiver_aborts(
     assert result["reason"] == "no_configured_infrared_receiver"
 
 
-async def test_learn_command_configured_receiver_unavailable_aborts(
+async def test_learn_command_configured_receiver_unavailable_shows_alternatives(
     hass: HomeAssistant,
 ) -> None:
-    """Test learn does not fall back to another available receiver."""
+    """Test another available receiver can be selected for learning."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
@@ -853,43 +862,67 @@ async def test_learn_command_configured_receiver_unavailable_aborts(
     ):
         result = await flow.async_step_learn_command()
 
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "infrared_receiver_unavailable"
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == SOURCE_LEARN_COMMAND
+    assert result["errors"] == {}
+    receiver_config = _selector_config(result, CONF_INFRARED_RECEIVER_ID)
+    assert [option["value"] for option in receiver_config["options"]] == [
+        "infrared.other_receiver"
+    ]
+    assert _form_field_default(result, CONF_INFRARED_RECEIVER_ID) is None
 
 
-async def test_learn_command_rejects_unconfigured_receiver(
+async def test_learn_command_allows_alternative_receiver(
     hass: HomeAssistant,
 ) -> None:
-    """Test learn cannot switch to a receiver not configured for this remote."""
+    """Test learning can explicitly use another available receiver."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
 
-    with patch(
-        "custom_components.universal_remote.options_flow.available_infrared_receivers",
-        return_value=_multiple_receiver_options(),
+    with (
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "available_infrared_receivers",
+            return_value=_multiple_receiver_options(),
+        ),
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "LearnSessionManager.async_capture_once",
+            return_value=_learn_result().capture,
+        ) as capture_once,
     ):
         result = await flow.async_step_learn_command(
             {CONF_INFRARED_RECEIVER_ID: "infrared.other_receiver"}
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_COMMAND
-    assert result["errors"] == {
-        CONF_INFRARED_RECEIVER_ID: "infrared_receiver_unavailable"
-    }
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["progress_action"] == SOURCE_LEARN_CAPTURE
+        assert result["description_placeholders"] == {"receiver": "Other Receiver"}
+        await asyncio.sleep(0)
+
+    capture_once.assert_called_once_with("infrared.other_receiver")
 
 
 async def test_generic_receiver_no_codeset_starts_learn_capture(
     hass: HomeAssistant,
 ) -> None:
-    """Test generic receiver-only entries can start learning without a codeset."""
+    """Test generic receiver-only entries immediately start learning."""
     entry = _generic_receiver_only_entry(hass)
 
     result = await _init_options_flow(hass, entry, SOURCE_MANAGE_COMMANDS)
-    with patch(
-        "custom_components.universal_remote.options_flow.available_infrared_receivers",
-        return_value=_receiver_options(),
+    with (
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "available_infrared_receivers",
+            return_value=_receiver_options(),
+        ),
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "LearnSessionManager.async_capture_once",
+            return_value=_learn_result().capture,
+        ) as capture_once,
     ):
         result = await hass.config_entries.options.async_configure(
             result["flow_id"],
@@ -904,9 +937,13 @@ async def test_generic_receiver_no_codeset_starts_learn_capture(
             {CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver"},
         )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_CAPTURE
-    assert result["description_placeholders"] == {"receiver": "Test Receiver"}
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["progress_action"] == SOURCE_LEARN_CAPTURE
+        assert result["description_placeholders"] == {"receiver": "Test Receiver"}
+        await asyncio.sleep(0)
+
+    capture_once.assert_called_once_with("infrared.test_receiver")
 
 
 async def test_generic_receiver_no_codeset_completes_learned_save(
@@ -935,15 +972,9 @@ async def test_generic_receiver_no_codeset_completes_learned_save(
             result["flow_id"],
             {CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver"},
         )
-        result = await hass.config_entries.options.async_configure(
-            result["flow_id"],
-            {},
-        )
         assert result["type"] is FlowResultType.SHOW_PROGRESS
 
-        result = await _finish_learn_capture_config_flow(
-            hass, str(result["flow_id"])
-        )
+        result = await _finish_learn_capture_config_flow(hass, str(result["flow_id"]))
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
@@ -952,12 +983,12 @@ async def test_generic_receiver_no_codeset_completes_learned_save(
         result["flow_id"],
         {COMMAND_LEARN_DECODER: LEARN_DECODER_NONE},
     )
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == SOURCE_LEARN_REVIEW
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_CONTINUE_SAVE},
+        {"next_step_id": LEARN_REVIEW_ACTION_CONTINUE_SAVE},
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
@@ -1013,8 +1044,7 @@ async def test_learn_command_rejects_unavailable_receiver(
             "learn_receiver_busy",
         ),
         (
-            "custom_components.universal_remote.options_flow."
-            "LearnSessionTimeoutError",
+            "custom_components.universal_remote.options_flow.LearnSessionTimeoutError",
             "learn_timeout",
         ),
     ],
@@ -1024,27 +1054,78 @@ async def test_learn_capture_errors(
     side_effect: str,
     error: str,
 ) -> None:
-    """Test learn capture error handling."""
+    """Test capture errors return to receiver selection for retry."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_receiver_id = "infrared.test_receiver"
+    flow._learn_receiver_label = "Test Receiver"
 
     error_type = _import_from_string(side_effect)
-    with patch(
-        "custom_components.universal_remote.options_flow."
-        "LearnSessionManager.async_capture_once",
-        side_effect=error_type,
+    with (
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "available_infrared_receivers",
+            return_value=_multiple_receiver_options(),
+        ),
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "LearnSessionManager.async_capture_once",
+            side_effect=error_type,
+        ),
     ):
-        result = await flow.async_step_learn_capture({})
+        result = await flow.async_step_learn_capture()
         assert result["type"] is FlowResultType.SHOW_PROGRESS
         assert result["step_id"] == SOURCE_LEARN_CAPTURE
 
         result = await _finish_learn_capture_progress(flow)
 
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_CAPTURE
+    assert result["step_id"] == SOURCE_LEARN_COMMAND
     assert result["errors"] == {"base": error}
+    assert (
+        _form_field_default(result, CONF_INFRARED_RECEIVER_ID)
+        == "infrared.test_receiver"
+    )
+
+
+async def test_learn_capture_error_without_available_receivers_aborts(
+    hass: HomeAssistant,
+) -> None:
+    """Test capture failure aborts when no receiver remains available."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_receiver_id = "infrared.test_receiver"
+    flow._learn_receiver_label = "Test Receiver"
+
+    error_type = _import_from_string(
+        "custom_components.universal_remote.options_flow."
+        "LearnSessionReceiverUnavailableError"
+    )
+
+    with (
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "available_infrared_receivers",
+            return_value={},
+        ),
+        patch(
+            "custom_components.universal_remote.options_flow."
+            "LearnSessionManager.async_capture_once",
+            side_effect=error_type,
+        ),
+    ):
+        result = await flow.async_step_learn_capture()
+
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+
+        result = await _finish_learn_capture_progress(flow)
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "no_available_infrared_receivers"
+    assert flow._learn_capture_task is None
 
 
 async def test_learn_capture_progress_starts_and_advances_to_decoder(
@@ -1186,8 +1267,9 @@ async def test_learn_select_decoder_builds_candidates(
         {COMMAND_LEARN_DECODER: LEARN_DECODER_NONE}
     )
 
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == SOURCE_LEARN_REVIEW
+    assert flow._learn_decoder == LEARN_DECODER_NONE
     assert flow._learn_result is not None
     assert [candidate.key for candidate in flow._learn_result.candidates] == [
         CANDIDATE_CAPTURED
@@ -1220,6 +1302,7 @@ async def test_learn_select_decoder_handles_candidate_conversion_error(
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_capture = _learn_result().capture
+    flow._learn_decoder = LEARN_DECODER_NEC
     flow._learn_result = _learn_result()
     flow._learn_pending_command_name = "POWER_ON"
     flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
@@ -1237,6 +1320,7 @@ async def test_learn_select_decoder_handles_candidate_conversion_error(
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_CONVERSION_FAILED
     assert result["errors"] == {"base": "learn_pronto_conversion_failed"}
+    assert flow._learn_decoder is None
     assert flow._learn_result is None
     assert flow._learn_pending_command_name is None
     assert flow._learn_pending_candidate_key is None
@@ -1248,30 +1332,42 @@ async def test_learn_select_decoder_handles_candidate_conversion_error(
 async def test_learn_conversion_failed_retry_capture(
     hass: HomeAssistant,
 ) -> None:
-    """Test retrying after conversion failure clears state and restarts capture."""
+    """Test retrying after conversion failure immediately restarts capture."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_receiver_id = "infrared.test_receiver"
+    flow._learn_receiver_label = "Test Receiver"
     flow._learn_capture = _learn_result().capture
+    flow._learn_decoder = LEARN_DECODER_NEC
     flow._learn_result = _learn_result()
     flow._learn_pending_command_name = "POWER_ON"
     flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
     flow._learn_test_send_failed = True
     flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_FAILED
 
-    result = await flow.async_step_learn_conversion_failed(
-        {COMMAND_LEARN_FAILURE_ACTION: LEARN_REVIEW_ACTION_RETRY_CAPTURE}
-    )
+    with patch(
+        "custom_components.universal_remote.options_flow."
+        "LearnSessionManager.async_capture_once",
+        return_value=_learn_result().capture,
+    ) as capture_once:
+        result = await flow.async_step_learn_conversion_failed(
+            {COMMAND_LEARN_FAILURE_ACTION: LEARN_REVIEW_ACTION_RETRY_CAPTURE}
+        )
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["description_placeholders"] == {"receiver": "Test Receiver"}
+        await asyncio.sleep(0)
+
     assert flow._learn_capture is None
+    assert flow._learn_decoder is None
     assert flow._learn_result is None
     assert flow._learn_pending_command_name is None
     assert flow._learn_pending_candidate_key is None
     assert flow._learn_test_send_failed is False
     assert flow._learn_test_send_result is None
+    capture_once.assert_called_once_with("infrared.test_receiver")
 
 
 async def test_learn_conversion_failed_discard_leaves_options_unchanged(
@@ -1282,6 +1378,7 @@ async def test_learn_conversion_failed_discard_leaves_options_unchanged(
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_capture = _learn_result().capture
+    flow._learn_decoder = LEARN_DECODER_NEC
     flow._learn_result = _learn_result()
     flow._learn_pending_command_name = "POWER_ON"
     flow._learn_pending_candidate_key = CANDIDATE_CAPTURED
@@ -1295,6 +1392,7 @@ async def test_learn_conversion_failed_discard_leaves_options_unchanged(
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == dict(entry.options)
     assert flow._learn_capture is None
+    assert flow._learn_decoder is None
     assert flow._learn_result is None
     assert flow._learn_pending_command_name is None
     assert flow._learn_pending_candidate_key is None
@@ -1377,43 +1475,123 @@ async def test_learn_select_decoder_without_pending_capture_returns_learn_comman
 async def test_learn_review_continue_to_save(
     hass: HomeAssistant,
 ) -> None:
-    """Test continuing from review opens the save step."""
+    """Test continuing from the review menu opens the save step."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_result = _learn_result()
     flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
 
-    result = await flow.async_step_learn_review(
-        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_CONTINUE_SAVE}
-    )
+    result = await flow.async_step_continue_save()
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
     assert flow._learn_test_send_result is None
 
 
+async def test_learn_review_hides_save_anyway_without_test_failure(
+    hass: HomeAssistant,
+) -> None:
+    """Test save anyway cannot be selected before a test-send failure."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_save_anyway()
+
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == SOURCE_LEARN_REVIEW
+    assert LEARN_REVIEW_ACTION_CONTINUE_SAVE in _learn_review_action_values(result)
+    assert LEARN_REVIEW_ACTION_SAVE_ANYWAY not in _learn_review_action_values(result)
+
+
+async def test_learn_review_hides_continue_after_test_failure(
+    hass: HomeAssistant,
+) -> None:
+    """Test continue cannot be selected after a test-send failure."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+    flow._learn_test_send_failed = True
+    flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_FAILED
+
+    result = await flow.async_step_continue_save()
+
+    assert result["type"] is FlowResultType.MENU
+    assert result["step_id"] == SOURCE_LEARN_REVIEW
+    assert LEARN_REVIEW_ACTION_SAVE_ANYWAY in _learn_review_action_values(result)
+    assert LEARN_REVIEW_ACTION_CONTINUE_SAVE not in _learn_review_action_values(result)
+
+
+async def test_learn_review_retry_without_candidates_aborts(
+    hass: HomeAssistant,
+) -> None:
+    """Test retry capture cannot run without learned candidates."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = LearnResult(
+        capture=_learn_result().capture,
+        candidates=(),
+    )
+
+    result = await flow.async_step_retry_capture()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "learn_failed"
+
+
+async def test_learn_review_discard_without_candidates_aborts(
+    hass: HomeAssistant,
+) -> None:
+    """Test discard cannot run without learned candidates."""
+    entry = _receiver_only_entry(hass)
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = LearnResult(
+        capture=_learn_result().capture,
+        candidates=(),
+    )
+
+    result = await flow.async_step_discard()
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "learn_failed"
+
+
 async def test_learn_review_retry_capture(
     hass: HomeAssistant,
 ) -> None:
-    """Test retrying from review returns to the capture step."""
+    """Test retrying from review immediately restarts capture."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_receiver_id = "infrared.test_receiver"
+    flow._learn_receiver_label = "Test Receiver"
     flow._learn_capture = _learn_result().capture
+    flow._learn_decoder = LEARN_DECODER_NONE
     flow._learn_result = _learn_result()
     flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
 
-    result = await flow.async_step_learn_review(
-        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_RETRY_CAPTURE}
-    )
+    with patch(
+        "custom_components.universal_remote.options_flow."
+        "LearnSessionManager.async_capture_once",
+        return_value=_learn_result().capture,
+    ) as capture_once:
+        result = await flow.async_step_retry_capture()
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["description_placeholders"] == {"receiver": "Test Receiver"}
+        await asyncio.sleep(0)
+
     assert flow._learn_capture is None
+    assert flow._learn_decoder is None
     assert flow._learn_result is None
     assert flow._learn_test_send_result is None
+    capture_once.assert_called_once_with("infrared.test_receiver")
 
 
 async def test_learn_review_discard_leaves_options_unchanged(
@@ -1424,58 +1602,35 @@ async def test_learn_review_discard_leaves_options_unchanged(
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_capture = _learn_result().capture
+    flow._learn_decoder = LEARN_DECODER_NONE
     flow._learn_result = _learn_result()
     flow._learn_test_send_result = LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
 
-    result = await flow.async_step_learn_review(
-        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_DISCARD}
-    )
+    result = await flow.async_step_discard()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["data"] == dict(entry.options)
     assert flow._learn_capture is None
+    assert flow._learn_decoder is None
     assert flow._learn_result is None
     assert flow._learn_test_send_result is None
 
 
-async def test_learn_review_rejects_invalid_action(
+async def test_learn_review_hides_test_action_without_emitter(
     hass: HomeAssistant,
 ) -> None:
-    """Test review action validation."""
+    """Test a hidden test-send action returns to the review menu."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_result = _learn_result()
 
-    result = await flow.async_step_learn_review(
-        {COMMAND_LEARN_REVIEW_ACTION: "missing"}
-    )
+    result = await flow.async_step_test_captured()
 
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == SOURCE_LEARN_REVIEW
-    assert result["errors"] == {
-        COMMAND_LEARN_REVIEW_ACTION: "invalid_learn_review_action"
-    }
-
-
-async def test_learn_review_rejects_hidden_test_action_without_emitter(
-    hass: HomeAssistant,
-) -> None:
-    """Test hidden learned-candidate test actions cannot be submitted."""
-    entry = _receiver_only_entry(hass)
-    flow = UniversalRemoteOptionsFlow(entry)
-    flow.hass = hass
-    flow._learn_result = _learn_result()
-
-    result = await flow.async_step_learn_review(
-        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_CAPTURED}
-    )
-
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_REVIEW
-    assert result["errors"] == {
-        COMMAND_LEARN_REVIEW_ACTION: "invalid_learn_review_action"
-    }
+    assert LEARN_REVIEW_ACTION_TEST_CAPTURED not in _learn_review_action_values(result)
+    assert flow._learn_test_send_result is None
 
 
 async def test_learn_review_test_captured_candidate(
@@ -1492,13 +1647,10 @@ async def test_learn_review_test_captured_candidate(
         "custom_components.universal_remote.options_flow.async_send_infrared_command",
         return_value=None,
     ) as send_command:
-        result = await flow.async_step_learn_review(
-            {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_CAPTURED}
-        )
+        result = await flow.async_step_test_captured()
 
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == SOURCE_LEARN_REVIEW
-    assert result["errors"] == {}
     assert flow._learn_test_send_failed is False
     assert flow._learn_test_send_result == LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
     description_placeholders = result["description_placeholders"]
@@ -1529,13 +1681,10 @@ async def test_learn_review_test_normalized_candidate(
         "custom_components.universal_remote.options_flow.async_send_infrared_command",
         return_value=None,
     ) as send_command:
-        result = await flow.async_step_learn_review(
-            {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_NORMALIZED}
-        )
+        result = await flow.async_step_test_normalized()
 
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == SOURCE_LEARN_REVIEW
-    assert result["errors"] == {}
     assert flow._learn_test_send_failed is False
     assert flow._learn_test_send_result == LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED
     description_placeholders = result["description_placeholders"]
@@ -1566,13 +1715,10 @@ async def test_learn_review_test_send_failure_allows_save_anyway(
         "custom_components.universal_remote.options_flow.async_send_infrared_command",
         side_effect=HomeAssistantError("send failed"),
     ):
-        result = await flow.async_step_learn_review(
-            {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_CAPTURED}
-        )
+        result = await flow.async_step_test_captured()
 
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == SOURCE_LEARN_REVIEW
-    assert result["errors"] == {"base": "learn_test_send_failed"}
     assert flow._learn_test_send_failed is True
     assert flow._learn_test_send_result == LEARN_TEST_SEND_RESULT_FAILED
     description_placeholders = result["description_placeholders"]
@@ -1581,9 +1727,7 @@ async def test_learn_review_test_send_failure_allows_save_anyway(
     assert LEARN_REVIEW_ACTION_SAVE_ANYWAY in _learn_review_action_values(result)
     assert LEARN_REVIEW_ACTION_CONTINUE_SAVE not in _learn_review_action_values(result)
 
-    result = await flow.async_step_learn_review(
-        {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_SAVE_ANYWAY}
-    )
+    result = await flow.async_step_save_anyway()
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_CANDIDATE
@@ -1602,10 +1746,10 @@ async def test_learn_review_hides_test_actions_without_emitter(
 
     result = await flow.async_step_learn_review()
 
+    assert result["type"] is FlowResultType.MENU
     assert LEARN_REVIEW_ACTION_TEST_CAPTURED not in _learn_review_action_values(result)
-    assert (
-        LEARN_REVIEW_ACTION_TEST_NORMALIZED
-        not in _learn_review_action_values(result)
+    assert LEARN_REVIEW_ACTION_TEST_NORMALIZED not in _learn_review_action_values(
+        result
     )
 
 
@@ -1621,10 +1765,10 @@ async def test_learn_review_hides_missing_normalized_test_action(
 
     result = await flow.async_step_learn_review()
 
+    assert result["type"] is FlowResultType.MENU
     assert LEARN_REVIEW_ACTION_TEST_CAPTURED in _learn_review_action_values(result)
-    assert (
-        LEARN_REVIEW_ACTION_TEST_NORMALIZED
-        not in _learn_review_action_values(result)
+    assert LEARN_REVIEW_ACTION_TEST_NORMALIZED not in _learn_review_action_values(
+        result
     )
 
 
@@ -1679,9 +1823,7 @@ async def test_learn_review_test_send_preserves_cancellation(
         ),
         pytest.raises(asyncio.CancelledError),
     ):
-        await flow.async_step_learn_review(
-            {COMMAND_LEARN_REVIEW_ACTION: LEARN_REVIEW_ACTION_TEST_CAPTURED}
-        )
+        await flow.async_step_test_captured()
 
 
 def test_learn_test_send_emitter_id_returns_none_without_remote(
@@ -1713,23 +1855,35 @@ def test_learn_test_send_emitter_id_returns_none_for_missing_state(
     assert flow._learn_test_send_emitter_id is None
 
 
-async def test_learn_review_form_shows_candidate_details(
+async def test_learn_review_menu_shows_capture_context(
     hass: HomeAssistant,
 ) -> None:
-    """Test review form summarizes learned candidates."""
+    """Test review menu summarizes capture and candidate context."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
+    flow._learn_receiver_id = "infrared.test_receiver"
+    flow._learn_receiver_label = "Test Receiver"
+    flow._learn_decoder = LEARN_DECODER_NEC1_F16
     flow._learn_result = _learn_result()
 
     result = await flow.async_step_learn_review()
 
-    assert result["type"] is FlowResultType.FORM
+    assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == SOURCE_LEARN_REVIEW
+    assert result["menu_options"] == [
+        LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+        LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+        LEARN_REVIEW_ACTION_DISCARD,
+    ]
     description_placeholders = result["description_placeholders"]
-    assert description_placeholders is not None
-    assert "4 timings" in description_placeholders["candidate_details"]
-    assert description_placeholders["test_send_result"] == ""
+    assert description_placeholders == {
+        "receiver": "Test Receiver",
+        "decoder": "NEC1-F16",
+        "capture_details": "4 timings, 38000 Hz",
+        "candidate_details": "- Captured (recommended) — 4 timings",
+        "test_send_result": "",
+    }
 
 
 async def test_learn_review_without_candidates_aborts(
@@ -1759,7 +1913,7 @@ async def test_learn_review_without_result_returns_decoder_form(
     flow.hass = hass
     flow._learn_capture = _learn_result().capture
 
-    result = await flow.async_step_learn_review({})
+    result = await flow.async_step_learn_review()
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_SELECT_DECODER
@@ -1777,7 +1931,7 @@ async def test_learn_review_without_pending_state_returns_learn_command_form(
         "custom_components.universal_remote.options_flow.available_infrared_receivers",
         return_value=_receiver_options(),
     ):
-        result = await flow.async_step_learn_review({})
+        result = await flow.async_step_learn_review()
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == SOURCE_LEARN_COMMAND
@@ -2173,19 +2327,29 @@ async def test_learn_capture_progress_done_without_receiver_returns_learn_comman
     assert result["step_id"] == SOURCE_LEARN_COMMAND
 
 
-async def test_learn_capture_progress_done_without_task_returns_capture_form(
+async def test_learn_capture_progress_done_without_task_restarts_capture(
     hass: HomeAssistant,
 ) -> None:
-    """Test capture progress done redirects when the task is missing."""
+    """Test missing progress task immediately restarts capture."""
     entry = _receiver_only_entry(hass)
     flow = UniversalRemoteOptionsFlow(entry)
     flow.hass = hass
     flow._learn_receiver_id = "infrared.test_receiver"
+    flow._learn_receiver_label = "Test Receiver"
 
-    result = await flow.async_step_learn_capture_progress_done({})
+    with patch(
+        "custom_components.universal_remote.options_flow."
+        "LearnSessionManager.async_capture_once",
+        return_value=_learn_result().capture,
+    ) as capture_once:
+        result = await flow.async_step_learn_capture_progress_done({})
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["type"] is FlowResultType.SHOW_PROGRESS
+        assert result["step_id"] == SOURCE_LEARN_CAPTURE
+        assert result["description_placeholders"] == {"receiver": "Test Receiver"}
+        await asyncio.sleep(0)
+
+    capture_once.assert_called_once_with("infrared.test_receiver")
 
 
 async def test_learn_capture_cancel_done_task_only_clears_state(
@@ -2332,10 +2496,16 @@ async def test_learn_selector_translation_keys(hass: HomeAssistant) -> None:
     )
 
     flow._learn_result = _learn_result_with_captured_and_normalized()
+    hass.states.async_set("infrared.test_emitter", "on")
     result = await flow.async_step_learn_review()
-    assert _selector_config(result, COMMAND_LEARN_REVIEW_ACTION)[
-        "translation_key"
-    ] == "learn_review_action"
+    assert result["type"] is FlowResultType.MENU
+    assert result["menu_options"] == [
+        LEARN_REVIEW_ACTION_TEST_CAPTURED,
+        LEARN_REVIEW_ACTION_TEST_NORMALIZED,
+        LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+        LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+        LEARN_REVIEW_ACTION_DISCARD,
+    ]
 
     result = await flow.async_step_learn_select_candidate()
     assert _selector_config(result, COMMAND_LEARN_CANDIDATE)["translation_key"] == (
@@ -2351,9 +2521,10 @@ async def test_learn_selector_translation_keys(hass: HomeAssistant) -> None:
 
     flow._learn_result = None
     result = await flow.async_step_learn_conversion_failed()
-    assert _selector_config(result, COMMAND_LEARN_FAILURE_ACTION)[
-        "translation_key"
-    ] == "learn_failure_action"
+    assert (
+        _selector_config(result, COMMAND_LEARN_FAILURE_ACTION)["translation_key"]
+        == "learn_failure_action"
+    )
 
 
 def test_learned_candidate_options_include_metadata() -> None:
@@ -2414,6 +2585,13 @@ def test_learned_candidate_details_handles_minimal_metadata() -> None:
     assert details == "- Captured"
 
 
+def test_learn_decoder_label() -> None:
+    """Test readable learned-command decoder labels."""
+    assert learn_decoder_label(None) == ""
+    assert learn_decoder_label(LEARN_DECODER_NEC1_F16) == "NEC1-F16"
+    assert learn_decoder_label("custom") == "custom"
+
+
 def test_learn_decoder_options() -> None:
     """Test decoder selector options come from the decoder registry."""
     assert [decoder.key for decoder in LEARN_DECODER_REGISTRY] == [
@@ -2466,11 +2644,11 @@ def test_learn_failure_action_options() -> None:
 
 
 def test_learn_review_action_options() -> None:
-    """Test learned-command review action selector options."""
+    """Test learned-command review menu options."""
     assert learn_review_action_options() == [
-        {"value": LEARN_REVIEW_ACTION_CONTINUE_SAVE, "label": "Continue to save"},
-        {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
-        {"value": LEARN_REVIEW_ACTION_DISCARD, "label": "Discard"},
+        LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+        LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+        LEARN_REVIEW_ACTION_DISCARD,
     ]
 
 
@@ -2480,17 +2658,11 @@ def test_learn_review_action_options_include_test_send_actions() -> None:
         _learn_result_with_captured_and_normalized().candidates,
         can_test_send=True,
     ) == [
-        {
-            "value": LEARN_REVIEW_ACTION_TEST_CAPTURED,
-            "label": "Test captured candidate",
-        },
-        {
-            "value": LEARN_REVIEW_ACTION_TEST_NORMALIZED,
-            "label": "Test normalized candidate",
-        },
-        {"value": LEARN_REVIEW_ACTION_CONTINUE_SAVE, "label": "Continue to save"},
-        {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
-        {"value": LEARN_REVIEW_ACTION_DISCARD, "label": "Discard"},
+        LEARN_REVIEW_ACTION_TEST_CAPTURED,
+        LEARN_REVIEW_ACTION_TEST_NORMALIZED,
+        LEARN_REVIEW_ACTION_CONTINUE_SAVE,
+        LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+        LEARN_REVIEW_ACTION_DISCARD,
     ]
 
 
@@ -2501,13 +2673,10 @@ def test_learn_review_action_options_show_save_anyway_after_test_send_failure() 
         can_test_send=True,
         test_send_failed=True,
     ) == [
-        {
-            "value": LEARN_REVIEW_ACTION_TEST_CAPTURED,
-            "label": "Test captured candidate",
-        },
-        {"value": LEARN_REVIEW_ACTION_SAVE_ANYWAY, "label": "Save anyway"},
-        {"value": LEARN_REVIEW_ACTION_RETRY_CAPTURE, "label": "Retry capture"},
-        {"value": LEARN_REVIEW_ACTION_DISCARD, "label": "Discard"},
+        LEARN_REVIEW_ACTION_TEST_CAPTURED,
+        LEARN_REVIEW_ACTION_SAVE_ANYWAY,
+        LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+        LEARN_REVIEW_ACTION_DISCARD,
     ]
 
 
@@ -3633,7 +3802,6 @@ def test_command_objects_returns_empty_without_remote(hass: HomeAssistant) -> No
     flow = UniversalRemoteOptionsFlow(entry)
 
     assert flow._command_objects == {}
-
 
 
 def test_learn_capture_receiver_label_removes_entity_suffix() -> None:

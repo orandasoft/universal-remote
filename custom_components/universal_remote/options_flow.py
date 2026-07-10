@@ -80,7 +80,6 @@ COMMAND_LIBRARY_COMMANDS = "library_commands"
 COMMAND_REPEAT_COUNT = "repeat_count"
 COMMAND_LEARN_CANDIDATE = "learn_candidate"
 COMMAND_LEARN_DECODER = "learn_decoder"
-COMMAND_LEARN_REVIEW_ACTION = "learn_review_action"
 COMMAND_LEARN_FAILURE_ACTION = "learn_failure_action"
 
 LEARN_REVIEW_ACTION_CONTINUE_SAVE = "continue_save"
@@ -143,14 +142,6 @@ def library_command_default(
     return str(library_command_options[0]["value"])
 
 
-_LEARN_REVIEW_ACTION_OPTION_LABELS: Mapping[str, str] = {
-    LEARN_REVIEW_ACTION_TEST_CAPTURED: "Test captured candidate",
-    LEARN_REVIEW_ACTION_TEST_NORMALIZED: "Test normalized candidate",
-    LEARN_REVIEW_ACTION_CONTINUE_SAVE: "Continue to save",
-    LEARN_REVIEW_ACTION_SAVE_ANYWAY: "Save anyway",
-    LEARN_REVIEW_ACTION_RETRY_CAPTURE: "Retry capture",
-    LEARN_REVIEW_ACTION_DISCARD: "Discard",
-}
 _LEARN_OVERWRITE_ACTION_OPTION_LABELS: Mapping[str, str] = {
     LEARN_OVERWRITE_ACTION_CONFIRM: "Replace existing command",
     LEARN_OVERWRITE_ACTION_BACK: "Go back",
@@ -185,6 +176,21 @@ def learn_decoder_options() -> list[selector.SelectOptionDict]:
         selector.SelectOptionDict(value=decoder.key, label=decoder.fallback_label)
         for decoder in LEARN_DECODER_REGISTRY
     ]
+
+
+def learn_decoder_label(decoder_key: str | None) -> str:
+    """Return a readable label for the selected learned-command decoder."""
+    if decoder_key is None:
+        return ""
+
+    return next(
+        (
+            decoder.fallback_label
+            for decoder in LEARN_DECODER_REGISTRY
+            if decoder.key == decoder_key
+        ),
+        decoder_key,
+    )
 
 
 def learn_capture_details(capture: LearnCapture) -> str:
@@ -231,52 +237,26 @@ def learn_review_action_options(
     *,
     can_test_send: bool = False,
     test_send_failed: bool = False,
-) -> list[selector.SelectOptionDict]:
-    """Return selector options for learned-command review actions."""
-    options: list[selector.SelectOptionDict] = []
+) -> list[str]:
+    """Return menu options for learned-command review actions."""
+    options: list[str] = []
 
     if can_test_send:
         if candidate_by_key(candidates, CANDIDATE_CAPTURED) is not None:
-            options.append(
-                _translated_selector_option(
-                    LEARN_REVIEW_ACTION_TEST_CAPTURED,
-                    _LEARN_REVIEW_ACTION_OPTION_LABELS,
-                )
-            )
+            options.append(LEARN_REVIEW_ACTION_TEST_CAPTURED)
 
         if candidate_by_key(candidates, CANDIDATE_NORMALIZED) is not None:
-            options.append(
-                _translated_selector_option(
-                    LEARN_REVIEW_ACTION_TEST_NORMALIZED,
-                    _LEARN_REVIEW_ACTION_OPTION_LABELS,
-                )
-            )
+            options.append(LEARN_REVIEW_ACTION_TEST_NORMALIZED)
 
-    if test_send_failed:
-        options.append(
-            _translated_selector_option(
-                LEARN_REVIEW_ACTION_SAVE_ANYWAY,
-                _LEARN_REVIEW_ACTION_OPTION_LABELS,
-            )
-        )
-    else:
-        options.append(
-            _translated_selector_option(
-                LEARN_REVIEW_ACTION_CONTINUE_SAVE,
-                _LEARN_REVIEW_ACTION_OPTION_LABELS,
-            )
-        )
-
+    options.append(
+        LEARN_REVIEW_ACTION_SAVE_ANYWAY
+        if test_send_failed
+        else LEARN_REVIEW_ACTION_CONTINUE_SAVE
+    )
     options.extend(
         [
-            _translated_selector_option(
-                LEARN_REVIEW_ACTION_RETRY_CAPTURE,
-                _LEARN_REVIEW_ACTION_OPTION_LABELS,
-            ),
-            _translated_selector_option(
-                LEARN_REVIEW_ACTION_DISCARD,
-                _LEARN_REVIEW_ACTION_OPTION_LABELS,
-            ),
+            LEARN_REVIEW_ACTION_RETRY_CAPTURE,
+            LEARN_REVIEW_ACTION_DISCARD,
         ]
     )
     return options
@@ -397,6 +377,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._learn_receiver_label: str | None = None
         self._learn_capture_task: asyncio.Task[LearnCaptureTaskResult] | None = None
         self._learn_capture: LearnCapture | None = None
+        self._learn_decoder: str | None = None
         self._learn_result: LearnResult | None = None
         self._learn_test_send_failed = False
         self._learn_test_send_result: str | None = None
@@ -533,45 +514,26 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         if not receiver_options:
             return self.async_abort(reason="no_available_infrared_receivers")
 
-        configured_receiver_option = receiver_options.get(configured_receiver_id)
-        if configured_receiver_option is None:
-            return self.async_abort(reason="infrared_receiver_unavailable")
-
         if user_input is not None:
             receiver_id = str(user_input[CONF_INFRARED_RECEIVER_ID])
+            receiver_option = receiver_options.get(receiver_id)
 
-            if receiver_id != configured_receiver_id:
+            if receiver_option is None:
                 errors[CONF_INFRARED_RECEIVER_ID] = "infrared_receiver_unavailable"
-
-            if not errors:
-                self._learn_receiver_id = configured_receiver_id
+            else:
+                self._learn_receiver_id = receiver_id
                 self._learn_receiver_label = str(
-                    configured_receiver_option.get("label", configured_receiver_id)
+                    receiver_option.get("label", receiver_id)
                 )
                 await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
+                self._learn_decoder = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
                 self._clear_learn_test_send_state()
                 return await self.async_step_learn_capture()
 
-        return self.async_show_form(
-            step_id=SOURCE_LEARN_COMMAND,
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        CONF_INFRARED_RECEIVER_ID,
-                        default=configured_receiver_id,
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=[configured_receiver_option],
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                        )
-                    ),
-                }
-            ),
-            errors=errors,
-        )
+        return self._show_learn_command_form(receiver_options, errors)
 
     async def async_step_learn_capture(
         self,
@@ -583,9 +545,6 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
 
         if self._learn_receiver_id is None:
             return await self.async_step_learn_command()
-
-        if user_input is None and self._learn_capture_task is None:
-            return self._show_learn_capture_form({})
 
         if self._learn_capture_task is None:
             self._learn_capture_task = self.hass.async_create_task(
@@ -642,12 +601,16 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             errors["base"] = "learn_timeout"
         else:
             self._learn_capture = capture_result
+            self._learn_decoder = None
             self._learn_result = None
             self._clear_learn_pending_save()
             self._clear_learn_test_send_state()
 
         if errors:
-            return self._show_learn_capture_form(errors)
+            receiver_options = available_infrared_receivers(self.hass)
+            if not receiver_options:
+                return self.async_abort(reason="no_available_infrared_receivers")
+            return self._show_learn_command_form(receiver_options, errors)
 
         return await self.async_step_learn_select_decoder()
 
@@ -677,6 +640,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                         decoder=decoder,
                     )
                 except LearnCandidateError:
+                    self._learn_decoder = None
                     self._learn_result = None
                     self._clear_learn_pending_save()
                     self._clear_learn_test_send_state()
@@ -684,6 +648,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                         errors={"base": "learn_pronto_conversion_failed"}
                     )
 
+                self._learn_decoder = decoder
                 self._clear_learn_pending_save()
                 self._clear_learn_test_send_state()
                 return await self.async_step_learn_review()
@@ -738,6 +703,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             elif action == LEARN_REVIEW_ACTION_RETRY_CAPTURE:
                 await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
+                self._learn_decoder = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
                 self._clear_learn_test_send_state()
@@ -746,6 +712,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             elif action == LEARN_REVIEW_ACTION_DISCARD:
                 await self._async_cancel_learn_capture_task()
                 self._learn_capture = None
+                self._learn_decoder = None
                 self._learn_result = None
                 self._clear_learn_pending_save()
                 self._clear_learn_test_send_state()
@@ -776,14 +743,11 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             },
         )
 
-
     async def async_step_learn_review(
         self,
         user_input: dict[str, Any] | None = None,
     ) -> config_entries.ConfigFlowResult:
         """Review a learned command before choosing whether to save it."""
-        errors: dict[str, str] = {}
-
         if self._remote is None:
             return self.async_abort(reason="no_universal_remotes")
 
@@ -796,93 +760,104 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         if not candidates:
             return self.async_abort(reason="learn_failed")
 
-        can_test_send = self._learn_test_send_emitter_id is not None
-        action_options = learn_review_action_options(
-            candidates,
-            can_test_send=can_test_send,
-            test_send_failed=self._learn_test_send_failed,
-        )
-
-        if user_input is not None:
-            action = str(user_input[COMMAND_LEARN_REVIEW_ACTION])
-            valid_actions = {str(option["value"]) for option in action_options}
-
-            if action not in valid_actions:
-                errors[COMMAND_LEARN_REVIEW_ACTION] = "invalid_learn_review_action"
-
-            elif action in (
-                LEARN_REVIEW_ACTION_CONTINUE_SAVE,
-                LEARN_REVIEW_ACTION_SAVE_ANYWAY,
-            ):
-                self._clear_learn_test_send_state()
-                return await self.async_step_learn_select_candidate()
-
-            elif action in (
-                LEARN_REVIEW_ACTION_TEST_CAPTURED,
-                LEARN_REVIEW_ACTION_TEST_NORMALIZED,
-            ):
-                if await self._async_test_learned_candidate(action, candidates):
-                    self._learn_test_send_failed = False
-                    self._learn_test_send_result = (
-                        LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
-                        if action == LEARN_REVIEW_ACTION_TEST_CAPTURED
-                        else LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED
-                    )
-                else:
-                    self._learn_test_send_failed = True
-                    self._learn_test_send_result = LEARN_TEST_SEND_RESULT_FAILED
-                    errors["base"] = "learn_test_send_failed"
-
-            elif action == LEARN_REVIEW_ACTION_RETRY_CAPTURE:
-                await self._async_cancel_learn_capture_task()
-                self._learn_capture = None
-                self._learn_result = None
-                self._clear_learn_pending_save()
-                self._clear_learn_test_send_state()
-                return await self.async_step_learn_capture()
-
-            elif action == LEARN_REVIEW_ACTION_DISCARD:
-                await self._async_cancel_learn_capture_task()
-                self._learn_capture = None
-                self._learn_result = None
-                self._clear_learn_pending_save()
-                self._clear_learn_test_send_state()
-                return self.async_create_entry(
-                    title="",
-                    data=dict(self._config_entry.options),
-                )
-
-            action_options = learn_review_action_options(
-                candidates,
-                can_test_send=can_test_send,
-                test_send_failed=self._learn_test_send_failed,
-            )
-
-        default_action = str(action_options[0]["value"])
-
-        return self.async_show_form(
+        return self.async_show_menu(
             step_id=SOURCE_LEARN_REVIEW,
-            data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        COMMAND_LEARN_REVIEW_ACTION,
-                        default=default_action,
-                    ): selector.SelectSelector(
-                        selector.SelectSelectorConfig(
-                            options=action_options,
-                            mode=selector.SelectSelectorMode.DROPDOWN,
-                            translation_key="learn_review_action",
-                        )
-                    ),
-                }
+            menu_options=learn_review_action_options(
+                candidates,
+                can_test_send=self._learn_test_send_emitter_id is not None,
+                test_send_failed=self._learn_test_send_failed,
             ),
-            errors=errors,
             description_placeholders={
+                "receiver": learn_capture_receiver_label(
+                    self._learn_receiver_label,
+                    self._learn_receiver_id,
+                ),
+                "decoder": learn_decoder_label(self._learn_decoder),
+                "capture_details": learn_capture_details(self._learn_result.capture),
                 "candidate_details": learned_candidate_details(candidates),
                 "test_send_result": learn_test_send_result_details(
                     self._learn_test_send_result
                 ),
             },
+        )
+
+    async def async_step_continue_save(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Continue from learned-command review to the save step."""
+        if not self._learn_review_action_is_available(
+            LEARN_REVIEW_ACTION_CONTINUE_SAVE
+        ):
+            return await self.async_step_learn_review()
+
+        self._clear_learn_test_send_state()
+        return await self.async_step_learn_select_candidate()
+
+    async def async_step_save_anyway(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Continue to save after a learned-candidate test-send failure."""
+        if not self._learn_review_action_is_available(LEARN_REVIEW_ACTION_SAVE_ANYWAY):
+            return await self.async_step_learn_review()
+
+        self._clear_learn_test_send_state()
+        return await self.async_step_learn_select_candidate()
+
+    async def async_step_test_captured(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Test-send the captured learned-command candidate."""
+        return await self._async_step_test_learned_candidate(
+            LEARN_REVIEW_ACTION_TEST_CAPTURED
+        )
+
+    async def async_step_test_normalized(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Test-send the normalized learned-command candidate."""
+        return await self._async_step_test_learned_candidate(
+            LEARN_REVIEW_ACTION_TEST_NORMALIZED
+        )
+
+    async def async_step_retry_capture(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Retry capture from learned-command review."""
+        if not self._learn_review_action_is_available(
+            LEARN_REVIEW_ACTION_RETRY_CAPTURE
+        ):
+            return await self.async_step_learn_review()
+
+        await self._async_cancel_learn_capture_task()
+        self._learn_capture = None
+        self._learn_decoder = None
+        self._learn_result = None
+        self._clear_learn_pending_save()
+        self._clear_learn_test_send_state()
+        return await self.async_step_learn_capture()
+
+    async def async_step_discard(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> config_entries.ConfigFlowResult:
+        """Discard the learned command without changing the remote."""
+        if not self._learn_review_action_is_available(LEARN_REVIEW_ACTION_DISCARD):
+            return await self.async_step_learn_review()
+
+        await self._async_cancel_learn_capture_task()
+        self._learn_capture = None
+        self._learn_decoder = None
+        self._learn_result = None
+        self._clear_learn_pending_save()
+        self._clear_learn_test_send_state()
+        return self.async_create_entry(
+            title="",
+            data=dict(self._config_entry.options),
         )
 
     async def async_step_learn_select_candidate(
@@ -1680,16 +1655,49 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             errors=errors,
         )
 
-    def _show_learn_capture_form(
+    def _show_learn_command_form(
         self,
+        receiver_options: dict[str, selector.SelectOptionDict],
         errors: dict[str, str],
     ) -> config_entries.ConfigFlowResult:
-        """Show the learn capture form."""
+        """Show the infrared receiver selection form for learning."""
+        configured_receiver_id = ""
+        if self._remote is not None:
+            configured_receiver_id = str(
+                self._remote.get(CONF_INFRARED_RECEIVER_ID, "")
+            )
+
+        default_receiver_id = next(
+            (
+                receiver_id
+                for receiver_id in (
+                    self._learn_receiver_id,
+                    configured_receiver_id,
+                )
+                if receiver_id and receiver_id in receiver_options
+            ),
+            None,
+        )
+        receiver_field = vol.Required(CONF_INFRARED_RECEIVER_ID)
+        if default_receiver_id is not None:
+            receiver_field = vol.Required(
+                CONF_INFRARED_RECEIVER_ID,
+                default=default_receiver_id,
+            )
+
         return self.async_show_form(
-            step_id=SOURCE_LEARN_CAPTURE,
-            data_schema=vol.Schema({}),
+            step_id=SOURCE_LEARN_COMMAND,
+            data_schema=vol.Schema(
+                {
+                    receiver_field: selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=list(receiver_options.values()),
+                            mode=selector.SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                }
+            ),
             errors=errors,
-            description_placeholders=self._learn_capture_placeholders,
         )
 
     async def _async_learn_capture_once(
@@ -1760,6 +1768,42 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         """Clear the learned-command test-send result state."""
         self._learn_test_send_failed = False
         self._learn_test_send_result = None
+
+    def _learn_review_action_is_available(self, action: str) -> bool:
+        """Return whether an action is currently available on the review menu."""
+        if self._learn_result is None or not self._learn_result.candidates:
+            return False
+
+        return action in learn_review_action_options(
+            self._learn_result.candidates,
+            can_test_send=self._learn_test_send_emitter_id is not None,
+            test_send_failed=self._learn_test_send_failed,
+        )
+
+    async def _async_step_test_learned_candidate(
+        self,
+        action: str,
+    ) -> config_entries.ConfigFlowResult:
+        """Test-send one candidate and return to learned-command review."""
+        if not self._learn_review_action_is_available(action):
+            return await self.async_step_learn_review()
+
+        assert self._learn_result is not None
+        if await self._async_test_learned_candidate(
+            action,
+            self._learn_result.candidates,
+        ):
+            self._learn_test_send_failed = False
+            self._learn_test_send_result = (
+                LEARN_TEST_SEND_RESULT_CAPTURED_SUCCEEDED
+                if action == LEARN_REVIEW_ACTION_TEST_CAPTURED
+                else LEARN_TEST_SEND_RESULT_NORMALIZED_SUCCEEDED
+            )
+        else:
+            self._learn_test_send_failed = True
+            self._learn_test_send_result = LEARN_TEST_SEND_RESULT_FAILED
+
+        return await self.async_step_learn_review()
 
     async def _async_test_learned_candidate(
         self,

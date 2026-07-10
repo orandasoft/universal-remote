@@ -1,5 +1,7 @@
 """Tests for Pronto HEX command support."""
 
+from typing import cast
+
 import pytest
 
 from custom_components.universal_remote.pronto import (
@@ -131,7 +133,7 @@ def test_encode_pronto_hex_rejects_invalid_modulation(
 ) -> None:
     """Test invalid modulation values are rejected."""
     with pytest.raises(ProntoError):
-        encode_pronto_hex(RAW_TIMINGS, modulation)
+        encode_pronto_hex(RAW_TIMINGS, cast(int, modulation))
 
 
 @pytest.mark.parametrize(
@@ -148,12 +150,14 @@ def test_encode_pronto_hex_rejects_invalid_timings(
 ) -> None:
     """Test invalid raw timing values are rejected."""
     with pytest.raises(ProntoError):
-        encode_pronto_hex(timings, 38_000)
+        encode_pronto_hex(cast(list[int], timings), 38_000)
+
 
 def test_decode_pronto_hex_rejects_short_header() -> None:
     """Test Pronto HEX shorter than the header is rejected."""
     with pytest.raises(ProntoError):
         decode_pronto_hex("0000 006D 0001")
+
 
 @pytest.mark.parametrize("modulation", [1, 1_000_000_000])
 def test_encode_pronto_hex_rejects_unencodable_modulation(
@@ -162,6 +166,7 @@ def test_encode_pronto_hex_rejects_unencodable_modulation(
     """Test modulation values outside Pronto frequency-word range are rejected."""
     with pytest.raises(ProntoError):
         encode_pronto_hex(RAW_TIMINGS, modulation)
+
 
 @pytest.mark.parametrize(
     "timings",
@@ -176,6 +181,7 @@ def test_encode_pronto_hex_rejects_unencodable_timings(
     """Test timings outside Pronto timing-word range are rejected."""
     with pytest.raises(ProntoError):
         encode_pronto_hex(timings, 38_000)
+
 
 def test_encode_pronto_hex_rejects_too_many_timing_pairs() -> None:
     """Test timing pair count must fit in a Pronto word."""

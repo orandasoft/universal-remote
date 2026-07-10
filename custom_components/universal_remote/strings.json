@@ -351,7 +351,7 @@
         "title": "Learn Command"
       },
       "learn_capture": {
-        "description": "Select Submit to start capture. Then press the infrared remote button near {receiver}.",
+        "description": "Press the infrared remote button you want to learn near {receiver}.",
         "title": "Capture Command"
       },
       "learn_select_candidate": {
@@ -379,13 +379,23 @@
         "title": "Select Decoder"
       },
       "learn_review": {
-        "data": {
-          "learn_review_action": "Action"
+        "description": "Capture completed successfully.\n\nReceiver: {receiver}\nDecoder: {decoder}\nCaptured signal: {capture_details}\n\nReview the learned command candidates before saving.\n\n{candidate_details}\n\n{test_send_result}",
+        "menu_option_descriptions": {
+          "test_captured": "Send the original captured signal through the configured infrared emitter.",
+          "test_normalized": "Send the decoded and normalized signal through the configured infrared emitter.",
+          "continue_save": "Choose a candidate, name the command, and save it.",
+          "save_anyway": "Continue to save the learned command even though the last test send failed.",
+          "retry_capture": "Discard this capture and listen for the command again using the selected receiver.",
+          "discard": "Discard this capture without changing the remote."
         },
-        "data_description": {
-          "learn_review_action": "Choose whether to test a learned candidate, save it, retry capture, or discard it without changing the remote."
+        "menu_options": {
+          "test_captured": "Test captured candidate",
+          "test_normalized": "Test normalized candidate",
+          "continue_save": "Continue to save",
+          "save_anyway": "Save anyway",
+          "retry_capture": "Retry capture",
+          "discard": "Discard"
         },
-        "description": "Review the learned command candidates before saving.\n\n{candidate_details}\n\n{test_send_result}",
         "title": "Review Learned Command"
       },
       "learn_capture_progress_done": {
@@ -413,16 +423,6 @@
       }
     },
     "selector": {
-      "learn_review_action": {
-        "options": {
-          "test_captured": "Test captured candidate",
-          "test_normalized": "Test normalized candidate",
-          "continue_save": "Continue to save",
-          "save_anyway": "Save anyway",
-          "retry_capture": "Retry capture",
-          "discard": "Discard"
-        }
-      },
       "learn_overwrite_action": {
         "options": {
           "confirm": "Replace existing command",
@@ -481,16 +481,6 @@
       "options": {
         "captured": "Captured",
         "normalized": "Normalized"
-      }
-    },
-    "learn_review_action": {
-      "options": {
-        "test_captured": "Test captured candidate",
-        "test_normalized": "Test normalized candidate",
-        "continue_save": "Continue to save",
-        "save_anyway": "Save anyway",
-        "retry_capture": "Retry capture",
-        "discard": "Discard"
       }
     },
     "learn_overwrite_action": {

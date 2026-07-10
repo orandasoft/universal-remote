@@ -3,6 +3,8 @@
 import re
 from typing import Final
 
+from .const import TV_SOURCE_COMMAND_MAP
+
 COMMAND_CATEGORY_POWER: Final = "power"
 COMMAND_CATEGORY_VOLUME: Final = "volume"
 COMMAND_CATEGORY_CHANNEL: Final = "channel"
@@ -143,12 +145,7 @@ _APP_COMMANDS: Final[set[str]] = {
 
 def command_is_media_player_source(command_name: str) -> bool:
     """Return whether a command should be exposed as a media-player source."""
-    normalized = command_name.strip().upper()
-    return (
-        normalized in {"TV", "DTV", "BS", "CS1", "CS2", "BS4K", "CS4K"}
-        or normalized in _APP_COMMANDS
-        or _HDMI_COMMAND_RE.fullmatch(normalized) is not None
-    )
+    return command_name.strip().upper() in TV_SOURCE_COMMAND_MAP.values()
 
 
 def command_icon(command_name: str) -> str:

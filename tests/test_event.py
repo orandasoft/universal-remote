@@ -185,9 +185,7 @@ def _patched_nec_protocol_specs(
         protocol_helpers.PROTOCOL_NEC: (nec_spec, nec1_f16_spec),
     }
     protocol_specs = {
-        spec.protocol: spec
-        for specs in decoder_specs.values()
-        for spec in specs
+        spec.protocol: spec for specs in decoder_specs.values() for spec in specs
     }
 
     with (
@@ -417,6 +415,7 @@ def test_received_command_event_entity_handles_decoded_signal() -> None:
             "_decode_signal_event",
             return_value=("nec", event_data),
         ),
+        patch.object(event_platform, "monotonic", return_value=100.0),
         patch.object(entity, "_trigger_event") as trigger_event,
         patch.object(entity, "async_write_ha_state") as write_state,
     ):
@@ -427,6 +426,7 @@ def test_received_command_event_entity_handles_decoded_signal() -> None:
         name="Living room TV",
     )
     assert entity._last_decoded_event == {"event_type": "nec", **event_data}
+    assert entity._last_decoded_event_time == 100.0
     trigger_event.assert_called_once()
     call_args = trigger_event.call_args
     assert call_args is not None
@@ -450,6 +450,7 @@ def test_received_command_event_entity_clears_last_decoded_event_on_unknown() ->
         "decoded": True,
         "repeat": False,
     }
+    entity._last_decoded_event_time = 99.8
     event_data = {
         "protocol": event_platform.PROTOCOL_UNKNOWN,
         "decoded": False,
@@ -463,12 +464,205 @@ def test_received_command_event_entity_clears_last_decoded_event_on_unknown() ->
             "_decode_signal_event",
             return_value=("unknown", event_data),
         ),
+        patch.object(event_platform, "monotonic", return_value=100.0),
         patch.object(entity, "_trigger_event"),
         patch.object(entity, "async_write_ha_state"),
     ):
         entity._handle_signal(_signal())
 
     assert entity._last_decoded_event is None
+    assert entity._last_decoded_event_time is None
+
+
+def test_received_command_event_entity_associates_repeat_at_timeout_boundary() -> None:
+    """Test a repeat at the timeout boundary keeps previous command metadata."""
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living room TV",
+        receiver_entity_id="infrared.xiao_receiver",
+        codeset_id="lg_tv",
+    )
+    previous_event = {
+        "event_type": "mute",
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": True,
+        "matched": True,
+        "repeat": False,
+        "command_name": "MUTE",
+    }
+    entity._last_decoded_event = previous_event
+    entity._last_decoded_event_time = 100.0
+    signal = _signal([8894, -2250, 529, -10000])
+    repeat_data = {
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": False,
+        "matched": False,
+        "repeat": True,
+        "previous_command_name": "MUTE",
+    }
+
+    with (
+        patch.object(event_platform, "monotonic", return_value=100.5),
+        patch.object(
+            event_platform,
+            "_decode_signal_event",
+            return_value=(event_platform.EVENT_NEC_REPEAT, repeat_data),
+        ) as decode_signal,
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(signal)
+
+    decode_signal.assert_called_once_with(
+        "lg_tv",
+        signal,
+        previous_decoded_event=previous_event,
+    )
+    assert entity._last_decoded_event is previous_event
+    assert entity._last_decoded_event_time == 100.5
+
+
+def test_received_command_event_entity_refreshes_repeat_association() -> None:
+    """Test timely repeats keep a long button hold associated."""
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living room TV",
+        receiver_entity_id="infrared.xiao_receiver",
+        codeset_id="lg_tv",
+    )
+    previous_event = {
+        "event_type": "volume_up",
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": True,
+        "matched": True,
+        "repeat": False,
+        "command_name": "VOLUME_UP",
+    }
+    entity._last_decoded_event = previous_event
+    entity._last_decoded_event_time = 100.0
+    repeat_data = {
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": False,
+        "matched": False,
+        "repeat": True,
+        "previous_command_name": "VOLUME_UP",
+    }
+
+    with (
+        patch.object(event_platform, "monotonic", side_effect=[100.4, 100.8]),
+        patch.object(
+            event_platform,
+            "_decode_signal_event",
+            return_value=(event_platform.EVENT_NEC_REPEAT, repeat_data),
+        ) as decode_signal,
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(_signal([8894, -2250, 529, -10000]))
+        entity._handle_signal(_signal([8894, -2250, 529, -10000]))
+
+    assert len(decode_signal.call_args_list) == 2
+    assert all(
+        call.kwargs["previous_decoded_event"] is previous_event
+        for call in decode_signal.call_args_list
+    )
+    assert entity._last_decoded_event is previous_event
+    assert entity._last_decoded_event_time == 100.8
+
+
+def test_received_command_event_entity_drops_stale_repeat_association() -> None:
+    """Test a late repeat does not inherit stale command metadata."""
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living room TV",
+        receiver_entity_id="infrared.xiao_receiver",
+        codeset_id="lg_tv",
+    )
+    entity._last_decoded_event = {
+        "event_type": "mute",
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": True,
+        "matched": True,
+        "repeat": False,
+        "command_name": "MUTE",
+    }
+    entity._last_decoded_event_time = 100.0
+    signal = _signal([8894, -2250, 529, -10000])
+    repeat_data = {
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": False,
+        "matched": False,
+        "repeat": True,
+    }
+
+    with (
+        patch.object(
+            event_platform,
+            "monotonic",
+            return_value=100.0 + event_platform.NEC_REPEAT_ASSOCIATION_TIMEOUT + 0.001,
+        ),
+        patch.object(
+            event_platform,
+            "_decode_signal_event",
+            return_value=(event_platform.EVENT_NEC_REPEAT, repeat_data),
+        ) as decode_signal,
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(signal)
+
+    decode_signal.assert_called_once_with(
+        "lg_tv",
+        signal,
+        previous_decoded_event=None,
+    )
+    assert entity._last_decoded_event is None
+    assert entity._last_decoded_event_time is None
+
+
+def test_received_command_event_entity_drops_event_without_timestamp() -> None:
+    """Test previous metadata without a timestamp is not reused for repeats."""
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="living_room_tv",
+        remote_name="Living room TV",
+        receiver_entity_id="infrared.xiao_receiver",
+        codeset_id="lg_tv",
+    )
+    entity._last_decoded_event = {
+        "event_type": "mute",
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": True,
+        "matched": True,
+        "repeat": False,
+        "command_name": "MUTE",
+    }
+    signal = _signal([8894, -2250, 529, -10000])
+    repeat_data = {
+        "protocol": event_platform.PROTOCOL_NEC,
+        "decoded": False,
+        "matched": False,
+        "repeat": True,
+    }
+
+    with (
+        patch.object(event_platform, "monotonic", return_value=100.0),
+        patch.object(
+            event_platform,
+            "_decode_signal_event",
+            return_value=(event_platform.EVENT_NEC_REPEAT, repeat_data),
+        ) as decode_signal,
+        patch.object(entity, "_trigger_event"),
+        patch.object(entity, "async_write_ha_state"),
+    ):
+        entity._handle_signal(signal)
+
+    decode_signal.assert_called_once_with(
+        "lg_tv",
+        signal,
+        previous_decoded_event=None,
+    )
+    assert entity._last_decoded_event is None
+    assert entity._last_decoded_event_time is None
 
 
 def test_event_types_for_codeset() -> None:
@@ -964,7 +1158,9 @@ def test_load_codeset_enum_returns_none_for_non_enum_class() -> None:
         assert event_platform._load_codeset_enum("broken") is None
 
 
-def test_event_entity_matched_command_updates_runtime_tuner(hass: HomeAssistant) -> None:
+def test_event_entity_matched_command_updates_runtime_tuner(
+    hass: HomeAssistant,
+) -> None:
     """Test matched non-repeat received command updates runtime tuner."""
     runtime = UniversalRemoteRuntime(
         hass=hass,

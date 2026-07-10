@@ -7,6 +7,7 @@ from enum import Enum
 from functools import lru_cache
 from importlib import import_module
 import logging
+from time import monotonic
 from typing import Any, cast, override
 
 from homeassistant.components import infrared
@@ -27,7 +28,10 @@ from .const import (
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
 )
-from .helpers import universal_remote_from_config_entry_data, universal_remote_device_info
+from .helpers import (
+    universal_remote_from_config_entry_data,
+    universal_remote_device_info,
+)
 from .infrared_library import (
     INFRARED_LIBRARY_CODESETS,
     NO_INFRARED_LIBRARY_CODESET,
@@ -62,6 +66,7 @@ EVENT_NEC1_F16 = "nec1_f16"
 
 MAX_RECEIVED_EVENT_HISTORY = 30
 TIMINGS_PREVIEW_LENGTH = 12
+NEC_REPEAT_ASSOCIATION_TIMEOUT = 0.5
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,9 +139,7 @@ async def async_setup_entry(
 
     runtime_data = getattr(entry, "runtime_data", None)
     runtime = (
-        runtime_data.runtime
-        if isinstance(runtime_data, UniversalRemoteData)
-        else None
+        runtime_data.runtime if isinstance(runtime_data, UniversalRemoteData) else None
     )
 
     remote = universal_remote_from_config_entry_data({**entry.data, **entry.options})
@@ -212,20 +215,39 @@ class UniversalRemoteReceivedCommandEventEntity(
             maxlen=MAX_RECEIVED_EVENT_HISTORY,
         )
         self._last_decoded_event: dict[str, Any] | None = None
+        self._last_decoded_event_time: float | None = None
 
     @override
     @callback
     def _handle_signal(self, signal: InfraredReceivedSignal) -> None:
         """Handle an infrared signal received by the linked receiver."""
+        now = monotonic()
+        previous_decoded_event = self._last_decoded_event
+        if previous_decoded_event is not None and (
+            self._last_decoded_event_time is None
+            or now - self._last_decoded_event_time > NEC_REPEAT_ASSOCIATION_TIMEOUT
+        ):
+            previous_decoded_event = None
+            self._last_decoded_event = None
+            self._last_decoded_event_time = None
+
         event_type, event_data = _decode_signal_event(
             self._codeset_id,
             signal,
-            previous_decoded_event=self._last_decoded_event,
+            previous_decoded_event=previous_decoded_event,
         )
         if event_data.get("decoded") and event_data.get("protocol") != PROTOCOL_UNKNOWN:
             self._last_decoded_event = {"event_type": event_type, **event_data}
-        elif not event_data.get("repeat"):
+            self._last_decoded_event_time = now
+        elif event_data.get("repeat"):
+            if previous_decoded_event is not None:
+                self._last_decoded_event_time = now
+            else:
+                self._last_decoded_event = None
+                self._last_decoded_event_time = None
+        else:
             self._last_decoded_event = None
+            self._last_decoded_event_time = None
 
         command_name = event_data.get("command_name")
         if (

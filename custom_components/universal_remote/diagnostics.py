@@ -21,7 +21,11 @@ from .const import (
     DEVICE_TYPE_TV,
 )
 from .event import receiver_event_types_for_codeset
-from .helpers import command_create_button, universal_remotes_from_config_entry
+from .helpers import (
+    available_infrared_receivers,
+    command_create_button,
+    universal_remotes_from_config_entry,
+)
 from .infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
     infrared_library_codeset_receiver_decoder_id,
@@ -100,6 +104,7 @@ def _diagnostic_remotes(
 ) -> list[dict[str, Any]]:
     """Return sanitized universal remote diagnostics."""
     diagnostics: list[dict[str, Any]] = []
+    receiver_options = available_infrared_receivers(hass)
     for item in universal_remotes_from_config_entry(entry):
         infrared_emitter_id = item.get(CONF_INFRARED_EMITTER_ID)
         infrared_receiver_id = item.get(CONF_INFRARED_RECEIVER_ID)
@@ -142,6 +147,12 @@ def _diagnostic_remotes(
         )
         receiver_configured = isinstance(infrared_receiver_id, str)
         emitter_configured = isinstance(infrared_emitter_id, str)
+        configured_receiver_selectable = (
+            receiver_configured and infrared_receiver_id in receiver_options
+        )
+        alternative_receiver_available = receiver_configured and any(
+            receiver_id != infrared_receiver_id for receiver_id in receiver_options
+        )
         diagnostics.append(
             {
                 "id": item.get(CONF_REMOTE_ID),
@@ -173,6 +184,9 @@ def _diagnostic_remotes(
                 "learning": {
                     "receiver_configured": receiver_configured,
                     "receiver_available": infrared_receiver_available,
+                    "selectable_receiver_count": len(receiver_options),
+                    "configured_receiver_selectable": (configured_receiver_selectable),
+                    "alternative_receiver_available": (alternative_receiver_available),
                     "emitter_configured": emitter_configured,
                     "emitter_available": infrared_emitter_available,
                     "available_decoders": [
@@ -181,7 +195,7 @@ def _diagnostic_remotes(
                         if decoder not in (LEARN_DECODER_AUTO, LEARN_DECODER_NONE)
                     ],
                     "learn_command_available": (
-                        receiver_configured and infrared_receiver_available
+                        receiver_configured and bool(receiver_options)
                     ),
                 },
             }
