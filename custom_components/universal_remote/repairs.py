@@ -320,8 +320,6 @@ class LinkedInfraredRepairFlow(repairs.RepairsFlow):
             data=data,
             options=options,
         )
-        await self._hass.config_entries.async_reload(entry.entry_id)
-
         if conf_key == CONF_INFRARED_EMITTER_ID:
             async_delete_linked_infrared_emitter_missing_issue(
                 self._hass,
@@ -344,9 +342,9 @@ def _missing_emitter_repair_schema(
 
     if available_emitters:
         default_emitter_id = next(iter(available_emitters))
-        fields[
-            infrared_emitter_field(default_emitter_id, available_emitters)
-        ] = infrared_emitter_selector(available_emitters)
+        fields[infrared_emitter_field(default_emitter_id, available_emitters)] = (
+            infrared_emitter_selector(available_emitters)
+        )
 
     fields[vol.Optional(CONF_DISABLE_EMITTER, default=not available_emitters)] = bool
 
@@ -361,13 +359,11 @@ def _missing_receiver_repair_schema(
 
     if available_receivers:
         default_receiver_id = next(iter(available_receivers))
-        fields[
-            infrared_receiver_field(default_receiver_id, available_receivers)
-        ] = infrared_receiver_selector(available_receivers)
+        fields[infrared_receiver_field(default_receiver_id, available_receivers)] = (
+            infrared_receiver_selector(available_receivers)
+        )
 
-    fields[
-        vol.Optional(CONF_DISABLE_RECEIVER, default=not available_receivers)
-    ] = bool
+    fields[vol.Optional(CONF_DISABLE_RECEIVER, default=not available_receivers)] = bool
 
     return vol.Schema(fields)
 

@@ -26,6 +26,7 @@ from custom_components.universal_remote.repairs import (
     async_delete_stale_linked_infrared_emitter_missing_issues,
     async_delete_stale_linked_infrared_receiver_missing_issues,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir, selector
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -217,8 +218,56 @@ async def test_missing_emitter_repair_flow_selects_replacement_emitter(
 
     assert result["type"] == "create_entry"
     assert entry.data[CONF_INFRARED_EMITTER_ID] == "infrared.new_emitter"
-    async_reload.assert_awaited_once_with(entry.entry_id)
+    async_reload.assert_not_awaited()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_repair_update_listener_requests_exactly_one_reload(
+    hass: HomeAssistant,
+) -> None:
+    """Test repair persistence relies on one config-entry listener reload."""
+    entry = _add_emitter_config_entry(hass)
+    issue_id = _linked_infrared_emitter_issue_id("living_room_tv")
+    async_create_linked_infrared_emitter_missing_issue(
+        hass,
+        remote_id="living_room_tv",
+        remote_name="Living Room TV",
+        infrared_emitter_id="infrared.old_emitter",
+    )
+
+    async def update_listener(
+        listener_hass: HomeAssistant,
+        listener_entry: ConfigEntry,
+    ) -> None:
+        await listener_hass.config_entries.async_reload(listener_entry.entry_id)
+
+    entry.add_update_listener(update_listener)
+
+    with (
+        patch.object(
+            repairs_platform,
+            "available_infrared_emitters",
+            return_value={
+                "infrared.new_emitter": _emitter_option("infrared.new_emitter")
+            },
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_reload",
+            AsyncMock(return_value=None),
+        ) as async_reload,
+    ):
+        flow = await _create_repair_flow(hass, issue_id)
+        result = await flow.async_step_init(
+            {
+                CONF_INFRARED_EMITTER_ID: "infrared.new_emitter",
+                CONF_DISABLE_EMITTER: False,
+            }
+        )
+        await hass.async_block_till_done()
+
+    assert result["type"] == "create_entry"
+    async_reload.assert_awaited_once_with(entry.entry_id)
 
 
 async def test_missing_emitter_repair_flow_disables_send_support(
@@ -252,7 +301,7 @@ async def test_missing_emitter_repair_flow_disables_send_support(
     assert result["type"] == "create_entry"
     assert CONF_INFRARED_EMITTER_ID not in entry.data
     assert entry.data[CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
-    async_reload.assert_awaited_once_with(entry.entry_id)
+    async_reload.assert_not_awaited()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
@@ -266,9 +315,7 @@ async def test_missing_emitter_repair_flow_requires_emitter_or_disable(
     with patch.object(
         repairs_platform,
         "available_infrared_emitters",
-        return_value={
-            "infrared.new_emitter": _emitter_option("infrared.new_emitter")
-        },
+        return_value={"infrared.new_emitter": _emitter_option("infrared.new_emitter")},
     ):
         flow = await _create_repair_flow(hass, issue_id)
         result = await flow.async_step_init({CONF_DISABLE_EMITTER: False})
@@ -289,9 +336,7 @@ async def test_missing_emitter_repair_flow_rejects_unavailable_emitter(
     with patch.object(
         repairs_platform,
         "available_infrared_emitters",
-        return_value={
-            "infrared.new_emitter": _emitter_option("infrared.new_emitter")
-        },
+        return_value={"infrared.new_emitter": _emitter_option("infrared.new_emitter")},
     ):
         flow = await _create_repair_flow(hass, issue_id)
         result = await flow.async_step_init(
@@ -317,9 +362,7 @@ async def test_missing_emitter_repair_flow_shows_form(
     with patch.object(
         repairs_platform,
         "available_infrared_emitters",
-        return_value={
-            "infrared.new_emitter": _emitter_option("infrared.new_emitter")
-        },
+        return_value={"infrared.new_emitter": _emitter_option("infrared.new_emitter")},
     ):
         flow = await _create_repair_flow(hass, issue_id)
         result = await flow.async_step_init()
@@ -388,7 +431,7 @@ async def test_missing_receiver_repair_flow_selects_replacement_receiver(
 
     assert result["type"] == "create_entry"
     assert entry.data[CONF_INFRARED_RECEIVER_ID] == "infrared.new_receiver"
-    async_reload.assert_awaited_once_with(entry.entry_id)
+    async_reload.assert_not_awaited()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
@@ -423,7 +466,7 @@ async def test_missing_receiver_repair_flow_disables_receive_support(
     assert result["type"] == "create_entry"
     assert CONF_INFRARED_RECEIVER_ID not in entry.data
     assert entry.data[CONF_INFRARED_EMITTER_ID] == "infrared.emitter"
-    async_reload.assert_awaited_once_with(entry.entry_id)
+    async_reload.assert_not_awaited()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 

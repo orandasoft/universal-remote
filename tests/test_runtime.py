@@ -356,8 +356,9 @@ async def test_command_sequence_repeats_delay_and_overlay_order(
             "custom_components.universal_remote.runtime.async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
-        patch("custom_components.universal_remote.runtime.asyncio.sleep", AsyncMock())
-        as mock_sleep,
+        patch(
+            "custom_components.universal_remote.runtime.asyncio.sleep", AsyncMock()
+        ) as mock_sleep,
     ):
         await runtime.async_send_command_sequence(
             ["BS", "NUM_1"],

@@ -11,7 +11,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers import entity_registry as er, selector
+from homeassistant.helpers import (
+    area_registry as ar,
+    device_registry as dr,
+    entity_registry as er,
+    selector,
+)
 
 from .const import (
     CONF_COMMAND_CREATE_BUTTON,
@@ -44,58 +49,99 @@ def available_infrared_emitters(
     physical IR output can control multiple appliances, for example through
     dual emitters or a blaster.
     """
-    registry = er.async_get(hass)
-    options: dict[str, selector.SelectOptionDict] = {}
-
-    for entity_id in infrared.async_get_emitters(hass):
-        registry_entry = registry.async_get(entity_id)
-
-        if registry_entry is not None and registry_entry.disabled_by is not None:
-            continue
-
-        label = entity_id
-        if registry_entry is not None:
-            label = (
-                registry_entry.name
-                or registry_entry.original_name
-                or registry_entry.entity_id
-            )
-
-        options[entity_id] = selector.SelectOptionDict(
-            value=entity_id,
-            label=label,
-        )
-
-    return dict(sorted(options.items()))
+    return _available_infrared_options(hass, infrared.async_get_emitters(hass))
 
 
 def available_infrared_receivers(
     hass: HomeAssistant,
 ) -> dict[str, selector.SelectOptionDict]:
     """Return available infrared receivers."""
+    return _available_infrared_options(hass, infrared.async_get_receivers(hass))
+
+
+def _available_infrared_options(
+    hass: HomeAssistant,
+    entity_ids: list[str],
+) -> dict[str, selector.SelectOptionDict]:
+    """Return infrared selector options with disambiguating labels."""
     registry = er.async_get(hass)
     options: dict[str, selector.SelectOptionDict] = {}
 
-    for entity_id in infrared.async_get_receivers(hass):
+    for entity_id in entity_ids:
         registry_entry = registry.async_get(entity_id)
 
         if registry_entry is not None and registry_entry.disabled_by is not None:
             continue
 
-        label = entity_id
-        if registry_entry is not None:
-            label = (
-                registry_entry.name
-                or registry_entry.original_name
-                or registry_entry.entity_id
-            )
+        if not linked_entity_is_available(hass, entity_id):
+            continue
 
         options[entity_id] = selector.SelectOptionDict(
             value=entity_id,
-            label=label,
+            label=_infrared_entity_label(hass, entity_id, registry_entry),
         )
 
     return dict(sorted(options.items()))
+
+
+def _infrared_entity_label(
+    hass: HomeAssistant,
+    entity_id: str,
+    registry_entry: Any | None,
+) -> str:
+    """Return a readable infrared entity label with disambiguating context."""
+    if registry_entry is None:
+        return entity_id
+
+    base_label = registry_entry.name or registry_entry.original_name or entity_id
+    context_label = _infrared_device_context_label(hass, registry_entry)
+
+    if context_label is not None and context_label != base_label:
+        return f"{base_label} — {context_label}"
+
+    if base_label != entity_id:
+        return base_label
+
+    return entity_id
+
+
+def _infrared_device_context_label(
+    hass: HomeAssistant,
+    registry_entry: Any,
+) -> str | None:
+    """Return area and device context for an infrared entity."""
+    device_id = registry_entry.device_id
+    if device_id is None:
+        return None
+
+    device = dr.async_get(hass).async_get(device_id)
+    if device is None:
+        return None
+
+    device_name = device.name_by_user or device.name or device.model
+    area_name = _infrared_area_name(hass, registry_entry, device)
+
+    if area_name and device_name:
+        return f"{area_name} {device_name}"
+
+    return area_name or device_name
+
+
+def _infrared_area_name(
+    hass: HomeAssistant,
+    registry_entry: Any,
+    device: Any,
+) -> str | None:
+    """Return area context for an infrared entity."""
+    area_id = registry_entry.area_id or device.area_id
+    if area_id is None:
+        return None
+
+    area = ar.async_get(hass).async_get_area(area_id)
+    if area is None:
+        return None
+
+    return area.name
 
 
 def linked_entity_is_available(

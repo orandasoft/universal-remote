@@ -119,9 +119,7 @@ def test_parse_json_command_uses_default_modulation() -> None:
 
 def test_parse_pronto_command_returns_infrared_command_contract() -> None:
     """Test learned Pronto payloads return an infrared command-compatible object."""
-    command = parse_remote_command(
-        "0000 006D 0002 0000 0152 00AA 0014 0017"
-    )
+    command = parse_remote_command("0000 006D 0002 0000 0152 00AA 0014 0017")
 
     assert_infrared_command_contract(
         command,

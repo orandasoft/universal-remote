@@ -2,11 +2,23 @@
 
 Universal Remote is a Home Assistant custom integration that creates logical infrared remote devices backed by existing Home Assistant `infrared` emitters and receivers.
 
-It does not communicate with infrared hardware directly. Instead, it stores named infrared commands and asks the linked infrared emitter to transmit them. It can also listen to a linked infrared receiver and expose matched received commands as Home Assistant events.
+It does not communicate with infrared hardware directly. Instead, it uses `infrared` emitter and receiver entities provided by other Home Assistant integrations. Universal Remote stores named infrared commands, asks the linked infrared emitter to transmit them, and can listen to a linked infrared receiver to expose matched received commands as Home Assistant events.
 
 This makes it possible to use one infrared transmitter or receiver for multiple logical remotes, such as TVs, projectors, HDMI switches, or other infrared-controlled devices.
 
 > This is a Home Assistant integration for HACS. It is not the Universal Remote Card dashboard plugin.
+
+
+---
+
+## What's New in v0.6.0
+
+- Learn infrared commands directly from a linked infrared receiver.
+- Review both the captured signal and a normalized (recommended) command when supported.
+- Store learned commands as Pronto Hex.
+- Test learned commands before saving.
+- Import commands from supported infrared library codesets.
+- Improved NEC / NEC1-F16 decoding and Japanese TV tuner support.
 
 ---
 
@@ -14,12 +26,11 @@ This makes it possible to use one infrared transmitter or receiver for multiple 
 
 - Home Assistant 2026.6.0 or newer
 - HACS
-- At least one Home Assistant infrared emitter or infrared receiver from another integration
-- Compatible infrared transmitter or receiver hardware supported by that infrared integration
+- Another Home Assistant integration that provides one or more `infrared` emitter or receiver entities
 
 The linked infrared emitter is responsible for the actual infrared transmission. Universal Remote only manages the logical remote, command names, optional buttons, optional TV media player entity, and optional received-command event entity.
 
-Universal Remote can be configured with an infrared emitter, an infrared receiver, or both. Sending commands requires an infrared emitter. Receiving and matching infrared commands requires an infrared receiver and a supported codeset.
+Universal Remote can be configured with an infrared emitter, an infrared receiver, or both. Sending commands requires an infrared emitter. Receiving command events requires an infrared receiver. A supported codeset enables friendly named events such as `power` or `volume_up`; otherwise, decoded NEC-family commands are exposed as `nec` events with decoded address and command data.
 
 ---
 
@@ -79,7 +90,7 @@ During setup, select:
 
 At least one infrared target must be selected. Select an infrared emitter when you want Universal Remote to send commands. Select an infrared receiver when you want Universal Remote to expose received command events.
 
-Receiver support requires a supported codeset so received infrared signals can be decoded and matched to known command names.
+A supported codeset is required for named receiver events. Without one, decoded NEC-family commands are still available as `nec` events with decoded address and command data.
 
 Multiple Universal Remote config entries may use the same infrared emitter or receiver. This allows one physical IR blaster or receiver to be shared by multiple logical devices.
 
@@ -117,7 +128,7 @@ Supported TV codesets include:
 - Sharp AQUOS TV
 - Vizio TV
 
-Receiver command matching is currently supported for NEC-based codesets such as LG TV, LG TV Japan, and Vizio TV. Other codesets may still be used for command import and sending, but may not support received-command matching yet.
+Protocol decoding currently supports NEC-family protocols. Friendly named receiver events and command matching are currently available for supported NEC-based codesets such as LG TV, LG TV Japan, and Vizio TV. Other codesets may still be used for command import and sending, but may not yet support named receiver events.
 
 ---
 
@@ -144,6 +155,21 @@ Supported command payload formats include:
 - text-based timing formats
 
 Commands may also be imported from a supported Home Assistant infrared protocols library codeset.
+
+---
+
+## Learning commands
+
+Universal Remote can learn infrared commands when a compatible infrared receiver is configured.
+
+The learning workflow captures a received infrared signal, validates it, and presents one or two candidates:
+
+- **Captured** — the original received signal stored as Pronto Hex.
+- **Normalized (recommended)** — a protocol-aware reconstruction generated when the captured signal can be decoded by a supported decoder (currently NEC or NEC1-F16).
+
+You can test either candidate before saving. Learned commands become regular Universal Remote commands and can optionally create button entities.
+
+Learning is separate from receiver events. Learning saves new commands; receiver events report received commands for automations.
 
 ---
 
@@ -183,7 +209,9 @@ data:
 
 ## Receiving commands
 
-Receiving commands requires a configured infrared receiver and a supported codeset.
+Receiving commands requires a configured infrared receiver.
+
+A supported codeset enables friendly named events such as `power` or `volume_up`. Without one, decoded NEC-family commands are still available as `nec` events with decoded address and command data.
 
 When a supported received signal matches a known codeset command, Universal Remote exposes it through a Home Assistant `event` entity. The event type is the normalized command name in lowercase, for example:
 
@@ -201,7 +229,7 @@ Decoded NEC commands that do not match the selected codeset are reported with th
 nec
 ```
 
-The `nec` event type includes decoded address and command data. This allows automations to react to NEC commands from a physical universal remote even when those commands are not part of the selected TV codeset.
+The `nec` event type includes decoded address and command data. This allows automations to react to NEC commands from a physical universal remote even when those commands are not part of the selected codeset.
 
 Signals that cannot be decoded are reported as:
 
@@ -231,7 +259,7 @@ action:
       entity_id: light.living_room
 ```
 
-Universal Remote does not learn and save new commands from received infrared signals. Received signals are used only for event reporting.
+Receiving infrared signals does not automatically create or update commands. New commands are added only through the Learn Command workflow, where the captured signal can be reviewed, tested, and explicitly saved.
 
 ---
 
@@ -304,13 +332,13 @@ Diagnostics are intended to help troubleshoot configuration issues without expos
 
 ## Known limitations
 
-- Universal Remote does not learn or store new infrared commands from received signals.
+- Received infrared signals are not learned or stored automatically. New commands can be created only through the explicit Learn Command workflow.
 - Received command history is capped and stores decoded summaries only, not raw timings.
 - Universal Remote does not transmit infrared commands directly.
 - The linked `infrared` integration is responsible for hardware communication.
 - Sending commands requires a linked infrared emitter.
-- Receiving command events requires a linked infrared receiver and a supported codeset.
-- Receiver decoding is currently limited to supported codesets.
+- Receiving command events requires a linked infrared receiver. A supported codeset enables named command events such as `power` or `volume_up`; otherwise, decoded NEC-family commands are exposed as `nec` events with decoded address and command data.
+- Friendly named receiver events are currently limited to supported codesets; unmatched NEC-family commands are exposed as `nec` events.
 - The TV media player is assumed-state and does not reflect real device state.
 - The tuner select entity is created only when tuner-specific command support is detected.
 - Existing commands are not deleted automatically when changing device type or codeset.

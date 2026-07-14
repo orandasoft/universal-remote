@@ -710,7 +710,7 @@ async def test_send_command_missing_infrared_emitter_raises_and_updates_repair_i
     )
     restored_handler.assert_not_called()
 
-    
+
 async def test_repair_issue_cleared_when_entity_restored(
     hass: HomeAssistant,
     infrared_emitter: str,
@@ -932,6 +932,7 @@ async def test_config_entry_setup_covers_standalone_remote_platform_setup(
 
     assert hass.states.get("remote.living_room_tv") is not None
 
+
 async def test_async_setup_universal_remote_entities_ignores_receiver_only_entry(
     hass: HomeAssistant,
 ) -> None:
@@ -958,7 +959,7 @@ async def test_async_setup_universal_remote_entities_ignores_receiver_only_entry
     )
 
     assert entities == []
-    
+
 
 def test_runtime_by_remote_id_without_runtime_data(
     config_entry: MockConfigEntry,

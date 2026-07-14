@@ -18,7 +18,9 @@ from custom_components.universal_remote.command_ui import (
     command_icon,
     command_is_media_player_source,
     command_label,
+    tv_media_player_source_commands,
 )
+from custom_components.universal_remote.const import TV_SOURCE_COMMAND_MAP
 
 
 @pytest.mark.parametrize(
@@ -106,12 +108,22 @@ def test_command_category(command_name: str, expected_category: str) -> None:
     [
         ("HDMI_1", True),
         ("TV", True),
+        ("TV_INPUT", True),
         ("DTV", True),
         ("BS4K", True),
         ("CS4K", True),
+        ("INPUT", True),
+        ("SOURCE", True),
+        ("NEXT_HDMI_INPUT", True),
+        ("COMPONENT_INPUT", True),
         ("NETFLIX", True),
-        ("INPUT", False),
-        ("SOURCE", False),
+        ("AMAZON_PRIME", True),
+        ("HULU", True),
+        ("BROWSER", True),
+        (" input ", True),
+        ("hdmi 1", True),
+        ("amazon-prime", True),
+        ("next hdmi input", True),
         ("THREE_DIGIT_INPUT", False),
         ("VOLUME_UP", False),
     ],
@@ -119,3 +131,27 @@ def test_command_category(command_name: str, expected_category: str) -> None:
 def test_command_is_media_player_source(command_name: str, expected: bool) -> None:
     """Test media-player source command detection."""
     assert command_is_media_player_source(command_name) is expected
+
+
+@pytest.mark.parametrize("command_name", TV_SOURCE_COMMAND_MAP.values())
+def test_all_tv_source_map_commands_are_media_player_sources(
+    command_name: str,
+) -> None:
+    """Test every configured TV source-map command is classified as a source."""
+    assert command_is_media_player_source(command_name) is True
+
+
+def test_tv_media_player_source_commands_uses_normalized_command_names() -> None:
+    """Test source mapping uses the same normalized lookup as the media player."""
+    assert tv_media_player_source_commands(
+        {
+            "hdmi 1": "first",
+            "amazon-prime": "second",
+            "next hdmi input": "third",
+            "VOLUME_UP": "ignored",
+        }
+    ) == {
+        "Next HDMI input": "next hdmi input",
+        "HDMI 1": "hdmi 1",
+        "Amazon Prime": "amazon-prime",
+    }

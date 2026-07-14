@@ -40,7 +40,6 @@ from .infrared_library import (
     infrared_library_codeset_device_type,
     infrared_library_codeset_label,
     infrared_library_codeset_options,
-    infrared_library_codeset_supports_receiver,
     infrared_library_command_options,
     infrared_library_device_type_label,
     infrared_library_device_type_options,
@@ -121,9 +120,6 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not validate_infrared_library_device_type(device_type):
                 errors[CONF_REMOTE_DEVICE_TYPE] = "invalid_device_type"
-            elif infrared_receiver_id and device_type == DEVICE_TYPE_GENERIC:
-                errors[CONF_REMOTE_DEVICE_TYPE] = "receiver_device_type_required"
-
             remote_id = unique_remote_id(name, [])
 
             if not errors:
@@ -135,10 +131,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._infrared_receiver_id = infrared_receiver_id or None
                 self._device_type = device_type
 
-                if (
-                    device_type == DEVICE_TYPE_GENERIC
-                    and self._infrared_receiver_id is None
-                ):
+                if device_type == DEVICE_TYPE_GENERIC:
                     return self._create_entry({})
 
                 return await self.async_step_select_codeset()
@@ -201,7 +194,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ):
             return await self.async_step_user()
 
-        if device_type == DEVICE_TYPE_GENERIC and self._infrared_receiver_id is None:
+        if device_type == DEVICE_TYPE_GENERIC:
             return self._create_entry({})
 
         if user_input is not None:
@@ -213,12 +206,6 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 device_type=device_type,
             ):
                 errors[CONF_REMOTE_CODESET] = "invalid_library_codeset"
-
-            if self._infrared_receiver_id is not None:
-                if not is_infrared_library_codeset_selected(codeset_id):
-                    errors[CONF_REMOTE_CODESET] = "receiver_codeset_required"
-                elif not infrared_library_codeset_supports_receiver(codeset_id):
-                    errors[CONF_REMOTE_CODESET] = "receiver_codeset_unsupported"
 
             if not errors:
                 self._codeset_id = codeset_id
@@ -509,9 +496,6 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             if not validate_infrared_library_device_type(device_type):
                 errors[CONF_REMOTE_DEVICE_TYPE] = "invalid_device_type"
-            elif infrared_receiver_id and device_type == DEVICE_TYPE_GENERIC:
-                errors[CONF_REMOTE_DEVICE_TYPE] = "receiver_device_type_required"
-
             if not errors:
                 remote[CONF_REMOTE_NAME] = name
                 if infrared_emitter_id:
@@ -533,10 +517,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
                 )
 
-                if (
-                    device_type == DEVICE_TYPE_GENERIC
-                    and not remote.get(CONF_INFRARED_RECEIVER_ID)
-                ):
+                if device_type == DEVICE_TYPE_GENERIC:
                     remote.pop(CONF_REMOTE_CODESET, None)
                     return self._update_reconfigure_entry(remote)
 
@@ -620,10 +601,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         device_type = str(remote.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
         errors: dict[str, str] = {}
 
-        if (
-            device_type == DEVICE_TYPE_GENERIC
-            and not remote.get(CONF_INFRARED_RECEIVER_ID)
-        ):
+        if device_type == DEVICE_TYPE_GENERIC:
             remote.pop(CONF_REMOTE_CODESET, None)
             return self._update_reconfigure_entry(remote)
 
@@ -637,11 +615,6 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 device_type=device_type,
             ):
                 errors[CONF_REMOTE_CODESET] = "invalid_library_codeset"
-            if not errors and remote.get(CONF_INFRARED_RECEIVER_ID):
-                if not is_infrared_library_codeset_selected(codeset_id):
-                    errors[CONF_REMOTE_CODESET] = "receiver_codeset_required"
-                elif not infrared_library_codeset_supports_receiver(codeset_id):
-                    errors[CONF_REMOTE_CODESET] = "receiver_codeset_unsupported"
             if not errors:
                 if is_infrared_library_codeset_selected(codeset_id):
                     remote[CONF_REMOTE_CODESET] = codeset_id

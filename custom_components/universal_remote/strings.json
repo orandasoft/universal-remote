@@ -17,10 +17,7 @@
       "remote_name_required": "Remote name is required.",
       "infrared_emitter_unavailable": "Selected infrared emitter is unavailable.",
       "infrared_target_required": "Select at least one infrared emitter or receiver.",
-      "infrared_receiver_unavailable": "Selected infrared receiver is unavailable.",
-      "receiver_codeset_required": "Select an infrared library codeset when an infrared receiver is configured.",
-      "receiver_codeset_unsupported": "The selected infrared library codeset does not support received command decoding.",
-      "receiver_device_type_required": "Select a specific device type when an infrared receiver is configured."
+      "infrared_receiver_unavailable": "Selected infrared receiver is unavailable."
     },
     "step": {
       "import_commands": {
@@ -196,7 +193,11 @@
       "invalid_library_codeset": "The selected infrared library codeset is not available.",
       "no_available_infrared_emitters": "No infrared emitters are available.",
       "no_remote_commands": "No commands are configured.",
-      "no_universal_remotes": "No universal remotes are configured."
+      "no_universal_remotes": "No universal remotes are configured.",
+      "no_available_infrared_receivers": "No infrared receivers are available.",
+      "learn_failed": "The learned command did not produce a usable command candidate.",
+      "no_configured_infrared_receiver": "This universal remote does not have an infrared receiver configured.",
+      "infrared_receiver_unavailable": "Selected infrared receiver is unavailable."
     },
     "error": {
       "command_data_required": "Command data is required.",
@@ -211,7 +212,17 @@
       "library_commands_exist": "These selected library commands already exist: {existing_commands}. Remove them from the selection before submitting.",
       "library_commands_required": "Select at least one infrared library command.",
       "remote_name_required": "Remote name is required.",
-      "infrared_emitter_unavailable": "Selected infrared emitter is unavailable."
+      "infrared_emitter_unavailable": "Selected infrared emitter is unavailable.",
+      "infrared_receiver_unavailable": "Selected infrared receiver is unavailable.",
+      "learn_receiver_busy": "The selected infrared receiver is already learning another command.",
+      "learn_timeout": "No valid infrared command was received before the learning timeout.",
+      "invalid_learn_candidate": "Selected learned command candidate is invalid.",
+      "invalid_learn_decoder": "Selected learned-command decoder is invalid.",
+      "invalid_learn_review_action": "Selected learned-command review action is invalid.",
+      "learn_test_send_failed": "The learned command test send failed. You can retry capture, save anyway, or discard the learned command.",
+      "invalid_learn_overwrite_action": "Selected learned-command overwrite action is invalid.",
+      "learn_pronto_conversion_failed": "The captured signal could not be converted to a valid Pronto HEX command. Retry capture or discard the learned command.",
+      "invalid_learn_failure_action": "Selected learned-command recovery action is invalid."
     },
     "step": {
       "add_raw_command": {
@@ -306,7 +317,8 @@
           "add_raw_command": "Add raw command",
           "edit_command": "Edit command",
           "import_library_commands": "Import library commands",
-          "remove_command": "Delete command"
+          "remove_command": "Delete command",
+          "learn_command": "Learn command"
         },
         "title": "Manage Commands"
       },
@@ -327,7 +339,91 @@
           "command_name": "Command to edit."
         },
         "title": "Select Command"
+      },
+      "learn_command": {
+        "data": {
+          "infrared_receiver_id": "Infrared receiver"
+        },
+        "data_description": {
+          "infrared_receiver_id": "Receiver that will listen for the command."
+        },
+        "description": "Select the infrared receiver to use, then click Submit to start learning.",
+        "title": "Learn Command"
+      },
+      "learn_capture": {
+        "description": "Press the infrared remote button you want to learn near {receiver}.",
+        "title": "Capture Command"
+      },
+      "learn_select_candidate": {
+        "data": {
+          "command_name": "Command name",
+          "learn_candidate": "Learned command candidate",
+          "create_button": "Create button entity"
+        },
+        "data_description": {
+          "command_name": "Name used with remote.send_command.",
+          "learn_candidate": "Select the Pronto HEX candidate to save for this command.",
+          "create_button": "Create a button entity for this learned command."
+        },
+        "description": "Select the learned command candidate to save.\n\n{candidate_details}",
+        "title": "Save Learned Command"
+      },
+      "learn_select_decoder": {
+        "data": {
+          "learn_decoder": "Decoder"
+        },
+        "data_description": {
+          "learn_decoder": "Choose how to decode the captured signal. Use None to save the captured signal only."
+        },
+        "description": "Captured signal: {capture_details}",
+        "title": "Select Decoder"
+      },
+      "learn_review": {
+        "description": "Capture completed successfully.\n\nReceiver: {receiver}\nDecoder: {decoder}\nCaptured signal: {capture_details}\n\nReview the learned command candidates before saving.\n\n{candidate_details}\n\n{test_send_result}",
+        "menu_option_descriptions": {
+          "test_captured": "Send the original captured signal through the configured infrared emitter.",
+          "test_normalized": "Send the decoded and normalized signal through the configured infrared emitter.",
+          "continue_save": "Choose a candidate, name the command, and save it.",
+          "save_anyway": "Continue to save the learned command even though the last test send failed.",
+          "retry_capture": "Discard this capture and listen for the command again using the selected receiver.",
+          "discard": "Discard this capture without changing the remote."
+        },
+        "menu_options": {
+          "test_captured": "Test captured candidate",
+          "test_normalized": "Test normalized candidate",
+          "continue_save": "Continue to save",
+          "save_anyway": "Save anyway",
+          "retry_capture": "Retry capture",
+          "discard": "Discard"
+        },
+        "title": "Review Learned Command"
+      },
+      "learn_capture_progress_done": {
+        "title": "Capture Complete"
+      },
+      "learn_confirm_overwrite": {
+        "data": {
+          "learn_overwrite_action": "Action"
+        },
+        "data_description": {
+          "learn_overwrite_action": "Choose whether to replace the existing command, go back and change the learned command name, or discard the learned command."
+        },
+        "description": "Command {command_name} already exists. Confirm before replacing it with this learned command.\n\n{candidate_details}",
+        "title": "Replace Existing Command"
+      },
+      "learn_conversion_failed": {
+        "title": "Learned Command Conversion Failed",
+        "description": "The captured signal could not be converted to a valid Pronto HEX command. No command was saved.\n\nCaptured signal: {capture_details}",
+        "data": {
+          "learn_failure_action": "Action"
+        },
+        "data_description": {
+          "learn_failure_action": "Choose whether to retry capture or discard the learned command without changing the remote."
+        }
       }
+    },
+    "progress": {
+      "learn_capture": "Waiting for an infrared command from {receiver}."
     }
   },
   "selector": {
@@ -342,6 +438,33 @@
         "all": "Import all commands",
         "no": "No",
         "select": "Select commands"
+      }
+    },
+    "learn_decoder": {
+      "options": {
+        "auto": "Auto (recommended)",
+        "none": "None / captured only",
+        "nec": "NEC",
+        "nec1_f16": "NEC1-F16"
+      }
+    },
+    "learn_candidate": {
+      "options": {
+        "captured": "Captured",
+        "normalized": "Normalized"
+      }
+    },
+    "learn_overwrite_action": {
+      "options": {
+        "confirm": "Replace existing command",
+        "back": "Go back",
+        "discard": "Discard learned command"
+      }
+    },
+    "learn_failure_action": {
+      "options": {
+        "retry_capture": "Retry capture",
+        "discard": "Discard learned command"
       }
     }
   }
