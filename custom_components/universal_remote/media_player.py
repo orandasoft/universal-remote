@@ -16,6 +16,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
+from .command_ui import tv_media_player_source_commands
 from .const import (
     CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
@@ -24,12 +25,12 @@ from .const import (
     CONF_REMOTE_NAME,
     DEVICE_TYPE_TV,
     DOMAIN,
-    SOURCE_COMMAND_MAPS,
 )
 from .helpers import (
     command_payload,
     find_configured_command,
     linked_entity_is_available,
+    normalize_command_name,
     normalize_command_objects,
     universal_remote_device_info,
     universal_remotes_from_config_entry,
@@ -95,9 +96,7 @@ async def async_setup_entry(
 
     runtime_data = getattr(entry, "runtime_data", None)
     runtime = (
-        runtime_data.runtime
-        if isinstance(runtime_data, UniversalRemoteData)
-        else None
+        runtime_data.runtime if isinstance(runtime_data, UniversalRemoteData) else None
     )
 
     for remote in universal_remotes_from_config_entry(entry):
@@ -162,10 +161,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         self._infrared_emitter_id = infrared_emitter_id
         self._runtime = runtime
         self._commands = normalize_command_objects(commands)
-        self._source_commands = _source_commands(
-            self._commands,
-            SOURCE_COMMAND_MAPS[DEVICE_TYPE_TV],
-        )
+        self._source_commands = tv_media_player_source_commands(self._commands)
         self._role_commands = _role_commands(self._commands)
         self._attr_unique_id = unique_id
         self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
@@ -206,7 +202,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
                     (
                         source
                         for source, command_name in self._source_commands.items()
-                        if command_name == selected_tuner
+                        if normalize_command_name(command_name) == selected_tuner
                     ),
                     None,
                 )
@@ -337,21 +333,6 @@ def _role_commands(commands: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
                 break
 
     return roles
-
-
-def _source_commands(
-    commands: Mapping[str, Mapping[str, Any]],
-    source_command_map: Mapping[str, str],
-) -> dict[str, str]:
-    """Return source labels mapped to configured command names."""
-    sources: dict[str, str] = {}
-
-    for source, candidate_name in source_command_map.items():
-        configured_command = find_configured_command(commands, candidate_name)
-        if configured_command is not None:
-            sources[source] = configured_command[0]
-
-    return sources
 
 
 def _supported_features(

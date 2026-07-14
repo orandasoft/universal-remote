@@ -345,9 +345,9 @@
           "infrared_receiver_id": "Infrared receiver"
         },
         "data_description": {
-          "infrared_receiver_id": "Infrared receiver used to learn the command."
+          "infrared_receiver_id": "Receiver that will listen for the command."
         },
-        "description": "Choose the receiver before learning.",
+        "description": "Select the infrared receiver to use, then click Submit to start learning.",
         "title": "Learn Command"
       },
       "learn_capture": {
@@ -419,35 +419,6 @@
         },
         "data_description": {
           "learn_failure_action": "Choose whether to retry capture or discard the learned command without changing the remote."
-        }
-      }
-    },
-    "selector": {
-      "learn_overwrite_action": {
-        "options": {
-          "confirm": "Replace existing command",
-          "back": "Go back",
-          "discard": "Discard learned command"
-        }
-      },
-      "learn_decoder": {
-        "options": {
-          "auto": "Auto (recommended)",
-          "none": "None / captured only",
-          "nec": "NEC",
-          "nec1_f16": "NEC1-F16"
-        }
-      },
-      "learn_candidate": {
-        "options": {
-          "captured": "Captured",
-          "normalized": "Normalized"
-        }
-      },
-      "learn_failure_action": {
-        "options": {
-          "retry_capture": "Retry capture",
-          "discard": "Discard learned command"
         }
       }
     },

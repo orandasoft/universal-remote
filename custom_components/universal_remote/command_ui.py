@@ -1,9 +1,11 @@
 """UI helpers for Universal Remote commands."""
 
+from collections.abc import Mapping
 import re
-from typing import Final
+from typing import Any, Final
 
 from .const import TV_SOURCE_COMMAND_MAP
+from .helpers import find_configured_command
 
 COMMAND_CATEGORY_POWER: Final = "power"
 COMMAND_CATEGORY_VOLUME: Final = "volume"
@@ -143,9 +145,23 @@ _APP_COMMANDS: Final[set[str]] = {
 }
 
 
+def tv_media_player_source_commands(
+    commands: Mapping[str, Any],
+) -> dict[str, str]:
+    """Return TV source labels mapped to configured command names."""
+    sources: dict[str, str] = {}
+
+    for source, candidate_name in TV_SOURCE_COMMAND_MAP.items():
+        configured_command = find_configured_command(commands, candidate_name)
+        if configured_command is not None:
+            sources[source] = configured_command[0]
+
+    return sources
+
+
 def command_is_media_player_source(command_name: str) -> bool:
     """Return whether a command should be exposed as a media-player source."""
-    return command_name.strip().upper() in TV_SOURCE_COMMAND_MAP.values()
+    return bool(tv_media_player_source_commands({command_name: None}))
 
 
 def command_icon(command_name: str) -> str:

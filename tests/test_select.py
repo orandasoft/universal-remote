@@ -338,8 +338,7 @@ async def test_async_setup_entry_skips_invalid_remote_definition(
     async_add_entities = Mock()
 
     with patch(
-        "custom_components.universal_remote.select."
-        "universal_remotes_from_config_entry",
+        "custom_components.universal_remote.select.universal_remotes_from_config_entry",
         return_value=[{CONF_REMOTE_ID: "", CONF_REMOTE_NAME: REMOTE_NAME}],
     ):
         await async_setup_entry(hass, entry, async_add_entities)

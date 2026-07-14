@@ -8,7 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 
-from .command_ui import command_is_media_player_source
+from .command_ui import tv_media_player_source_commands
 from .const import (
     CONF_INFRARED_EMITTER_ID,
     CONF_INFRARED_RECEIVER_ID,
@@ -48,8 +48,8 @@ async def async_get_config_entry_diagnostics(
             {
                 "title": entry.title,
                 "domain": entry.domain,
-                "data": dict(entry.data),
-                "options": _redacted_options(entry.options),
+                "data": _redacted_entry_mapping(entry.data),
+                "options": _redacted_entry_mapping(entry.options),
                 "unique_id": entry.unique_id,
             },
             TO_REDACT,
@@ -87,13 +87,15 @@ async def async_get_config_entry_diagnostics(
     return diagnostics_data
 
 
-def _redacted_options(options: Mapping[str, Any]) -> dict[str, Any]:
-    """Return options without full infrared command payloads."""
-    redacted = dict(options)
+def _redacted_entry_mapping(mapping: Mapping[str, Any]) -> dict[str, Any]:
+    """Return config-entry data without full infrared command payloads."""
+    redacted = dict(mapping)
 
     commands = redacted.get(CONF_REMOTE_COMMANDS)
-    if isinstance(commands, dict):
-        redacted[CONF_REMOTE_COMMANDS] = sorted(commands)
+    if isinstance(commands, Mapping):
+        redacted[CONF_REMOTE_COMMANDS] = sorted(str(name) for name in commands)
+    elif CONF_REMOTE_COMMANDS in redacted:
+        redacted[CONF_REMOTE_COMMANDS] = "<redacted>"
 
     return redacted
 
@@ -109,17 +111,12 @@ def _diagnostic_remotes(
         infrared_emitter_id = item.get(CONF_INFRARED_EMITTER_ID)
         infrared_receiver_id = item.get(CONF_INFRARED_RECEIVER_ID)
         commands = item.get(CONF_REMOTE_COMMANDS, {})
-        command_names = sorted(commands) if isinstance(commands, dict) else []
-        button_count = (
-            sum(1 for command in commands.values() if command_create_button(command))
-            if isinstance(commands, dict)
-            else 0
+        command_mapping = commands if isinstance(commands, Mapping) else {}
+        command_names = sorted(str(name) for name in command_mapping)
+        button_count = sum(
+            1 for command in command_mapping.values() if command_create_button(command)
         )
-        source_count = sum(
-            1
-            for command_name in command_names
-            if command_is_media_player_source(command_name)
-        )
+        source_count = len(tv_media_player_source_commands(command_mapping))
         device_type = str(item.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
         codeset_id = str(item.get(CONF_REMOTE_CODESET, NO_INFRARED_LIBRARY_CODESET))
         receiver_event_expected = isinstance(infrared_receiver_id, str)
@@ -179,14 +176,14 @@ def _diagnostic_remotes(
                 ),
                 "button_count": button_count,
                 "source_count": source_count,
-                "command_count": len(commands) if isinstance(commands, dict) else 0,
+                "command_count": len(command_mapping),
                 "commands": command_names,
                 "learning": {
                     "receiver_configured": receiver_configured,
                     "receiver_available": infrared_receiver_available,
                     "selectable_receiver_count": len(receiver_options),
-                    "configured_receiver_selectable": (configured_receiver_selectable),
-                    "alternative_receiver_available": (alternative_receiver_available),
+                    "configured_receiver_selectable": configured_receiver_selectable,
+                    "alternative_receiver_available": alternative_receiver_available,
                     "emitter_configured": emitter_configured,
                     "emitter_available": infrared_emitter_available,
                     "available_decoders": [
@@ -194,9 +191,8 @@ def _diagnostic_remotes(
                         for decoder in LEARN_DECODERS
                         if decoder not in (LEARN_DECODER_AUTO, LEARN_DECODER_NONE)
                     ],
-                    "learn_command_available": (
-                        receiver_configured and bool(receiver_options)
-                    ),
+                    "learn_command_available": receiver_configured
+                    and bool(receiver_options),
                 },
             }
         )

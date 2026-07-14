@@ -250,6 +250,7 @@ def test_button_available_without_hass_returns_true(infrared_emitter: str) -> No
 
     assert entity.available
 
+
 async def test_async_setup_entry_ignores_receiver_only_entry(
     hass: HomeAssistant,
 ) -> None:
@@ -284,7 +285,8 @@ async def test_async_setup_entry_ignores_receiver_only_entry(
         )
         is None
     )
-    
+
+
 async def test_async_setup_entry_directly_skips_receiver_only_entry(
     hass: HomeAssistant,
 ) -> None:
@@ -311,7 +313,6 @@ async def test_async_setup_entry_directly_skips_receiver_only_entry(
     await async_setup_entry(hass, entry, async_add_entities)
 
     async_add_entities.assert_called_once_with([])
-
 
 
 async def test_button_press_uses_runtime_command_name(

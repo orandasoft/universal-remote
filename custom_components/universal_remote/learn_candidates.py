@@ -171,8 +171,10 @@ def _command_raw_timings(command: Command) -> list[int]:
 
     try:
         return list(get_raw_timings())
-    except TypeError as err:
-        raise LearnCandidateError("Decoded command generated invalid raw timings") from err
+    except (TypeError, ValueError, OverflowError) as err:
+        raise LearnCandidateError(
+            "Decoded command generated invalid raw timings"
+        ) from err
 
 
 def _command_modulation(command: Command, fallback_modulation: int) -> int:

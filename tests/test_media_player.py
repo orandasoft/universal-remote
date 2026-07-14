@@ -277,8 +277,7 @@ async def test_media_player_role_actions_send_infrared_command(
     entity = _media_player_entity(hass, infrared_emitter)
 
     with patch(
-        "custom_components.universal_remote.media_player."
-        "async_send_infrared_command",
+        "custom_components.universal_remote.media_player.async_send_infrared_command",
         AsyncMock(),
     ) as mock_send:
         await entity.async_volume_down()
@@ -367,6 +366,25 @@ def test_media_player_without_source_commands_has_no_source_feature(
     assert not entity.supported_features & MediaPlayerEntityFeature.SELECT_SOURCE
 
 
+def test_media_player_source_lookup_normalizes_command_names(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test source list uses normalized configured command names."""
+    entity = _media_player_entity(
+        hass,
+        infrared_emitter,
+        commands={
+            "next hdmi input": _command_object(RAW_COMMAND),
+            "hdmi 1": _command_object(RAW_COMMAND),
+            "amazon-prime": _command_object(RAW_COMMAND),
+        },
+    )
+
+    assert entity.source_list == ["Next HDMI input", "HDMI 1", "Amazon Prime"]
+    assert entity.supported_features & MediaPlayerEntityFeature.SELECT_SOURCE
+
+
 async def test_media_player_cs4k_source_is_supported(
     hass: HomeAssistant,
     infrared_emitter: str,
@@ -395,7 +413,40 @@ async def test_media_player_cs4k_source_is_supported(
     assert entity.source == "CS4K"
     write_state.assert_called_once()
 
-    
+
+async def test_media_player_tuner_listener_normalizes_legacy_command_key(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test a runtime tuner update selects a legacy-cased source command."""
+    commands = {
+        "cs4k": _command_object(RAW_COMMAND),
+        "cs4k num 1": _command_object(RAW_COMMAND),
+    }
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={name: RAW_COMMAND for name in commands},
+    )
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        commands=commands,
+        unique_id="entry_media_player_living_room_tv",
+        runtime=runtime,
+    )
+    entity.hass = hass
+
+    with patch.object(entity, "async_write_ha_state") as write_state:
+        await entity.async_added_to_hass()
+        runtime._set_selected_tuner("CS4K")
+
+    assert entity.source == "CS4K"
+    write_state.assert_called_once()
+    await entity.async_will_remove_from_hass()
+
+
 async def test_media_player_missing_role_raises(
     hass: HomeAssistant,
     infrared_emitter: str,
@@ -470,6 +521,7 @@ def test_media_player_available_before_added_to_hass(infrared_emitter: str) -> N
 
     assert entity.available
 
+
 async def test_async_setup_entry_skips_tv_remote_without_emitter(
     hass: HomeAssistant,
 ) -> None:
@@ -523,8 +575,6 @@ async def test_async_setup_entry_directly_skips_generic_remote(
         await async_setup_entry(hass, entry, async_add_entities)
 
     async_add_entities.assert_called_once_with([])
-
-
 
 
 async def test_media_player_source_uses_runtime_command_name(

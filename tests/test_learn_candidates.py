@@ -40,6 +40,16 @@ class FakeCommand:
         return self._timings
 
 
+class RaisingTimingsCommand:
+    """Fake decoded command that fails while generating timings."""
+
+    modulation = 38_000
+
+    def get_raw_timings(self) -> list[int]:
+        """Raise a decoder regeneration error."""
+        raise ValueError("invalid decoded command")
+
+
 class MissingTimingsCommand:
     """Fake decoded command without get_raw_timings."""
 
@@ -91,6 +101,19 @@ def test_build_captured_candidate() -> None:
 
     parsed = parse_remote_command(candidate.payload)
     assert parsed.modulation == pytest.approx(38_000, abs=100)
+
+
+def test_build_learn_candidates_keeps_captured_when_regeneration_raises() -> None:
+    """Test normalized regeneration errors keep the captured candidate."""
+    candidates = build_learn_candidates(
+        [9000, -4500, 560, -560],
+        38_000,
+        normalized_command=cast(Command, RaisingTimingsCommand()),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].key == CANDIDATE_CAPTURED
+    assert candidates[0].recommended is True
 
 
 def test_build_captured_candidate_rejects_invalid_pronto() -> None:

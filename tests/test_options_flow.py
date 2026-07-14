@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from custom_components.universal_remote import options_flow as options_flow_module
 from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
@@ -29,6 +30,7 @@ from custom_components.universal_remote.learn import (
     LEARN_DECODER_NEC,
     LEARN_DECODER_NEC1_F16,
     LEARN_DECODER_NONE,
+    LearnDecoderDefinition,
     LearnCapture,
     LearnResult,
 )
@@ -2060,6 +2062,37 @@ async def test_learn_confirm_overwrite_replaces_existing_command(
     assert flow._learn_pending_command_name is None
 
 
+async def test_learn_confirm_overwrite_replaces_noncanonical_storage_key(
+    hass: HomeAssistant,
+) -> None:
+    """Test overwrite removes the matching legacy command key."""
+    entry = _receiver_only_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry,
+        options={CONF_REMOTE_COMMANDS: {"Power On": RAW_COMMAND}},
+    )
+    flow = UniversalRemoteOptionsFlow(entry)
+    flow.hass = hass
+    flow._learn_result = _learn_result()
+
+    result = await flow.async_step_learn_select_candidate(
+        {
+            COMMAND_NAME: "POWER_ON",
+            COMMAND_LEARN_CANDIDATE: CANDIDATE_CAPTURED,
+        }
+    )
+    assert result["step_id"] == SOURCE_LEARN_CONFIRM_OVERWRITE
+
+    result = await flow.async_step_learn_confirm_overwrite(
+        {COMMAND_OVERWRITE_ACTION: LEARN_OVERWRITE_ACTION_CONFIRM}
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    commands = result["data"][CONF_REMOTE_COMMANDS]
+    assert set(commands) == {"POWER_ON"}
+    assert commands["POWER_ON"] == _command_object(LEARNED_COMMAND)
+
+
 async def test_learn_confirm_overwrite_back_clears_confirmation_state(
     hass: HomeAssistant,
 ) -> None:
@@ -2618,6 +2651,29 @@ def test_learn_decoder_options() -> None:
         {"value": LEARN_DECODER_NEC, "label": "NEC"},
         {"value": LEARN_DECODER_NEC1_F16, "label": "NEC1-F16"},
     ]
+
+
+def test_learn_decoder_registry_extends_selector_without_flow_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a registered decoder automatically appears in the flow selector."""
+    custom_decoder = LearnDecoderDefinition(
+        "custom",
+        "custom",
+        "Custom protocol",
+        lambda _signal: None,
+    )
+    monkeypatch.setattr(
+        options_flow_module,
+        "LEARN_DECODER_REGISTRY",
+        (*LEARN_DECODER_REGISTRY, custom_decoder),
+    )
+
+    assert options_flow_module.learn_decoder_options()[-1] == {
+        "value": "custom",
+        "label": "Custom protocol",
+    }
+    assert options_flow_module.learn_decoder_label("custom") == "Custom protocol"
 
 
 def test_learn_overwrite_action_options() -> None:

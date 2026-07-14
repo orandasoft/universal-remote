@@ -73,6 +73,9 @@ def _available_infrared_options(
         if registry_entry is not None and registry_entry.disabled_by is not None:
             continue
 
+        if not linked_entity_is_available(hass, entity_id):
+            continue
+
         options[entity_id] = selector.SelectOptionDict(
             value=entity_id,
             label=_infrared_entity_label(hass, entity_id, registry_entry),
@@ -94,10 +97,10 @@ def _infrared_entity_label(
     context_label = _infrared_device_context_label(hass, registry_entry)
 
     if context_label is not None and context_label != base_label:
-        return f"{base_label} — {context_label} ({entity_id})"
+        return f"{base_label} — {context_label}"
 
     if base_label != entity_id:
-        return f"{base_label} ({entity_id})"
+        return base_label
 
     return entity_id
 

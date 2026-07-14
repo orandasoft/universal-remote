@@ -48,7 +48,7 @@ from custom_components.universal_remote.helpers import (
     universal_remote_from_config_entry_data,
     universal_remotes_from_config_entry,
 )
-from homeassistant.const import STATE_UNAVAILABLE
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er, selector
 
@@ -90,6 +90,13 @@ def test_available_infrared_emitters(hass: HomeAssistant) -> None:
         disabled_by=er.RegistryEntryDisabler.USER,
     )
     registry.async_get_or_create(
+        "infrared",
+        "test",
+        "ir_unavailable",
+        suggested_object_id="ir_unavailable",
+        original_name="Unavailable IR",
+    )
+    registry.async_get_or_create(
         "light",
         "test",
         "light",
@@ -97,22 +104,31 @@ def test_available_infrared_emitters(hass: HomeAssistant) -> None:
         original_name="Ignored",
     )
 
+    hass.states.async_set("infrared.ir_a", STATE_ON)
+    hass.states.async_set("infrared.ir_b", STATE_ON)
+    hass.states.async_set("infrared.ir_disabled", STATE_ON)
+    hass.states.async_set("infrared.ir_unavailable", STATE_UNAVAILABLE)
+
     with patch(
         "custom_components.universal_remote.helpers.infrared.async_get_emitters",
         return_value=[
             "infrared.ir_b",
             "infrared.ir_a",
             "infrared.ir_disabled",
+            "infrared.ir_unavailable",
+            "infrared.ir_missing",
         ],
     ):
         options = available_infrared_emitters(hass)
 
     assert list(options) == ["infrared.ir_a", "infrared.ir_b"]
     assert options["infrared.ir_a"]["value"] == "infrared.ir_a"
-    assert options["infrared.ir_a"]["label"] == "IR A (infrared.ir_a)"
+    assert options["infrared.ir_a"]["label"] == "IR A"
     assert options["infrared.ir_b"]["value"] == "infrared.ir_b"
-    assert options["infrared.ir_b"]["label"] == "IR B (infrared.ir_b)"
+    assert options["infrared.ir_b"]["label"] == "IR B"
     assert "infrared.ir_disabled" not in options
+    assert "infrared.ir_unavailable" not in options
+    assert "infrared.ir_missing" not in options
     assert "light.ignored" not in options
 
 
@@ -141,6 +157,18 @@ def test_available_infrared_receivers(hass: HomeAssistant) -> None:
         original_name="Disabled Receiver",
         disabled_by=er.RegistryEntryDisabler.USER,
     )
+    registry.async_get_or_create(
+        "infrared",
+        "test",
+        "receiver_unavailable",
+        suggested_object_id="receiver_unavailable",
+        original_name="Unavailable Receiver",
+    )
+
+    hass.states.async_set("infrared.receiver_a", STATE_ON)
+    hass.states.async_set("infrared.receiver_b", STATE_ON)
+    hass.states.async_set("infrared.receiver_disabled", STATE_ON)
+    hass.states.async_set("infrared.receiver_unavailable", STATE_UNAVAILABLE)
 
     with patch(
         "custom_components.universal_remote.helpers.infrared.async_get_receivers",
@@ -148,22 +176,20 @@ def test_available_infrared_receivers(hass: HomeAssistant) -> None:
             "infrared.receiver_b",
             "infrared.receiver_a",
             "infrared.receiver_disabled",
+            "infrared.receiver_unavailable",
+            "infrared.receiver_missing",
         ],
     ):
         options = available_infrared_receivers(hass)
 
     assert list(options) == ["infrared.receiver_a", "infrared.receiver_b"]
     assert options["infrared.receiver_a"]["value"] == "infrared.receiver_a"
-    assert (
-        options["infrared.receiver_a"]["label"]
-        == "Receiver A (infrared.receiver_a)"
-    )
+    assert options["infrared.receiver_a"]["label"] == "Receiver A"
     assert options["infrared.receiver_b"]["value"] == "infrared.receiver_b"
-    assert (
-        options["infrared.receiver_b"]["label"]
-        == "Receiver B (infrared.receiver_b)"
-    )
+    assert options["infrared.receiver_b"]["label"] == "Receiver B"
     assert "infrared.receiver_disabled" not in options
+    assert "infrared.receiver_unavailable" not in options
+    assert "infrared.receiver_missing" not in options
 
 
 class _FakeRegistryEntry:
@@ -234,10 +260,10 @@ class _FakeAreaRegistry:
         return self._area
 
 
-def test_infrared_entity_label_includes_area_device_and_entity_id(
+def test_infrared_entity_label_includes_area_and_device(
     hass: HomeAssistant,
 ) -> None:
-    """Test infrared labels include area, device, and entity id context."""
+    """Test infrared labels include area and device context."""
     entry = _FakeRegistryEntry()
 
     with (
@@ -252,9 +278,7 @@ def test_infrared_entity_label_includes_area_device_and_entity_id(
     ):
         label = _infrared_entity_label(hass, "infrared.receiver", entry)
 
-    assert label == (
-        "IR Receiver — Living Room BroadLink RM4 Pro (infrared.receiver)"
-    )
+    assert label == "IR Receiver — Living Room BroadLink RM4 Pro"
 
 
 def test_infrared_entity_label_uses_entity_id_without_registry_entry(
@@ -262,8 +286,7 @@ def test_infrared_entity_label_uses_entity_id_without_registry_entry(
 ) -> None:
     """Test infrared labels fall back to entity id without a registry entry."""
     assert (
-        _infrared_entity_label(hass, "infrared.receiver", None)
-        == "infrared.receiver"
+        _infrared_entity_label(hass, "infrared.receiver", None) == "infrared.receiver"
     )
 
 
@@ -279,8 +302,7 @@ def test_infrared_entity_label_uses_entity_id_without_names_or_context(
     )
 
     assert (
-        _infrared_entity_label(hass, "infrared.receiver", entry)
-        == "infrared.receiver"
+        _infrared_entity_label(hass, "infrared.receiver", entry) == "infrared.receiver"
     )
 
 
@@ -369,7 +391,6 @@ def test_infrared_receiver_selector_includes_current_missing_receiver() -> None:
     assert values == ["infrared.valid", "infrared.missing"]
 
 
-
 def test_infrared_emitter_field_defaults() -> None:
     """Test selector field defaults."""
     available: dict[str, selector.SelectOptionDict] = {
@@ -408,7 +429,9 @@ def test_infrared_receiver_field_defaults() -> None:
         _field_default(infrared_receiver_field("infrared.valid", available))
         == "infrared.valid"
     )
-    assert _field_default(infrared_receiver_field("infrared.missing", available)) is None
+    assert (
+        _field_default(infrared_receiver_field("infrared.missing", available)) is None
+    )
     assert (
         _field_default(
             infrared_receiver_field_with_current(
@@ -418,7 +441,6 @@ def test_infrared_receiver_field_defaults() -> None:
         )
         == "infrared.missing"
     )
-
 
 
 def test_normalize_ids_and_command_names() -> None:
@@ -486,7 +508,7 @@ def test_find_configured_command_preserves_stored_value() -> None:
 
     assert find_configured_command(commands, "broken") == ("BROKEN", "")
 
-    
+
 def test_command_payload_helpers() -> None:
     """Test command payload and button helper branches."""
     assert command_payload("38000:1,2") == "38000:1,2"
@@ -707,7 +729,6 @@ def test_infrared_receiver_field_with_current_without_default_uses_optional_fiel
     assert field.default is vol.UNDEFINED
 
 
-
 def test_universal_remote_from_config_entry_data() -> None:
     """Test normalizing a single universal remote from config entry data."""
     assert universal_remote_from_config_entry_data(
@@ -751,7 +772,9 @@ def test_universal_remote_from_config_entry_data_supports_receiver_only() -> Non
     }
 
 
-def test_universal_remote_from_config_entry_data_supports_emitter_and_receiver() -> None:
+def test_universal_remote_from_config_entry_data_supports_emitter_and_receiver() -> (
+    None
+):
     """Test normalizing a universal remote with emitter and receiver."""
     assert universal_remote_from_config_entry_data(
         {
@@ -782,7 +805,6 @@ def test_universal_remote_from_config_entry_data_rejects_missing_ir_target() -> 
         )
         is None
     )
-
 
 
 def test_universal_remote_from_config_entry_data_rejects_malformed_data() -> None:

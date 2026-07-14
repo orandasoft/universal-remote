@@ -383,6 +383,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         self._learn_test_send_result: str | None = None
         self._learn_pending_command_name: str | None = None
         self._learn_pending_candidate_key: str | None = None
+        self._learn_pending_existing_command_key: str | None = None
         self._learn_pending_create_button = False
 
     async def async_step_init(
@@ -894,13 +895,15 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
             if selected_candidate is None:
                 errors[COMMAND_LEARN_CANDIDATE] = "invalid_learn_candidate"
 
+            existing_command_key = find_command_key(self._commands, command_name)
             if (
                 not errors
-                and find_command_key(self._commands, command_name) is not None
+                and existing_command_key is not None
                 and selected_candidate is not None
             ):
                 self._learn_pending_command_name = command_name
                 self._learn_pending_candidate_key = selected_candidate.key
+                self._learn_pending_existing_command_key = existing_command_key
                 self._learn_pending_create_button = create_button
                 return await self.async_step_learn_confirm_overwrite()
 
@@ -992,6 +995,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
                     command_name,
                     selected_candidate,
                     create_button=self._learn_pending_create_button,
+                    existing_command_key=self._learn_pending_existing_command_key,
                 )
                 self._clear_learn_pending_save()
                 return self._create_options_entry()
@@ -1749,9 +1753,12 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         selected_candidate: LearnCandidate,
         *,
         create_button: bool,
+        existing_command_key: str | None = None,
     ) -> None:
         """Save a learned command candidate to the current remote."""
         command_objects = self._command_objects
+        if existing_command_key is not None and existing_command_key != command_name:
+            command_objects.pop(existing_command_key, None)
         command_objects[command_name] = command_object(
             selected_candidate.payload,
             create_button=create_button,
@@ -1762,6 +1769,7 @@ class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
         """Clear pending learned-command save confirmation state."""
         self._learn_pending_command_name = None
         self._learn_pending_candidate_key = None
+        self._learn_pending_existing_command_key = None
         self._learn_pending_create_button = False
 
     def _clear_learn_test_send_state(self) -> None:

@@ -255,6 +255,7 @@ def _normalize_nec1_f16_command(command: Command) -> DecodedInfraredCommand | No
 
     return None
 
+
 def _nec_command_key(command: Command) -> tuple[int, int] | None:
     """Return a comparable NEC command key."""
     address = getattr(command, "address", None)

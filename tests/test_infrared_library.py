@@ -189,9 +189,15 @@ def test_infrared_library_codeset_options_and_device_types() -> None:
     }
 
     assert codeset_options[0] == {"value": NO_INFRARED_LIBRARY_CODESET, "label": "None"}
-    assert {option["value"] for option in codeset_options[1:]} == expected_codeset_values
-    assert {option["label"] for option in codeset_options[1:]} == expected_codeset_labels
-    assert {option["value"] for option in all_codeset_options} == expected_codeset_values
+    assert {
+        option["value"] for option in codeset_options[1:]
+    } == expected_codeset_values
+    assert {
+        option["label"] for option in codeset_options[1:]
+    } == expected_codeset_labels
+    assert {
+        option["value"] for option in all_codeset_options
+    } == expected_codeset_values
     assert device_type_options == [{"value": DEVICE_TYPE_TV, "label": "TV"}]
 
 
@@ -202,7 +208,7 @@ def test_infrared_library_device_type_options_include_generic() -> None:
     assert options[0] == {"value": DEVICE_TYPE_GENERIC, "label": "Generic remote"}
     assert {"value": DEVICE_TYPE_TV, "label": "TV"} in options
 
-    
+
 def test_infrared_library_codeset_available_returns_true() -> None:
     """Test codeset availability returns true when loading succeeds."""
     with patch(
@@ -220,7 +226,7 @@ def test_infrared_library_codeset_options_include_none() -> None:
     assert options[0]["value"] == NO_INFRARED_LIBRARY_CODESET
     assert options[0]["label"] == "None"
 
-    
+
 def test_infrared_library_labels_and_selection_helpers() -> None:
     """Test labels, selected-codeset checks, and device type lookups."""
     assert infrared_library_codeset_label(NO_INFRARED_LIBRARY_CODESET) == "None"
@@ -255,10 +261,13 @@ def test_validate_infrared_library_codeset(
     expected: bool,
 ) -> None:
     """Test infrared library codeset validation."""
-    assert validate_infrared_library_codeset(
-        codeset_id,
-        device_type=device_type,
-    ) is expected
+    assert (
+        validate_infrared_library_codeset(
+            codeset_id,
+            device_type=device_type,
+        )
+        is expected
+    )
 
 
 def test_infrared_library_command_options() -> None:

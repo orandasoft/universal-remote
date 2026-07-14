@@ -9,6 +9,8 @@ from typing import cast
 import pytest
 from homeassistant.components.infrared import InfraredReceivedSignal
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
+from infrared_protocols.commands import Command
 
 from custom_components.universal_remote import learn as learn_module
 from custom_components.universal_remote.learn import (
@@ -17,7 +19,10 @@ from custom_components.universal_remote.learn import (
     LEARN_DECODER_NEC,
     LEARN_DECODER_NEC1_F16,
     LEARN_DECODER_NONE,
+    LEARN_DECODER_REGISTRY,
     LEARN_DECODERS,
+    LearnDecodeResult,
+    LearnDecoderDefinition,
     LearnCapture,
     LearnResult,
     LearnSessionInvalidCaptureError,
@@ -42,7 +47,6 @@ OTHER_RECEIVER_ID = "infrared.other_receiver"
 VALID_TIMINGS = [9000, -4500, 560, -560]
 VALID_OTHER_TIMINGS = [4500, -4500, 560, -560]
 NEC_REPEAT_TIMINGS = [9000, -2250, 560]
-
 
 
 class FakeDecodedCommand:
@@ -105,6 +109,11 @@ def _patch_receivers(
         "async_get_receivers",
         async_get_receivers,
     )
+    monkeypatch.setattr(
+        learn_module,
+        "linked_entity_is_available",
+        lambda _hass, receiver_entity_id: receiver_entity_id in receiver_ids,
+    )
 
 
 def _patch_subscription(
@@ -137,9 +146,7 @@ async def _start_capture(
     timeout: float = 1.0,
 ) -> asyncio.Task[LearnCapture]:
     """Start a capture task and allow it to subscribe."""
-    task = asyncio.create_task(
-        manager.async_capture_once(RECEIVER_ID, timeout=timeout)
-    )
+    task = asyncio.create_task(manager.async_capture_once(RECEIVER_ID, timeout=timeout))
     await asyncio.sleep(0)
     return task
 
@@ -194,6 +201,47 @@ async def test_async_capture_once_rejects_unavailable_receiver(
 
     with pytest.raises(LearnSessionReceiverUnavailableError):
         await manager.async_capture_once(RECEIVER_ID, timeout=0.01)
+
+
+async def test_async_capture_once_rejects_receiver_with_unavailable_state(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test capture fails when a registered receiver state is unavailable."""
+    _patch_receivers(monkeypatch)
+    monkeypatch.setattr(
+        learn_module,
+        "linked_entity_is_available",
+        lambda _hass, _receiver_entity_id: False,
+    )
+    manager = LearnSessionManager(hass)
+
+    with pytest.raises(LearnSessionReceiverUnavailableError):
+        await manager.async_capture_once(RECEIVER_ID, timeout=0.01)
+
+
+async def test_async_capture_once_rechecks_availability_before_subscribing(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test capture handles a receiver becoming unavailable before subscribe."""
+    _patch_receivers(monkeypatch)
+    availability = iter((True, False))
+    monkeypatch.setattr(
+        learn_module,
+        "linked_entity_is_available",
+        lambda _hass, _receiver_entity_id: next(availability),
+    )
+    subscription = FakeReceiverSubscription()
+    _patch_subscription(monkeypatch, subscription)
+    manager = LearnSessionManager(hass)
+
+    with pytest.raises(LearnSessionReceiverUnavailableError):
+        await manager.async_capture_once(RECEIVER_ID, timeout=0.01)
+
+    assert subscription.callback is None
+    assert manager._capture_tokens() == {}
+    assert not manager._receiver_lock(RECEIVER_ID).locked()
 
 
 async def test_async_capture_once_rejects_busy_receiver(
@@ -285,6 +333,34 @@ async def test_async_capture_once_times_out(
     assert not manager._receiver_lock(RECEIVER_ID).locked()
 
 
+async def test_async_capture_once_converts_missing_subscription_receiver(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a receiver disappearing during subscription is reported unavailable."""
+    _patch_receivers(monkeypatch)
+    manager = LearnSessionManager(hass)
+
+    def async_subscribe_receiver(
+        _hass: HomeAssistant,
+        _receiver_entity_id: str,
+        _callback: Callable[[InfraredReceivedSignal], None],
+    ) -> Callable[[], None]:
+        raise HomeAssistantError("receiver disappeared")
+
+    monkeypatch.setattr(
+        learn_module.infrared,
+        "async_subscribe_receiver",
+        async_subscribe_receiver,
+    )
+
+    with pytest.raises(LearnSessionReceiverUnavailableError):
+        await manager.async_capture_once(RECEIVER_ID, timeout=1.0)
+
+    assert manager._capture_tokens() == {}
+    assert not manager._receiver_lock(RECEIVER_ID).locked()
+
+
 async def test_async_capture_once_cleans_up_when_subscription_fails(
     hass: HomeAssistant,
     monkeypatch: pytest.MonkeyPatch,
@@ -371,6 +447,237 @@ def test_learn_decoders_are_stable() -> None:
         LEARN_DECODER_NEC,
         LEARN_DECODER_NEC1_F16,
     )
+
+
+def test_registered_decoder_extends_explicit_and_auto_learning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a decoder adapter extends learning without orchestration changes."""
+    command = FakeDecodedCommand()
+    calls: list[InfraredReceivedSignal] = []
+
+    def decode_custom(
+        signal: InfraredReceivedSignal,
+    ) -> LearnDecodeResult:
+        calls.append(signal)
+        return LearnDecodeResult(
+            command=cast(Command, command),
+            metadata={
+                "decoder": "custom",
+                "protocol": "custom",
+                "address": "0x0001",
+                "primary": "0x02",
+            },
+            confidence=100,
+        )
+
+    custom_decoder = LearnDecoderDefinition(
+        "custom",
+        "custom",
+        "Custom",
+        decode_custom,
+    )
+    monkeypatch.setattr(
+        learn_module,
+        "LEARN_DECODER_REGISTRY",
+        (*LEARN_DECODER_REGISTRY, custom_decoder),
+    )
+
+    explicit = learn_module.build_learn_result(_capture(), decoder="custom")
+
+    assert [candidate.key for candidate in explicit.candidates] == [
+        CANDIDATE_CAPTURED,
+        CANDIDATE_NORMALIZED,
+    ]
+    assert explicit.candidates[1].metadata["decoder"] == "custom"
+
+    monkeypatch.setattr(
+        learn_module,
+        "LEARN_DECODER_REGISTRY",
+        (
+            LearnDecoderDefinition(
+                LEARN_DECODER_AUTO,
+                "auto",
+                "Auto (recommended)",
+            ),
+            LearnDecoderDefinition(
+                LEARN_DECODER_NONE,
+                "none",
+                "None / captured only",
+            ),
+            custom_decoder,
+        ),
+    )
+
+    automatic = learn_module.build_learn_result(_capture())
+
+    assert automatic.candidates[1].metadata["decoder"] == "custom"
+    assert len(calls) == 2
+
+
+def test_auto_decoder_selects_highest_confidence_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test Auto chooses the highest-confidence successful adapter."""
+    calls: list[str] = []
+    low_command = cast(Command, FakeDecodedCommand())
+    high_command = cast(Command, FakeDecodedCommand(VALID_OTHER_TIMINGS))
+
+    def low_confidence(
+        _signal: InfraredReceivedSignal,
+    ) -> LearnDecodeResult:
+        calls.append("low")
+        return LearnDecodeResult(
+            command=low_command,
+            metadata={"decoder": "low", "protocol": "low"},
+            confidence=10,
+        )
+
+    def high_confidence(
+        _signal: InfraredReceivedSignal,
+    ) -> LearnDecodeResult:
+        calls.append("high")
+        return LearnDecodeResult(
+            command=high_command,
+            metadata={"decoder": "high", "protocol": "high"},
+            confidence=20,
+        )
+
+    monkeypatch.setattr(
+        learn_module,
+        "LEARN_DECODER_REGISTRY",
+        (
+            LearnDecoderDefinition(
+                LEARN_DECODER_AUTO,
+                "auto",
+                "Auto (recommended)",
+            ),
+            LearnDecoderDefinition("low", "low", "Low", low_confidence),
+            LearnDecoderDefinition("high", "high", "High", high_confidence),
+        ),
+    )
+
+    result = learn_module.build_learn_result(_capture())
+
+    assert result.candidates[1].metadata["decoder"] == "high"
+    assert calls == ["low", "high"]
+
+
+def test_auto_prefers_standard_nec_when_both_nec_decoders_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test Auto prefers checksum-validated NEC over the broader NEC1-F16."""
+    nec_command = cast(Command, FakeDecodedCommand())
+    nec1_f16_command = cast(Command, FakeDecodedCommand(VALID_OTHER_TIMINGS))
+
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: nec_command)
+    monkeypatch.setattr(
+        learn_module,
+        "_normalize_nec_command",
+        lambda _command: DecodedInfraredCommand(
+            protocol=PROTOCOL_NEC,
+            address=0xFB04,
+            primary=0x09,
+        ),
+    )
+    monkeypatch.setattr(
+        learn_module,
+        "_decode_nec1_f16_signal",
+        lambda _signal: nec1_f16_command,
+    )
+    monkeypatch.setattr(
+        learn_module,
+        "_normalize_nec1_f16_command",
+        lambda _command: DecodedInfraredCommand(
+            protocol=PROTOCOL_NEC1_F16,
+            address=0xFB04,
+            primary=0x09,
+            secondary=0xF6,
+        ),
+    )
+
+    result = learn_module.build_learn_result(_capture())
+
+    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC
+    assert result.candidates[1].metadata["protocol"] == PROTOCOL_NEC
+    assert result.candidates[1].metadata["address"] == "0xFB04"
+    assert result.candidates[1].metadata["primary"] == "0x09"
+    assert "secondary" not in result.candidates[1].metadata
+
+
+def test_auto_uses_nec1_f16_when_standard_nec_does_not_match(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test Auto still selects NEC1-F16 for a genuine subfunction frame."""
+    nec1_f16_command = cast(Command, FakeDecodedCommand())
+
+    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
+    monkeypatch.setattr(
+        learn_module,
+        "_decode_nec1_f16_signal",
+        lambda _signal: nec1_f16_command,
+    )
+    monkeypatch.setattr(
+        learn_module,
+        "_normalize_nec1_f16_command",
+        lambda _command: DecodedInfraredCommand(
+            protocol=PROTOCOL_NEC1_F16,
+            address=0xFB04,
+            primary=0xDB,
+            secondary=0x00,
+        ),
+    )
+
+    result = learn_module.build_learn_result(_capture())
+
+    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC1_F16
+    assert result.candidates[1].metadata["protocol"] == PROTOCOL_NEC1_F16
+    assert result.candidates[1].metadata["address"] == "0xFB04"
+    assert result.candidates[1].metadata["primary"] == "0xDB"
+    assert result.candidates[1].metadata["secondary"] == "0x00"
+
+
+def test_auto_decoder_uses_registry_order_for_equal_confidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test registry order breaks ties between equally confident results."""
+    command = cast(Command, FakeDecodedCommand())
+
+    def first(
+        _signal: InfraredReceivedSignal,
+    ) -> LearnDecodeResult:
+        return LearnDecodeResult(
+            command=command,
+            metadata={"decoder": "first", "protocol": "first"},
+            confidence=10,
+        )
+
+    def second(
+        _signal: InfraredReceivedSignal,
+    ) -> LearnDecodeResult:
+        return LearnDecodeResult(
+            command=command,
+            metadata={"decoder": "second", "protocol": "second"},
+            confidence=10,
+        )
+
+    monkeypatch.setattr(
+        learn_module,
+        "LEARN_DECODER_REGISTRY",
+        (
+            LearnDecoderDefinition(
+                LEARN_DECODER_AUTO,
+                "auto",
+                "Auto (recommended)",
+            ),
+            LearnDecoderDefinition("first", "first", "First", first),
+            LearnDecoderDefinition("second", "second", "Second", second),
+        ),
+    )
+
+    result = learn_module.build_learn_result(_capture())
+
+    assert result.candidates[1].metadata["decoder"] == "first"
 
 
 def test_build_learn_result_decoder_none_uses_captured_only(

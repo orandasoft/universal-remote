@@ -83,9 +83,7 @@ async def async_setup_entry(
 
     runtime_data = getattr(entry, "runtime_data", None)
     runtime = (
-        runtime_data.runtime
-        if isinstance(runtime_data, UniversalRemoteData)
-        else None
+        runtime_data.runtime if isinstance(runtime_data, UniversalRemoteData) else None
     )
 
     for remote in universal_remotes_from_config_entry(entry):

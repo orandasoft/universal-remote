@@ -409,7 +409,9 @@ async def test_direct_user_step_rejects_unavailable_infrared_emitter(
         )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_INFRARED_EMITTER_ID: "infrared_emitter_unavailable"}
+    assert result["errors"] == {
+        CONF_INFRARED_EMITTER_ID: "infrared_emitter_unavailable"
+    }
 
 
 async def test_direct_reconfigure_step_rejects_unavailable_infrared_emitter(
@@ -438,7 +440,9 @@ async def test_direct_reconfigure_step_rejects_unavailable_infrared_emitter(
         )
 
     assert result["type"] is FlowResultType.FORM
-    assert result["errors"] == {CONF_INFRARED_EMITTER_ID: "infrared_emitter_unavailable"}
+    assert result["errors"] == {
+        CONF_INFRARED_EMITTER_ID: "infrared_emitter_unavailable"
+    }
 
 
 def _direct_flow(hass: HomeAssistant) -> UniversalRemoteConfigFlow:
@@ -1270,7 +1274,6 @@ async def test_reconfigure_codeset_receiver_allows_unsupported_codeset(
     assert result["reason"] == "reconfigure_successful"
     assert config_entry.data[CONF_INFRARED_RECEIVER_ID] == "infrared.receiver"
     assert config_entry.data[CONF_REMOTE_CODESET] == "samsung_tv"
-
 
 
 async def test_user_flow_rejects_missing_infrared_target_direct(

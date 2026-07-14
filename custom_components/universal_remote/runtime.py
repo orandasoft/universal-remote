@@ -181,13 +181,13 @@ class UniversalRemoteRuntime:
             normalize_command_name(command_name)
         )
 
-    def _resolve_command(self, command_name: str, *, allow_raw: bool) -> ResolvedCommand:
+    def _resolve_command(
+        self, command_name: str, *, allow_raw: bool
+    ) -> ResolvedCommand:
         """Resolve a requested command name to a payload."""
         normalized_name = normalize_command_name(command_name)
 
-        if self._selected_tuner is not None and self._is_keypad_number(
-            normalized_name
-        ):
+        if self._selected_tuner is not None and self._is_keypad_number(normalized_name):
             tuner_command_name = f"{self._selected_tuner}_{normalized_name}"
             configured_tuner_name = self._lookup_configured_name(tuner_command_name)
             if configured_tuner_name is not None:
@@ -275,9 +275,7 @@ class UniversalRemoteRuntime:
     @staticmethod
     def _is_keypad_number(normalized_name: str) -> bool:
         """Return whether a normalized command is NUM_1 through NUM_12."""
-        return any(
-            normalized_name == f"NUM_{number}" for number in JAPANESE_NUMBERS
-        )
+        return any(normalized_name == f"NUM_{number}" for number in JAPANESE_NUMBERS)
 
     @staticmethod
     def _implied_tuner(command_name: str) -> str | None:

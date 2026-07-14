@@ -243,6 +243,96 @@ async def test_diagnostics_source_count_matches_tv_source_map(
     assert diagnostics["universal_remote"]["source_count"] == len(TV_SOURCE_COMMAND_MAP)
 
 
+async def test_diagnostics_source_count_uses_normalized_source_lookup(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test diagnostics and media-player source matching use the same rules."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Normalized TV Sources",
+        data={
+            CONF_REMOTE_ID: "normalized_tv_sources",
+            CONF_REMOTE_NAME: "Normalized TV Sources",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "hdmi 1": "38000:1,2",
+                "amazon-prime": "38000:1,2",
+                "VOLUME_UP": "38000:1,2",
+            }
+        },
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["universal_remote"]["source_count"] == 2
+
+
+async def test_diagnostics_redacts_commands_from_entry_data(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test command payloads are redacted from legacy config-entry data."""
+    raw_payload = "38000:1,2,3,4,5,6"
+    learned_pronto = "0000 006D 0002 0000 0152 00AA 0014 0017"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Legacy Commands",
+        data={
+            CONF_REMOTE_ID: "legacy_commands",
+            CONF_REMOTE_NAME: "Legacy Commands",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            CONF_REMOTE_COMMANDS: {
+                "RAW": raw_payload,
+                "LEARNED": {
+                    CONF_COMMAND_DATA: learned_pronto,
+                    CONF_COMMAND_CREATE_BUTTON: True,
+                },
+            },
+        },
+        options={},
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["entry"]["data"][CONF_REMOTE_COMMANDS] == [
+        "LEARNED",
+        "RAW",
+    ]
+    assert diagnostics["universal_remote"]["commands"] == ["LEARNED", "RAW"]
+    assert raw_payload not in str(diagnostics)
+    assert learned_pronto not in str(diagnostics)
+
+
+async def test_diagnostics_redacts_malformed_command_storage(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test malformed command storage is redacted rather than exposed."""
+    raw_payload = "38000:9,8,7,6"
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Malformed Commands",
+        data={
+            CONF_REMOTE_ID: "malformed_commands",
+            CONF_REMOTE_NAME: "Malformed Commands",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={CONF_REMOTE_COMMANDS: raw_payload},
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diagnostics["entry"]["options"][CONF_REMOTE_COMMANDS] == "<redacted>"
+    assert diagnostics["universal_remote"]["command_count"] == 0
+    assert raw_payload not in str(diagnostics)
+
+
 async def test_diagnostics_redacts_command_payloads(
     hass: HomeAssistant,
     infrared_emitter: str,

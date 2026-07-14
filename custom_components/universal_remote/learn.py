@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components import infrared
 from homeassistant.components.infrared import InfraredReceivedSignal
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from infrared_protocols.commands import Command
 
 from .const import DOMAIN
+from .helpers import linked_entity_is_available
 from .learn_candidates import (
     DEFAULT_LEARN_MODULATION,
     LearnCandidate,
@@ -39,21 +42,27 @@ LEARN_DECODER_NEC1_F16 = PROTOCOL_NEC1_F16
 
 
 @dataclass(frozen=True, slots=True)
+class LearnDecodeResult:
+    """Protocol-independent result returned by a learning decoder adapter."""
+
+    command: Command
+    metadata: dict[str, Any]
+    confidence: int
+
+
+type LearnDecoder = Callable[[InfraredReceivedSignal], LearnDecodeResult | None]
+
+
+@dataclass(frozen=True, slots=True)
 class LearnDecoderDefinition:
-    """Metadata for a learned-command decoder exposed in the UI."""
+    """One decoder option and its protocol-specific adapter."""
 
     key: str
     label_key: str
     fallback_label: str
+    decode: LearnDecoder | None = None
 
 
-LEARN_DECODER_REGISTRY = (
-    LearnDecoderDefinition(LEARN_DECODER_AUTO, "auto", "Auto (recommended)"),
-    LearnDecoderDefinition(LEARN_DECODER_NONE, "none", "None / captured only"),
-    LearnDecoderDefinition(LEARN_DECODER_NEC, "nec", "NEC"),
-    LearnDecoderDefinition(LEARN_DECODER_NEC1_F16, "nec1_f16", "NEC1-F16"),
-)
-LEARN_DECODERS = tuple(decoder.key for decoder in LEARN_DECODER_REGISTRY)
 _LEARN_RECEIVER_LOCKS = "learn_receiver_locks"
 _LEARN_CAPTURE_TOKENS = "learn_capture_tokens"
 
@@ -126,7 +135,7 @@ class LearnSessionManager:
         timeout: float = DEFAULT_LEARN_TIMEOUT,
     ) -> LearnCapture:
         """Capture one structurally valid non-repeat signal from a receiver."""
-        if receiver_entity_id not in infrared.async_get_receivers(self._hass):
+        if not self._receiver_is_available(receiver_entity_id):
             raise LearnSessionReceiverUnavailableError
 
         lock = self._receiver_lock(receiver_entity_id)
@@ -173,12 +182,17 @@ class LearnSessionManager:
             capture_future.set_result(capture)
 
         try:
+            if not self._receiver_is_available(receiver_entity_id):
+                raise LearnSessionReceiverUnavailableError
+
             unsubscribe = infrared.async_subscribe_receiver(
                 self._hass,
                 receiver_entity_id,
                 _handle_received_signal,
             )
             return await asyncio.wait_for(capture_future, timeout=timeout)
+        except HomeAssistantError as err:
+            raise LearnSessionReceiverUnavailableError from err
         except TimeoutError as err:
             raise LearnSessionTimeoutError from err
         finally:
@@ -190,6 +204,12 @@ class LearnSessionManager:
 
             if not capture_future.done():
                 capture_future.cancel()
+
+    def _receiver_is_available(self, receiver_entity_id: str) -> bool:
+        """Return whether a receiver exists and is currently available."""
+        return receiver_entity_id in infrared.async_get_receivers(
+            self._hass
+        ) and linked_entity_is_available(self._hass, receiver_entity_id)
 
     def _receiver_lock(self, receiver_entity_id: str) -> asyncio.Lock:
         """Return the shared lock for a receiver."""
@@ -247,30 +267,54 @@ def _normalized_command_for_capture(
     decoder: str = LEARN_DECODER_AUTO,
 ) -> tuple[Command | None, dict[str, Any] | None]:
     """Return a normalized decoded command and metadata for a capture."""
-    if decoder not in LEARN_DECODERS:
+    definition = _decoder_definition(decoder)
+    if definition is None:
         raise LearnSessionInvalidDecoderError
 
     if decoder == LEARN_DECODER_NONE:
         return None, None
 
     signal = InfraredReceivedSignal(capture.timings, modulation=capture.modulation)
+    if decoder != LEARN_DECODER_AUTO:
+        decode = definition.decode
+        assert decode is not None
+        result = decode(signal)
+        if result is None:
+            return None, None
+        return result.command, result.metadata
 
-    if decoder in (LEARN_DECODER_AUTO, LEARN_DECODER_NEC):
-        normalized = _normalized_nec_command(signal)
-        if normalized is not None or decoder == LEARN_DECODER_NEC:
-            return normalized or (None, None)
+    successful_results: list[tuple[int, LearnDecodeResult]] = []
+    for registry_index, registered_decoder in enumerate(LEARN_DECODER_REGISTRY):
+        if registered_decoder.decode is None:
+            continue
+        if result := registered_decoder.decode(signal):
+            successful_results.append((registry_index, result))
 
-    if decoder in (LEARN_DECODER_AUTO, LEARN_DECODER_NEC1_F16):
-        normalized = _normalized_nec1_f16_command(signal)
-        if normalized is not None or decoder == LEARN_DECODER_NEC1_F16:
-            return normalized or (None, None)
+    if not successful_results:
+        return None, None
 
-    return None, None
+    _, best_result = max(
+        successful_results,
+        key=lambda item: (item[1].confidence, -item[0]),
+    )
+    return best_result.command, best_result.metadata
+
+
+def _decoder_definition(decoder: str) -> LearnDecoderDefinition | None:
+    """Return a registered decoder definition by key."""
+    return next(
+        (
+            definition
+            for definition in LEARN_DECODER_REGISTRY
+            if definition.key == decoder
+        ),
+        None,
+    )
 
 
 def _normalized_nec_command(
     signal: InfraredReceivedSignal,
-) -> tuple[Command, dict[str, Any]] | None:
+) -> LearnDecodeResult | None:
     """Return a normalized NEC command and metadata for a signal."""
     nec_command = _decode_nec_signal(signal)
     if nec_command is None:
@@ -280,12 +324,19 @@ def _normalized_nec_command(
     if decoded is None:
         return None
 
-    return nec_command, _decoded_command_metadata(PROTOCOL_NEC, decoded)
+    return LearnDecodeResult(
+        command=nec_command,
+        metadata=_decoded_command_metadata(PROTOCOL_NEC, decoded),
+        # Standard NEC validates the command/inverse-command byte pair, so it
+        # is the more specific interpretation when both NEC-family decoders
+        # accept the same frame.
+        confidence=200,
+    )
 
 
 def _normalized_nec1_f16_command(
     signal: InfraredReceivedSignal,
-) -> tuple[Command, dict[str, Any]] | None:
+) -> LearnDecodeResult | None:
     """Return a normalized NEC1-f16 command and metadata for a signal."""
     nec1_f16_command = _decode_nec1_f16_signal(signal)
     if nec1_f16_command is None:
@@ -295,7 +346,13 @@ def _normalized_nec1_f16_command(
     if decoded is None:
         return None
 
-    return nec1_f16_command, _decoded_command_metadata(PROTOCOL_NEC1_F16, decoded)
+    return LearnDecodeResult(
+        command=nec1_f16_command,
+        metadata=_decoded_command_metadata(PROTOCOL_NEC1_F16, decoded),
+        # NEC1-F16 accepts the final byte as a subfunction and is therefore the
+        # broader interpretation of an otherwise NEC-shaped frame.
+        confidence=100,
+    )
 
 
 def _decoded_command_metadata(
@@ -313,6 +370,25 @@ def _decoded_command_metadata(
         metadata["secondary"] = _format_hex(decoded.secondary, 2)
 
     return metadata
+
+
+LEARN_DECODER_REGISTRY = (
+    LearnDecoderDefinition(LEARN_DECODER_AUTO, "auto", "Auto (recommended)"),
+    LearnDecoderDefinition(LEARN_DECODER_NONE, "none", "None / captured only"),
+    LearnDecoderDefinition(
+        LEARN_DECODER_NEC,
+        "nec",
+        "NEC",
+        _normalized_nec_command,
+    ),
+    LearnDecoderDefinition(
+        LEARN_DECODER_NEC1_F16,
+        "nec1_f16",
+        "NEC1-F16",
+        _normalized_nec1_f16_command,
+    ),
+)
+LEARN_DECODERS = tuple(decoder.key for decoder in LEARN_DECODER_REGISTRY)
 
 
 def _capture_from_signal(signal: InfraredReceivedSignal) -> LearnCapture:
