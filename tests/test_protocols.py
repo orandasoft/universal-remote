@@ -5,19 +5,11 @@ from typing import cast
 from unittest.mock import patch
 
 from homeassistant.components.infrared import InfraredReceivedSignal
+from infrared_protocols.codes.lg.tv import LGTVCodeJP
 from infrared_protocols.commands import Command
+from infrared_protocols.commands.nec import NECCommand
 
 from custom_components.universal_remote import protocols as protocol_helpers
-from custom_components.universal_remote.nec1_f16 import NEC1F16Command
-
-
-class FakeCommand:
-    """Fake NEC command object."""
-
-    def __init__(self, address: int, command: int) -> None:
-        """Initialize fake command."""
-        self.address = address
-        self.command = command
 
 
 def _signal(
@@ -37,11 +29,7 @@ def _signal(
 
 def _nec1_f16_timings() -> list[int]:
     """Return valid NEC1-f16 timings for LG Japan DTV digit 2."""
-    return NEC1F16Command(
-        address=0xFB04,
-        function=0xDB,
-        subfunction=0x32,
-    ).get_raw_timings()
+    return LGTVCodeJP.DTV_NUM_2.to_command().get_raw_timings()
 
 
 def test_nec_full_frame_debug_data_finds_leader_after_idle_timing() -> None:
@@ -102,66 +90,76 @@ def test_is_nec_repeat_frame_rejects_long_or_invalid_frames() -> None:
     assert protocol_helpers._is_nec_repeat_frame([8894, -4500, 529]) is False
 
 
-def test_decode_nec_signal_falls_back_without_modulation_argument() -> None:
-    """Test NEC decoding supports older decoders without modulation keyword support."""
+def test_decode_nec_signal_calls_library_decoder() -> None:
+    """Test NEC decoding uses the infrared-protocols decoder."""
+    signal = _signal()
+    expected = NECCommand(address=0x01, command=0x02)
+
     with patch.object(
         protocol_helpers.NECCommand,
         "from_raw_timings",
-        side_effect=[TypeError, FakeCommand(1, 2)],
+        return_value=expected,
     ) as from_raw_timings:
-        command = protocol_helpers._decode_nec_signal(_signal())
+        command = protocol_helpers._decode_nec_signal(signal)
 
-    assert isinstance(command, FakeCommand)
-    assert from_raw_timings.call_count == 2
+    assert command is expected
+    from_raw_timings.assert_called_once_with(signal.timings)
 
 
 def test_decode_nec_signal_returns_none_on_decoder_errors() -> None:
     """Test NEC decoder errors are converted to no decoded command."""
-    with patch.object(
-        protocol_helpers.NECCommand,
-        "from_raw_timings",
-        side_effect=ValueError,
-    ):
-        assert protocol_helpers._decode_nec_signal(_signal()) is None
+    for error in (TypeError, ValueError):
+        with patch.object(
+            protocol_helpers.NECCommand,
+            "from_raw_timings",
+            side_effect=error,
+        ):
+            assert protocol_helpers._decode_nec_signal(_signal()) is None
+
+
+def test_decode_nec1_f16_signal_enables_subfunction_decoding() -> None:
+    """Test NEC1-f16 decoding enables NEC subfunction decoding."""
+    signal = _signal()
+    expected = NECCommand(
+        address=0xFB04,
+        command=0xDB,
+        subfunction=0x32,
+    )
 
     with patch.object(
         protocol_helpers.NECCommand,
         "from_raw_timings",
-        side_effect=[TypeError, ValueError],
-    ):
-        assert protocol_helpers._decode_nec_signal(_signal()) is None
-
-
-def test_decode_nec1_f16_signal_falls_back_without_modulation_argument() -> None:
-    """Test NEC1-f16 decoding supports decoders without modulation kwargs."""
-    expected = NEC1F16Command(address=0xFB04, function=0xDB, subfunction=0x32)
-
-    with patch.object(
-        protocol_helpers.NEC1F16Command,
-        "from_raw_timings",
-        side_effect=[TypeError, expected],
+        return_value=expected,
     ) as from_raw_timings:
-        command = protocol_helpers._decode_nec1_f16_signal(_signal())
+        command = protocol_helpers._decode_nec1_f16_signal(signal)
 
     assert command is expected
-    assert from_raw_timings.call_count == 2
+    from_raw_timings.assert_called_once_with(
+        signal.timings,
+        decode_subfunction=True,
+    )
 
 
 def test_decode_nec1_f16_signal_returns_none_on_decoder_errors() -> None:
     """Test NEC1-f16 decoder errors are converted to no decoded command."""
-    with patch.object(
-        protocol_helpers.NEC1F16Command,
-        "from_raw_timings",
-        side_effect=ValueError,
-    ):
-        assert protocol_helpers._decode_nec1_f16_signal(_signal()) is None
+    for error in (TypeError, ValueError):
+        with patch.object(
+            protocol_helpers.NECCommand,
+            "from_raw_timings",
+            side_effect=error,
+        ):
+            assert protocol_helpers._decode_nec1_f16_signal(_signal()) is None
 
-    with patch.object(
-        protocol_helpers.NEC1F16Command,
-        "from_raw_timings",
-        side_effect=[TypeError, ValueError],
-    ):
-        assert protocol_helpers._decode_nec1_f16_signal(_signal()) is None
+
+def test_nec_command_key_rejects_nec1_f16_command() -> None:
+    """Test NEC1-f16 commands are not indexed as ordinary NEC commands."""
+    command = NECCommand(
+        address=0xFB04,
+        command=0xDB,
+        subfunction=0x32,
+    )
+
+    assert protocol_helpers._nec_command_key(command) is None
 
 
 def test_nec_command_key_rejects_invalid_command_object() -> None:

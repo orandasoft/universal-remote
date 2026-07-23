@@ -2,13 +2,11 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from homeassistant.components.infrared import InfraredReceivedSignal
 from infrared_protocols.commands import Command
 from infrared_protocols.commands.nec import NECCommand
-
-from .nec1_f16 import NEC1F16Command
 
 PROTOCOL_NEC = "nec"
 PROTOCOL_NEC1_F16 = "nec1_f16"
@@ -179,45 +177,21 @@ def _timing_is_close(actual: int, expected: int) -> bool:
 def _decode_nec_signal(signal: InfraredReceivedSignal) -> NECCommand | None:
     """Decode received timings as an NEC command."""
     try:
-        return cast(
-            NECCommand,
-            NECCommand.from_raw_timings(
-                signal.timings,
-                modulation=signal.modulation,
-            ),
-        )
-    except TypeError:
-        try:
-            return cast(NECCommand, NECCommand.from_raw_timings(signal.timings))
-        except (TypeError, ValueError):
-            return None
-    except ValueError:
+        return NECCommand.from_raw_timings(signal.timings)
+    except (TypeError, ValueError):
         return None
 
 
 def _decode_nec1_f16_signal(
     signal: InfraredReceivedSignal,
-) -> NEC1F16Command | None:
+) -> NECCommand | None:
     """Decode received timings as an NEC1-f16 command."""
-    modulation = signal.modulation or 38_000
-
     try:
-        return cast(
-            NEC1F16Command,
-            NEC1F16Command.from_raw_timings(
-                signal.timings,
-                modulation=modulation,
-            ),
+        return NECCommand.from_raw_timings(
+            signal.timings,
+            decode_subfunction=True,
         )
-    except TypeError:
-        try:
-            return cast(
-                NEC1F16Command,
-                NEC1F16Command.from_raw_timings(signal.timings),
-            )
-        except (TypeError, ValueError):
-            return None
-    except ValueError:
+    except (TypeError, ValueError):
         return None
 
 
@@ -238,7 +212,7 @@ def _normalize_nec_command(command: Command) -> DecodedInfraredCommand | None:
 def _normalize_nec1_f16_command(command: Command) -> DecodedInfraredCommand | None:
     """Normalize a decoded NEC1-f16 command for matching."""
     address = getattr(command, "address", None)
-    function = getattr(command, "function", None)
+    function = getattr(command, "command", None)
     subfunction = getattr(command, "subfunction", None)
 
     if (
@@ -260,8 +234,13 @@ def _nec_command_key(command: Command) -> tuple[int, int] | None:
     """Return a comparable NEC command key."""
     address = getattr(command, "address", None)
     command_value = getattr(command, "command", None)
+    subfunction = getattr(command, "subfunction", None)
 
-    if isinstance(address, int) and isinstance(command_value, int):
+    if (
+        isinstance(address, int)
+        and isinstance(command_value, int)
+        and subfunction is None
+    ):
         return (address, command_value)
 
     return None

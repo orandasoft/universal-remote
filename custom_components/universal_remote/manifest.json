@@ -16,7 +16,7 @@
     "custom_components.universal_remote"
   ],
   "requirements": [
-    "infrared-protocols==6.2.0"
+    "infrared-protocols==8.2.0"
   ],
-  "version": "0.6.0"
+  "version": "0.6.1"
 }

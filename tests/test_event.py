@@ -11,6 +11,7 @@ import pytest
 from homeassistant.components.infrared import InfraredReceivedSignal
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
+from infrared_protocols.codes.lg.tv import LGTVCodeJP
 from infrared_protocols.commands import Command
 
 from custom_components.universal_remote import event as event_platform
@@ -26,7 +27,6 @@ from custom_components.universal_remote.const import (
 from custom_components.universal_remote.infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
 )
-from custom_components.universal_remote.nec1_f16 import NEC1F16Command
 
 
 class FakeCommand:
@@ -48,24 +48,6 @@ class FakeCode(Enum):
         """Return a fake command object."""
         address, command = self.value
         return cast(Command, FakeCommand(address, command))
-
-
-class FakeNEC1F16Code(Enum):
-    """Fake library codeset enum with NEC1-f16 commands."""
-
-    DTV_NUM_2 = (0xFB04, 0xDB, 0x32)
-
-    def to_command(self) -> Command:
-        """Return an NEC1-f16 command object."""
-        address, function, subfunction = self.value
-        return cast(
-            Command,
-            NEC1F16Command(
-                address=address,
-                function=function,
-                subfunction=subfunction,
-            ),
-        )
 
 
 class BrokenCode(Enum):
@@ -136,11 +118,7 @@ def _assert_event_subset(
 
 def _nec1_f16_timings() -> list[int]:
     """Return valid NEC1-f16 timings for LG Japan DTV digit 2."""
-    return NEC1F16Command(
-        address=0xFB04,
-        function=0xDB,
-        subfunction=0x32,
-    ).get_raw_timings()
+    return LGTVCodeJP.DTV_NUM_2.to_command().get_raw_timings()
 
 
 @pytest.fixture(autouse=True)
@@ -895,7 +873,7 @@ def test_decode_signal_event_returns_unknown_without_nec_key() -> None:
 
 def test_decode_signal_event_decodes_nec1_f16_command() -> None:
     """Test an NEC1-f16 full frame is decoded before command matching is added."""
-    command = NEC1F16Command(address=0xFB04, function=0xDB, subfunction=0x32)
+    command = LGTVCodeJP.DTV_NUM_2.to_command()
 
     with _patched_nec_protocol_specs(
         nec_decode_result=None,
@@ -925,7 +903,7 @@ def test_decode_signal_event_decodes_nec1_f16_command() -> None:
 
 def test_decode_signal_event_matches_nec1_f16_library_command() -> None:
     """Test a decoded NEC1-f16 command is matched to the library command name."""
-    command = NEC1F16Command(address=0xFB04, function=0xDB, subfunction=0x32)
+    command = LGTVCodeJP.DTV_NUM_2.to_command()
 
     with (
         _patched_nec_protocol_specs(
@@ -935,7 +913,7 @@ def test_decode_signal_event_matches_nec1_f16_library_command() -> None:
         patch.object(
             event_platform,
             "_load_codeset_enum",
-            return_value=FakeNEC1F16Code,
+            return_value=LGTVCodeJP,
         ),
     ):
         event_type, event_data = event_platform._decode_signal_event(
