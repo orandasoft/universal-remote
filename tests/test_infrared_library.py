@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
+from infrared_protocols.codes.lg.tv import LGTVCodeJP
+
 from custom_components.universal_remote.const import (
     DEVICE_TYPE_GENERIC,
     DEVICE_TYPE_TV,
@@ -22,6 +24,8 @@ from custom_components.universal_remote.infrared_library import (
     infrared_library_codeset_device_type,
     infrared_library_codeset_label,
     infrared_library_codeset_options,
+    infrared_library_codeset_receiver_decoder_id,
+    infrared_library_codeset_supports_receiver,
     infrared_library_command_options,
     infrared_library_device_type_label,
     infrared_library_device_type_options,
@@ -238,6 +242,19 @@ def test_infrared_library_labels_and_selection_helpers() -> None:
     assert not is_infrared_library_codeset_selected(NO_INFRARED_LIBRARY_CODESET)
 
 
+def test_infrared_library_receiver_helpers() -> None:
+    """Test receiver support and decoder ID helpers."""
+    assert infrared_library_codeset_supports_receiver("lg_tv")
+    assert infrared_library_codeset_supports_receiver("lg_tv_jp")
+    assert not infrared_library_codeset_supports_receiver("samsung_tv")
+    assert not infrared_library_codeset_supports_receiver("missing")
+
+    assert infrared_library_codeset_receiver_decoder_id("lg_tv") == "nec"
+    assert infrared_library_codeset_receiver_decoder_id("lg_tv_jp") == "nec"
+    assert infrared_library_codeset_receiver_decoder_id("samsung_tv") is None
+    assert infrared_library_codeset_receiver_decoder_id("missing") is None
+
+
 def test_validate_infrared_library_device_type() -> None:
     """Test device type validation."""
     assert validate_infrared_library_device_type(DEVICE_TYPE_GENERIC)
@@ -308,6 +325,11 @@ def test_load_infrared_library_enum_success() -> None:
         assert _load_infrared_library_enum("test") is _FakeLibraryCode
 
 
+def test_load_lg_tv_jp_from_infrared_protocols() -> None:
+    """Test LG TV Japan loads from the infrared-protocols library."""
+    assert _load_infrared_library_enum("lg_tv_jp") is LGTVCodeJP
+
+
 def test_load_infrared_library_enum_errors() -> None:
     """Test infrared library enum loading error paths."""
     with pytest.raises(InfraredLibraryCommandError):
@@ -363,6 +385,17 @@ def test_generate_pronto_from_library_command() -> None:
 
     assert result.startswith("0000")
     assert result.split()[2] == "0002"
+
+
+def test_generate_lg_tv_jp_nec1_f16_command() -> None:
+    """Test generating an LG Japan NEC1-f16 library command."""
+    pronto = generate_pronto_from_library_command(
+        "lg_tv_jp",
+        "DTV_NUM_2",
+        0,
+    )
+
+    assert pronto.startswith("0000")
 
 
 @pytest.mark.parametrize(
