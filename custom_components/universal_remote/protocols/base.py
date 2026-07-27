@@ -75,6 +75,7 @@ class ReceiveProtocolHandler:
     learning_confidence: int
     decode: ProtocolSignalDecoder
     normalize: ProtocolCommandNormalizer
+    repeat_event_type: str | None = None
     decode_repeat: ProtocolRepeatDecoder | None = None
     diagnostic_data: DiagnosticDataBuilder | None = None
 

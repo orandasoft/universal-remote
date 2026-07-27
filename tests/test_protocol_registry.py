@@ -10,6 +10,7 @@ from infrared_protocols.commands.nec import NECCommand
 
 from custom_components.universal_remote.protocols import nec as nec_protocol
 from custom_components.universal_remote.protocols.base import (
+    DecodedInfraredCommand,
     NormalizedInfraredCommand,
     ProtocolDecodeResult,
     ReceiveProtocolHandler,
@@ -71,8 +72,25 @@ def test_normalized_command_supports_non_nec_identity() -> None:
     assert result.command is command
     assert result.normalized is normalized
     assert handler.protocol_id == "fake"
+    assert handler.repeat_event_type is None
     assert handler.decode_repeat is None
     assert handler.diagnostic_data is None
+
+
+def test_legacy_decoded_command_match_key() -> None:
+    """Test the legacy NEC-shaped model remains stable during migration."""
+    decoded = DecodedInfraredCommand(
+        protocol="nec",
+        address=0xFB04,
+        primary=0x09,
+    )
+
+    assert decoded.match_key == (
+        "nec",
+        0xFB04,
+        0x09,
+        None,
+    )
 
 
 def test_protocol_registry_preserves_family_order() -> None:
@@ -239,6 +257,9 @@ def test_nec_handler_optional_behaviors() -> None:
         [9000, -2250, 562],
         modulation=38_000,
     )
+
+    assert nec_protocol.NEC_HANDLER.repeat_event_type == "nec_repeat"
+    assert nec_protocol.NEC1_F16_HANDLER.repeat_event_type is None
 
     decode_repeat = nec_protocol.NEC_HANDLER.decode_repeat
     assert decode_repeat is not None

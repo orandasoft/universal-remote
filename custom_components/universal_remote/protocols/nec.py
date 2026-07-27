@@ -352,6 +352,7 @@ NEC_HANDLER = ReceiveProtocolHandler(
     learning_confidence=200,
     decode=_decode_nec_result,
     normalize=_normalize_nec_identity,
+    repeat_event_type="nec_repeat",
     decode_repeat=_decode_nec_repeat_result,
     diagnostic_data=_nec_diagnostic_data,
 )

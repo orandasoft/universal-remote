@@ -1,8 +1,6 @@
 """Event entities for Universal Remote infrared receivers."""
 
 from collections import deque
-from collections.abc import Callable
-from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from importlib import import_module
@@ -38,20 +36,13 @@ from .infrared_library import (
     infrared_library_codeset_receiver_decoder_id,
     is_infrared_library_codeset_selected,
 )
-from .protocols import (
-    PROTOCOL_NEC,
-    PROTOCOL_NEC1_F16,
-    PROTOCOL_UNKNOWN,
+from .protocols import PROTOCOL_UNKNOWN
+from .protocols.base import (
     CommandMatchKey,
-    DecodedInfraredCommand,
-    _decode_nec_signal,
-    _decode_nec1_f16_signal,
-    _format_hex,
-    _is_nec_repeat_frame,
-    _nec_full_frame_debug_data,
-    _normalize_nec_command,
-    _normalize_nec1_f16_command,
+    NormalizedInfraredCommand,
+    ReceiveProtocolHandler,
 )
+from .protocols.registry import PROTOCOL_REGISTRY
 from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 from .repairs import (
     async_create_linked_infrared_receiver_missing_issue,
@@ -60,41 +51,30 @@ from .repairs import (
 )
 
 EVENT_UNKNOWN = "unknown"
-EVENT_NEC = "nec"
-EVENT_NEC_REPEAT = "nec_repeat"
-EVENT_NEC1_F16 = "nec1_f16"
 
 MAX_RECEIVED_EVENT_HISTORY = 30
 TIMINGS_PREVIEW_LENGTH = 12
 NEC_REPEAT_ASSOCIATION_TIMEOUT = 0.5
 
+_DIAGNOSTIC_RESERVED_EVENT_KEYS = frozenset(
+    {
+        "codeset",
+        "decoder",
+        "protocol",
+        "decoded",
+        "matched",
+        "repeat",
+        "command_name",
+        "timings_count",
+        "timings_preview",
+        "modulation",
+    }
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 
 type UniversalRemoteConfigEntry = ConfigEntry
-
-type SignalDecoder = Callable[[InfraredReceivedSignal], Command | None]
-
-
-type CommandNormalizer = Callable[[Command], DecodedInfraredCommand | None]
-type CommandEventDataBuilder = Callable[[DecodedInfraredCommand], dict[str, Any]]
-type RepeatDecoder = Callable[
-    [InfraredReceivedSignal, dict[str, Any], dict[str, Any] | None],
-    tuple[str, dict[str, Any]] | None,
-]
-
-
-@dataclass(frozen=True, slots=True)
-class ProtocolSpec:
-    """Infrared protocol decoding and matching behavior."""
-
-    protocol: str
-    event_type: str
-    decode: SignalDecoder
-    normalize: CommandNormalizer
-    event_data_builder: CommandEventDataBuilder
-    decode_repeat: RepeatDecoder | None = None
-    repeat_event_type: str | None = None
 
 
 def event_unique_id(remote_id: str) -> str:
@@ -284,11 +264,11 @@ def _event_types_for_codeset(codeset_id: str) -> list[str]:
     event_types = {EVENT_UNKNOWN}
 
     decoder_id = infrared_library_codeset_receiver_decoder_id(codeset_id)
-    protocol_specs = _protocol_specs_for_decoder(decoder_id)
-    if not protocol_specs:
+    handlers = _handlers_for_decoder(decoder_id)
+    if not handlers:
         return sorted(event_types)
 
-    event_types.update(spec.event_type for spec in protocol_specs)
+    event_types.update(handler.protocol_id for handler in handlers)
     event_types.update(_repeat_event_types_for_decoder(decoder_id))
 
     enum_cls = _load_codeset_enum(codeset_id)
@@ -306,6 +286,7 @@ def _decode_signal_event(
 ) -> tuple[str, dict[str, Any]]:
     """Decode a received signal into a Home Assistant event type and data."""
     decoder_id = infrared_library_codeset_receiver_decoder_id(codeset_id)
+    handlers = _handlers_for_decoder(decoder_id)
     event_data: dict[str, Any] = {
         "codeset": codeset_id,
         "decoder": decoder_id,
@@ -315,35 +296,27 @@ def _decode_signal_event(
         "repeat": False,
     }
 
-    if not is_infrared_library_codeset_selected(codeset_id):
+    if not is_infrared_library_codeset_selected(codeset_id) or not handlers:
         return EVENT_UNKNOWN, _with_timing_metadata(
             event_data,
             signal,
-            include_nec_debug=_decoder_supports_nec_debug(decoder_id),
+            handlers=handlers,
         )
 
-    protocol_specs = _protocol_specs_for_decoder(decoder_id)
-    if not protocol_specs:
-        return EVENT_UNKNOWN, _with_timing_metadata(
-            event_data,
-            signal,
-            include_nec_debug=_decoder_supports_nec_debug(decoder_id),
-        )
-
-    for spec in protocol_specs:
-        decoded_command = _decode_protocol_signal(spec, signal)
-        if decoded_command is None:
+    for handler in handlers:
+        normalized_command = _decode_protocol_signal(handler, signal)
+        if normalized_command is None:
             continue
 
         return _match_decoded_signal_event(
             codeset_id,
             event_data,
-            decoded_command,
-            spec,
+            normalized_command,
+            handler,
         )
 
     repeat_event = _decode_repeat_signal_event(
-        decoder_id,
+        handlers,
         signal,
         event_data,
         previous_decoded_event=previous_decoded_event,
@@ -354,46 +327,43 @@ def _decode_signal_event(
     return EVENT_UNKNOWN, _with_timing_metadata(
         event_data,
         signal,
-        include_nec_debug=_decoder_supports_nec_debug(decoder_id),
+        handlers=handlers,
     )
 
 
 def _decode_protocol_signal(
-    spec: ProtocolSpec,
+    handler: ReceiveProtocolHandler,
     signal: InfraredReceivedSignal,
-) -> DecodedInfraredCommand | None:
-    """Decode a received signal using one protocol spec."""
-    command = spec.decode(signal)
-    if command is None:
+) -> NormalizedInfraredCommand | None:
+    """Decode a received signal using one registered protocol handler."""
+    result = handler.decode(signal)
+    if result is None:
         return None
 
-    decoded_command = spec.normalize(command)
-    if decoded_command is None:
-        return None
-
-    return decoded_command
+    return result.normalized
 
 
 def _match_decoded_signal_event(
     codeset_id: str,
     event_data: dict[str, Any],
-    decoded_command: DecodedInfraredCommand,
-    spec: ProtocolSpec,
+    normalized_command: NormalizedInfraredCommand,
+    handler: ReceiveProtocolHandler,
 ) -> tuple[str, dict[str, Any]]:
-    """Match a decoded command against the selected library codeset."""
+    """Match a normalized command against the selected library codeset."""
     event_data.update(
         {
-            "protocol": decoded_command.protocol,
+            "protocol": normalized_command.protocol_id,
             "decoded": True,
-            **spec.event_data_builder(decoded_command),
+            **normalized_command.event_data,
         }
     )
 
-    command_name = _codeset_match_map(codeset_id, spec.protocol).get(
-        decoded_command.match_key
-    )
+    command_name = _codeset_match_map(
+        codeset_id,
+        handler.protocol_id,
+    ).get(normalized_command.match_key)
     if command_name is None:
-        return spec.event_type, event_data
+        return handler.protocol_id, event_data
 
     event_data.update(
         {
@@ -405,92 +375,63 @@ def _match_decoded_signal_event(
 
 
 def _decode_repeat_signal_event(
-    decoder_id: str | None,
+    handlers: tuple[ReceiveProtocolHandler, ...],
     signal: InfraredReceivedSignal,
     event_data: dict[str, Any],
     *,
     previous_decoded_event: dict[str, Any] | None,
 ) -> tuple[str, dict[str, Any]] | None:
-    """Decode protocol-specific repeat frames."""
-    for spec in _protocol_specs_for_decoder(decoder_id):
-        if spec.decode_repeat is None:
+    """Decode a repeat frame through registered protocol handlers."""
+    for handler in handlers:
+        if handler.decode_repeat is None:
             continue
 
-        repeat_event = spec.decode_repeat(signal, event_data, previous_decoded_event)
-        if repeat_event is not None:
-            return repeat_event
+        repeat_result = handler.decode_repeat(
+            signal,
+            previous_decoded_event,
+        )
+        if repeat_result is None:
+            continue
+
+        repeat_data = {
+            **event_data,
+            "protocol": repeat_result.protocol_id,
+            **repeat_result.event_data,
+        }
+        return repeat_result.event_type, _with_timing_metadata(
+            repeat_data,
+            signal,
+            handlers=handlers,
+        )
 
     return None
 
 
-def _decode_nec_repeat_signal_event(
-    signal: InfraredReceivedSignal,
-    event_data: dict[str, Any],
-    previous_decoded_event: dict[str, Any] | None,
-) -> tuple[str, dict[str, Any]] | None:
-    """Decode a standalone NEC repeat frame."""
-    if not _is_nec_repeat_frame(signal.timings):
-        return None
-
-    repeat_data = {
-        **event_data,
-        "protocol": previous_decoded_event.get("protocol", PROTOCOL_NEC)
-        if previous_decoded_event is not None
-        else PROTOCOL_NEC,
-        "repeat": True,
-    }
-    if previous_decoded_event is not None:
-        repeat_data.update(
-            {
-                "previous_event_type": previous_decoded_event.get("event_type"),
-                "previous_protocol": previous_decoded_event.get("protocol"),
-                "previous_address": previous_decoded_event.get("address"),
-                "previous_command": previous_decoded_event.get("command"),
-                "previous_function": previous_decoded_event.get("function"),
-                "previous_subfunction": previous_decoded_event.get("subfunction"),
-                "previous_command_name": previous_decoded_event.get("command_name"),
-            }
-        )
-
-    return EVENT_NEC_REPEAT, _with_timing_metadata(repeat_data, signal)
-
-
-def _protocol_specs_for_decoder(decoder_id: str | None) -> tuple[ProtocolSpec, ...]:
-    """Return protocol specs to try for a receiver decoder id."""
-    if decoder_id is None:
-        return ()
-
-    return _DECODER_PROTOCOL_SPECS.get(decoder_id, ())
-
-
-def _protocol_spec_for_protocol(protocol: str) -> ProtocolSpec | None:
-    """Return the protocol spec for a concrete protocol id."""
-    return _PROTOCOL_SPECS_BY_PROTOCOL.get(protocol)
+def _handlers_for_decoder(
+    decoder_id: str | None,
+) -> tuple[ReceiveProtocolHandler, ...]:
+    """Return handlers in the registered decoder-family order."""
+    return PROTOCOL_REGISTRY.handlers_for_family(decoder_id)
 
 
 def _repeat_event_types_for_decoder(decoder_id: str | None) -> set[str]:
-    """Return repeat event types exposed by a receiver decoder id."""
+    """Return repeat event types exposed by a receiver decoder."""
     return {
-        spec.repeat_event_type
-        for spec in _protocol_specs_for_decoder(decoder_id)
-        if spec.repeat_event_type is not None
+        handler.repeat_event_type
+        for handler in _handlers_for_decoder(decoder_id)
+        if handler.repeat_event_type is not None
     }
 
 
-def _decoder_supports_nec_debug(decoder_id: str | None) -> bool:
-    """Return true if a receiver decoder should expose NEC timing debug data."""
-    return any(
-        spec.protocol in {PROTOCOL_NEC, PROTOCOL_NEC1_F16}
-        for spec in _protocol_specs_for_decoder(decoder_id)
-    )
-
-
 @lru_cache(maxsize=None)
-def _codeset_match_map(codeset_id: str, protocol: str) -> dict[CommandMatchKey, str]:
+def _codeset_match_map(
+    codeset_id: str,
+    protocol_id: str,
+) -> dict[CommandMatchKey, str]:
     """Return a protocol-aware match map for a receiver codeset."""
-    spec = _protocol_spec_for_protocol(protocol)
+    handler = PROTOCOL_REGISTRY.handler_for_protocol(protocol_id)
     enum_cls = _load_codeset_enum(codeset_id)
-    if spec is None or enum_cls is None:
+    if handler is None or enum_cls is None:
         return {}
 
     match_map: dict[CommandMatchKey, str] = {}
@@ -499,11 +440,11 @@ def _codeset_match_map(codeset_id: str, protocol: str) -> dict[CommandMatchKey, 
         if library_command is None:
             continue
 
-        match_key = _command_match_key(library_command, protocol=protocol)
-        if match_key is None:
+        normalized_command = handler.normalize(library_command)
+        if normalized_command is None:
             continue
 
-        match_map.setdefault(match_key, member.name)
+        match_map.setdefault(normalized_command.match_key, member.name)
 
     return match_map
 
@@ -512,9 +453,9 @@ def _with_timing_metadata(
     event_data: dict[str, Any],
     signal: InfraredReceivedSignal,
     *,
-    include_nec_debug: bool = True,
+    handlers: tuple[ReceiveProtocolHandler, ...] = (),
 ) -> dict[str, Any]:
-    """Return event data with a small received-timing summary."""
+    """Return event data with timing and registered diagnostic metadata."""
     timings = list(signal.timings)
     timing_metadata: dict[str, Any] = {
         **event_data,
@@ -522,32 +463,32 @@ def _with_timing_metadata(
         "timings_preview": timings[:TIMINGS_PREVIEW_LENGTH],
         "modulation": signal.modulation,
     }
-    if include_nec_debug:
-        timing_metadata.update(_nec_full_frame_debug_data(timings))
+
+    for key, value in _diagnostic_data_for_handlers(handlers, signal).items():
+        if key in _DIAGNOSTIC_RESERVED_EVENT_KEYS or key in timing_metadata:
+            continue
+        timing_metadata[key] = value
 
     return timing_metadata
 
 
-def _nec_command_event_data(decoded_command: DecodedInfraredCommand) -> dict[str, Any]:
-    """Return event attributes for a decoded NEC command."""
-    return {
-        "address": _format_hex(decoded_command.address, 4),
-        "command": _format_hex(decoded_command.primary, 2),
-    }
-
-
-def _nec1_f16_command_event_data(
-    decoded_command: DecodedInfraredCommand,
+def _diagnostic_data_for_handlers(
+    handlers: tuple[ReceiveProtocolHandler, ...],
+    signal: InfraredReceivedSignal,
 ) -> dict[str, Any]:
-    """Return event attributes for a decoded NEC1-f16 command."""
-    if decoded_command.secondary is None:
-        raise ValueError("NEC1-f16 decoded command is missing subfunction")
+    """Return merged diagnostics without executing shared callbacks twice."""
+    diagnostic_data: dict[str, Any] = {}
+    seen_callbacks: set[int] = set()
 
-    return {
-        "address": _format_hex(decoded_command.address, 4),
-        "function": _format_hex(decoded_command.primary, 2),
-        "subfunction": _format_hex(decoded_command.secondary, 2),
-    }
+    for handler in handlers:
+        builder = handler.diagnostic_data
+        if builder is None or id(builder) in seen_callbacks:
+            continue
+
+        seen_callbacks.add(id(builder))
+        diagnostic_data.update(builder(signal))
+
+    return diagnostic_data
 
 
 def _command_match_key(
@@ -557,17 +498,17 @@ def _command_match_key(
 ) -> CommandMatchKey | None:
     """Return a protocol-aware command matching key when possible."""
     if protocol is not None:
-        spec = _protocol_spec_for_protocol(protocol)
-        if spec is None:
+        handler = PROTOCOL_REGISTRY.handler_for_protocol(protocol)
+        if handler is None:
             return None
 
-        decoded_command = spec.normalize(command)
-        return decoded_command.match_key if decoded_command is not None else None
+        normalized_command = handler.normalize(command)
+        return normalized_command.match_key if normalized_command is not None else None
 
-    for spec in _PROTOCOL_SPECS_BY_PROTOCOL.values():
-        decoded_command = spec.normalize(command)
-        if decoded_command is not None:
-            return decoded_command.match_key
+    for handler in PROTOCOL_REGISTRY.handlers.values():
+        normalized_command = handler.normalize(command)
+        if normalized_command is not None:
+            return normalized_command.match_key
 
     return None
 
@@ -611,32 +552,3 @@ def _load_codeset_enum(codeset_id: str) -> type[Enum] | None:
 def _event_type(command_name: str) -> str:
     """Return the event type for a decoded command name."""
     return command_name.lower()
-
-
-NEC_PROTOCOL_SPEC = ProtocolSpec(
-    protocol=PROTOCOL_NEC,
-    event_type=EVENT_NEC,
-    decode=_decode_nec_signal,
-    normalize=_normalize_nec_command,
-    event_data_builder=_nec_command_event_data,
-    decode_repeat=_decode_nec_repeat_signal_event,
-    repeat_event_type=EVENT_NEC_REPEAT,
-)
-
-NEC1_F16_PROTOCOL_SPEC = ProtocolSpec(
-    protocol=PROTOCOL_NEC1_F16,
-    event_type=EVENT_NEC1_F16,
-    decode=_decode_nec1_f16_signal,
-    normalize=_normalize_nec1_f16_command,
-    event_data_builder=_nec1_f16_command_event_data,
-)
-
-_DECODER_PROTOCOL_SPECS: dict[str, tuple[ProtocolSpec, ...]] = {
-    PROTOCOL_NEC: (NEC_PROTOCOL_SPEC, NEC1_F16_PROTOCOL_SPEC),
-}
-
-_PROTOCOL_SPECS_BY_PROTOCOL: dict[str, ProtocolSpec] = {
-    spec.protocol: spec
-    for protocol_specs in _DECODER_PROTOCOL_SPECS.values()
-    for spec in protocol_specs
-}

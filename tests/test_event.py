@@ -16,6 +16,15 @@ from infrared_protocols.commands import Command
 
 from custom_components.universal_remote import event as event_platform
 from custom_components.universal_remote import protocols as protocol_helpers
+from custom_components.universal_remote.protocols import nec as nec_protocol
+from custom_components.universal_remote.protocols.base import (
+    NormalizedInfraredCommand,
+    ProtocolDecodeResult,
+    ReceiveProtocolHandler,
+)
+from custom_components.universal_remote.protocols.registry import (
+    build_protocol_registry,
+)
 from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from custom_components.universal_remote.const import (
     CONF_INFRARED_RECEIVER_ID,
@@ -130,46 +139,65 @@ def clear_codeset_match_map_cache() -> Generator[None, None, None]:
 
 
 @contextmanager
-def _patched_nec_protocol_specs(
+def _patched_nec_protocol_handlers(
     *,
     nec_decode_result: Any,
     nec1_f16_decode_result: Any = None,
 ) -> Generator[None, None, None]:
-    """Temporarily replace NEC-family protocol decoders for event tests."""
+    """Temporarily replace NEC-family handlers for event tests."""
 
-    def decode_nec(_signal_value: Any) -> Command | None:
-        return cast(Command | None, nec_decode_result)
+    def handler_with_result(
+        template: ReceiveProtocolHandler,
+        decode_result: Any,
+    ) -> ReceiveProtocolHandler:
+        """Return a handler whose decoder returns one configured command."""
 
-    def decode_nec1_f16(_signal_value: Any) -> Command | None:
-        return cast(Command | None, nec1_f16_decode_result)
+        def decode(
+            _signal_value: InfraredReceivedSignal,
+        ) -> ProtocolDecodeResult | None:
+            command = cast(Command | None, decode_result)
+            if command is None:
+                return None
 
-    nec_spec = event_platform.ProtocolSpec(
-        protocol=protocol_helpers.PROTOCOL_NEC,
-        event_type=event_platform.EVENT_NEC,
-        decode=decode_nec,
-        normalize=protocol_helpers._normalize_nec_command,
-        event_data_builder=event_platform._nec_command_event_data,
-        decode_repeat=event_platform._decode_nec_repeat_signal_event,
-        repeat_event_type=event_platform.EVENT_NEC_REPEAT,
+            normalized = template.normalize(command)
+            if normalized is None:
+                return None
+
+            return ProtocolDecodeResult(
+                command=command,
+                normalized=normalized,
+            )
+
+        return ReceiveProtocolHandler(
+            protocol_id=template.protocol_id,
+            label_key=template.label_key,
+            learning_confidence=template.learning_confidence,
+            decode=decode,
+            normalize=template.normalize,
+            repeat_event_type=template.repeat_event_type,
+            decode_repeat=template.decode_repeat,
+            diagnostic_data=template.diagnostic_data,
+        )
+
+    nec_handler = handler_with_result(
+        nec_protocol.NEC_HANDLER,
+        nec_decode_result,
     )
-    nec1_f16_spec = event_platform.ProtocolSpec(
-        protocol=protocol_helpers.PROTOCOL_NEC1_F16,
-        event_type=event_platform.EVENT_NEC1_F16,
-        decode=decode_nec1_f16,
-        normalize=protocol_helpers._normalize_nec1_f16_command,
-        event_data_builder=event_platform._nec1_f16_command_event_data,
+    nec1_f16_handler = handler_with_result(
+        nec_protocol.NEC1_F16_HANDLER,
+        nec1_f16_decode_result,
     )
-    decoder_specs = {
-        protocol_helpers.PROTOCOL_NEC: (nec_spec, nec1_f16_spec),
-    }
-    protocol_specs = {
-        spec.protocol: spec for specs in decoder_specs.values() for spec in specs
-    }
+    registry = build_protocol_registry(
+        (nec_handler, nec1_f16_handler),
+        {
+            protocol_helpers.PROTOCOL_NEC: (
+                protocol_helpers.PROTOCOL_NEC,
+                protocol_helpers.PROTOCOL_NEC1_F16,
+            )
+        },
+    )
 
-    with (
-        patch.object(event_platform, "_DECODER_PROTOCOL_SPECS", decoder_specs),
-        patch.object(event_platform, "_PROTOCOL_SPECS_BY_PROTOCOL", protocol_specs),
-    ):
+    with patch.object(event_platform, "PROTOCOL_REGISTRY", registry):
         event_platform._codeset_match_map.cache_clear()
         yield
         event_platform._codeset_match_map.cache_clear()
@@ -379,7 +407,7 @@ def test_received_command_event_entity_handles_decoded_signal() -> None:
         codeset_id="lg_tv",
     )
     event_data = {
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": True,
         "matched": False,
         "repeat": False,
@@ -424,7 +452,7 @@ def test_received_command_event_entity_clears_last_decoded_event_on_unknown() ->
     )
     entity._last_decoded_event = {
         "event_type": "mute",
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": True,
         "repeat": False,
     }
@@ -462,7 +490,7 @@ def test_received_command_event_entity_associates_repeat_at_timeout_boundary() -
     )
     previous_event = {
         "event_type": "mute",
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": True,
         "matched": True,
         "repeat": False,
@@ -472,7 +500,7 @@ def test_received_command_event_entity_associates_repeat_at_timeout_boundary() -
     entity._last_decoded_event_time = 100.0
     signal = _signal([8894, -2250, 529, -10000])
     repeat_data = {
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": False,
         "matched": False,
         "repeat": True,
@@ -484,7 +512,7 @@ def test_received_command_event_entity_associates_repeat_at_timeout_boundary() -
         patch.object(
             event_platform,
             "_decode_signal_event",
-            return_value=(event_platform.EVENT_NEC_REPEAT, repeat_data),
+            return_value=("nec_repeat", repeat_data),
         ) as decode_signal,
         patch.object(entity, "_trigger_event"),
         patch.object(entity, "async_write_ha_state"),
@@ -510,7 +538,7 @@ def test_received_command_event_entity_refreshes_repeat_association() -> None:
     )
     previous_event = {
         "event_type": "volume_up",
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": True,
         "matched": True,
         "repeat": False,
@@ -519,7 +547,7 @@ def test_received_command_event_entity_refreshes_repeat_association() -> None:
     entity._last_decoded_event = previous_event
     entity._last_decoded_event_time = 100.0
     repeat_data = {
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": False,
         "matched": False,
         "repeat": True,
@@ -531,7 +559,7 @@ def test_received_command_event_entity_refreshes_repeat_association() -> None:
         patch.object(
             event_platform,
             "_decode_signal_event",
-            return_value=(event_platform.EVENT_NEC_REPEAT, repeat_data),
+            return_value=("nec_repeat", repeat_data),
         ) as decode_signal,
         patch.object(entity, "_trigger_event"),
         patch.object(entity, "async_write_ha_state"),
@@ -558,7 +586,7 @@ def test_received_command_event_entity_drops_stale_repeat_association() -> None:
     )
     entity._last_decoded_event = {
         "event_type": "mute",
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": True,
         "matched": True,
         "repeat": False,
@@ -567,7 +595,7 @@ def test_received_command_event_entity_drops_stale_repeat_association() -> None:
     entity._last_decoded_event_time = 100.0
     signal = _signal([8894, -2250, 529, -10000])
     repeat_data = {
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": False,
         "matched": False,
         "repeat": True,
@@ -582,7 +610,7 @@ def test_received_command_event_entity_drops_stale_repeat_association() -> None:
         patch.object(
             event_platform,
             "_decode_signal_event",
-            return_value=(event_platform.EVENT_NEC_REPEAT, repeat_data),
+            return_value=("nec_repeat", repeat_data),
         ) as decode_signal,
         patch.object(entity, "_trigger_event"),
         patch.object(entity, "async_write_ha_state"),
@@ -608,7 +636,7 @@ def test_received_command_event_entity_drops_event_without_timestamp() -> None:
     )
     entity._last_decoded_event = {
         "event_type": "mute",
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": True,
         "matched": True,
         "repeat": False,
@@ -616,7 +644,7 @@ def test_received_command_event_entity_drops_event_without_timestamp() -> None:
     }
     signal = _signal([8894, -2250, 529, -10000])
     repeat_data = {
-        "protocol": event_platform.PROTOCOL_NEC,
+        "protocol": protocol_helpers.PROTOCOL_NEC,
         "decoded": False,
         "matched": False,
         "repeat": True,
@@ -627,7 +655,7 @@ def test_received_command_event_entity_drops_event_without_timestamp() -> None:
         patch.object(
             event_platform,
             "_decode_signal_event",
-            return_value=(event_platform.EVENT_NEC_REPEAT, repeat_data),
+            return_value=("nec_repeat", repeat_data),
         ) as decode_signal,
         patch.object(entity, "_trigger_event"),
         patch.object(entity, "async_write_ha_state"),
@@ -679,7 +707,7 @@ def test_receiver_event_types_for_codeset() -> None:
 def test_decode_signal_event_matches_library_command() -> None:
     """Test a decoded NEC command is matched to the library command name."""
     with (
-        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
+        _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
         patch.object(event_platform, "_load_codeset_enum", return_value=FakeCode),
     ):
         event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
@@ -704,7 +732,7 @@ def test_decode_signal_event_matches_library_command() -> None:
 def test_decode_signal_event_returns_nec_for_unmatched_command() -> None:
     """Test unmatched decoded NEC commands return the nec event type."""
     with (
-        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(9, 9)),
+        _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(9, 9)),
         patch.object(event_platform, "_load_codeset_enum", return_value=FakeCode),
     ):
         event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
@@ -728,7 +756,7 @@ def test_decode_signal_event_returns_nec_for_unmatched_command() -> None:
 def test_decode_signal_event_returns_nec_without_enum() -> None:
     """Test missing library enums return the nec event type for decoded commands."""
     with (
-        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
+        _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
         patch.object(event_platform, "_load_codeset_enum", return_value=None),
     ):
         event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
@@ -752,7 +780,7 @@ def test_decode_signal_event_returns_nec_without_enum() -> None:
 def test_decode_signal_event_skips_invalid_library_command() -> None:
     """Test enum members without usable commands are ignored."""
     with (
-        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
+        _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
         patch.object(event_platform, "_load_codeset_enum", return_value=BrokenCode),
     ):
         event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
@@ -766,7 +794,7 @@ def test_decode_signal_event_skips_invalid_library_command() -> None:
 def test_decode_signal_event_matches_repeat_count_only_library_command() -> None:
     """Test library commands can expose to_command(repeat_count=0)."""
     with (
-        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
+        _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
         patch.object(event_platform, "_load_codeset_enum", return_value=RepeatOnlyCode),
     ):
         event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
@@ -779,7 +807,7 @@ def test_decode_signal_event_matches_repeat_count_only_library_command() -> None
 def test_decode_signal_event_ignores_unusable_to_command() -> None:
     """Test library commands with unusable to_command methods are ignored."""
     with (
-        _patched_nec_protocol_specs(nec_decode_result=FakeCommand(1, 2)),
+        _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
         patch.object(
             event_platform,
             "_load_codeset_enum",
@@ -842,7 +870,7 @@ def test_decode_signal_event_returns_unknown_for_no_library_codeset() -> None:
 
 def test_decode_signal_event_returns_unknown_when_decode_fails() -> None:
     """Test undecodable NEC signals return the unknown event type."""
-    with _patched_nec_protocol_specs(nec_decode_result=None):
+    with _patched_nec_protocol_handlers(nec_decode_result=None):
         event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
 
     assert event_type == "unknown"
@@ -862,7 +890,7 @@ def test_decode_signal_event_returns_unknown_when_decode_fails() -> None:
 
 def test_decode_signal_event_returns_unknown_without_nec_key() -> None:
     """Test decoded commands without NEC keys return the unknown event type."""
-    with _patched_nec_protocol_specs(nec_decode_result=object()):
+    with _patched_nec_protocol_handlers(nec_decode_result=object()):
         event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
 
     assert event_type == "unknown"
@@ -875,7 +903,7 @@ def test_decode_signal_event_decodes_nec1_f16_command() -> None:
     """Test an NEC1-f16 full frame is decoded before command matching is added."""
     command = LGTVCodeJP.DTV_NUM_2.to_command()
 
-    with _patched_nec_protocol_specs(
+    with _patched_nec_protocol_handlers(
         nec_decode_result=None,
         nec1_f16_decode_result=command,
     ):
@@ -906,7 +934,7 @@ def test_decode_signal_event_matches_nec1_f16_library_command() -> None:
     command = LGTVCodeJP.DTV_NUM_2.to_command()
 
     with (
-        _patched_nec_protocol_specs(
+        _patched_nec_protocol_handlers(
             nec_decode_result=None,
             nec1_f16_decode_result=command,
         ),
@@ -949,7 +977,7 @@ def test_decode_signal_event_returns_nec_repeat_with_previous_event() -> None:
         "command_name": "MUTE",
     }
 
-    with _patched_nec_protocol_specs(nec_decode_result=None):
+    with _patched_nec_protocol_handlers(nec_decode_result=None):
         event_type, event_data = event_platform._decode_signal_event(
             "lg_tv",
             _signal([8894, -2250, 529, -10000]),
@@ -982,7 +1010,7 @@ def test_decode_signal_event_returns_nec_repeat_with_previous_nec1_f16_event() -
         "subfunction": "0x32",
     }
 
-    with _patched_nec_protocol_specs(nec_decode_result=None):
+    with _patched_nec_protocol_handlers(nec_decode_result=None):
         event_type, event_data = event_platform._decode_signal_event(
             "lg_tv",
             _signal([8894, -2250, 529, -10000]),
@@ -997,7 +1025,7 @@ def test_decode_signal_event_returns_nec_repeat_with_previous_nec1_f16_event() -
 
 def test_decode_signal_event_returns_nec_repeat_without_previous_event() -> None:
     """Test standalone NEC repeat frames decode without previous metadata."""
-    with _patched_nec_protocol_specs(nec_decode_result=None):
+    with _patched_nec_protocol_handlers(nec_decode_result=None):
         event_type, event_data = event_platform._decode_signal_event(
             "lg_tv",
             _signal([8894, -2250, 529, -10000]),
@@ -1009,12 +1037,17 @@ def test_decode_signal_event_returns_nec_repeat_without_previous_event() -> None
     assert "previous_event_type" not in event_data
 
 
-def test_with_timing_metadata_includes_nec_debug_data() -> None:
-    """Test unknown NEC-like full frames expose timing-derived debug fields."""
+def test_with_timing_metadata_includes_registered_diagnostic_data() -> None:
+    """Test registered NEC diagnostics are included for unknown full frames."""
     timings = _nec1_f16_timings()
+    handlers = event_platform.PROTOCOL_REGISTRY.handlers_for_family(
+        protocol_helpers.PROTOCOL_NEC
+    )
+
     event_data = event_platform._with_timing_metadata(
         {"protocol": "unknown"},
         _signal(timings),
+        handlers=handlers,
     )
 
     assert event_data["timings_count"] == len(timings)
@@ -1028,29 +1061,127 @@ def test_with_timing_metadata_includes_nec_debug_data() -> None:
     assert event_data["nec1_f16_subfunction"] == "0x32"
 
 
-def test_with_timing_metadata_can_omit_nec_debug_data() -> None:
-    """Test NEC timing debug fields can be omitted for non-NEC decoders."""
+def test_with_timing_metadata_omits_unregistered_diagnostic_data() -> None:
+    """Test timing metadata contains no protocol diagnostics without handlers."""
+    timings = _nec1_f16_timings()
     event_data = event_platform._with_timing_metadata(
         {"protocol": "unknown"},
-        _signal(_nec1_f16_timings()),
-        include_nec_debug=False,
+        _signal(timings),
     )
 
-    assert event_data["timings_count"] == len(_nec1_f16_timings())
+    assert event_data["timings_count"] == len(timings)
     assert "nec_frame_candidate" not in event_data
     assert "nec_bytes" not in event_data
 
 
-def test_nec1_f16_command_event_data_requires_subfunction() -> None:
-    """Test NEC1-f16 event data requires a decoded subfunction."""
-    decoded_command = event_platform.DecodedInfraredCommand(
-        protocol=event_platform.PROTOCOL_NEC1_F16,
-        address=0xFB04,
-        primary=0xDB,
+def test_with_timing_metadata_rejects_conflicting_diagnostic_fields() -> None:
+    """Test diagnostics cannot overwrite reserved or existing event metadata."""
+
+    def decode(
+        _signal_value: InfraredReceivedSignal,
+    ) -> ProtocolDecodeResult | None:
+        return None
+
+    def normalize(
+        _command: Command,
+    ) -> NormalizedInfraredCommand | None:
+        return None
+
+    def diagnostic_data(
+        _signal_value: InfraredReceivedSignal,
+    ) -> dict[str, Any]:
+        return {
+            "protocol": "overwritten",
+            "timings_count": 999,
+            "safe_debug": "included",
+        }
+
+    handler = ReceiveProtocolHandler(
+        protocol_id="fake_protocol",
+        label_key="fake_protocol",
+        learning_confidence=50,
+        decode=decode,
+        normalize=normalize,
+        diagnostic_data=diagnostic_data,
+    )
+    signal = _signal([1, 2], modulation=38_000)
+
+    event_data = event_platform._with_timing_metadata(
+        {"protocol": "unknown"},
+        signal,
+        handlers=(handler,),
     )
 
-    with pytest.raises(ValueError, match="missing subfunction"):
-        event_platform._nec1_f16_command_event_data(decoded_command)
+    assert event_data["protocol"] == "unknown"
+    assert event_data["timings_count"] == 2
+    assert event_data["safe_debug"] == "included"
+
+
+def test_decode_signal_event_uses_fake_registered_handler() -> None:
+    """Test generic event orchestration accepts a non-NEC handler."""
+    command = cast(Command, object())
+    normalized = NormalizedInfraredCommand(
+        protocol_id="fake_protocol",
+        identity=("device-a", 7, b"\x01\x02"),
+        event_data={
+            "device": "device-a",
+            "function": 7,
+        },
+    )
+
+    def decode(
+        _signal_value: InfraredReceivedSignal,
+    ) -> ProtocolDecodeResult:
+        return ProtocolDecodeResult(
+            command=command,
+            normalized=normalized,
+        )
+
+    def normalize(
+        _command: Command,
+    ) -> NormalizedInfraredCommand | None:
+        return None
+
+    handler = ReceiveProtocolHandler(
+        protocol_id="fake_protocol",
+        label_key="fake_protocol",
+        learning_confidence=50,
+        decode=decode,
+        normalize=normalize,
+    )
+    registry = build_protocol_registry(
+        (handler,),
+        {"fake_family": ("fake_protocol",)},
+    )
+
+    with (
+        patch.object(event_platform, "PROTOCOL_REGISTRY", registry),
+        patch.object(
+            event_platform,
+            "infrared_library_codeset_receiver_decoder_id",
+            return_value="fake_family",
+        ),
+        patch.object(event_platform, "_load_codeset_enum", return_value=None),
+    ):
+        event_type, event_data = event_platform._decode_signal_event(
+            "lg_tv",
+            _signal(),
+        )
+
+    assert event_type == "fake_protocol"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "lg_tv",
+            "decoder": "fake_family",
+            "protocol": "fake_protocol",
+            "decoded": True,
+            "matched": False,
+            "repeat": False,
+            "device": "device-a",
+            "function": 7,
+        },
+    )
 
 
 def test_command_match_key_returns_none_for_unknown_protocol() -> None:
@@ -1064,10 +1195,21 @@ def test_command_match_key_returns_none_for_unknown_protocol() -> None:
     )
 
 
+def test_command_match_key_rejects_command_for_known_protocol() -> None:
+    """Test an explicit known protocol rejects unrelated commands."""
+    assert (
+        event_platform._command_match_key(
+            cast(Command, object()),
+            protocol=protocol_helpers.PROTOCOL_NEC,
+        )
+        is None
+    )
+
+
 def test_command_match_key_detects_known_protocol() -> None:
     """Test command match keys can be detected without an explicit protocol."""
     assert event_platform._command_match_key(cast(Command, FakeCommand(1, 2))) == (
-        event_platform.PROTOCOL_NEC,
+        protocol_helpers.PROTOCOL_NEC,
         1,
         2,
         None,
