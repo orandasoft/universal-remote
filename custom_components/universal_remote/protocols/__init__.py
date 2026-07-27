@@ -1,12 +1,16 @@
 """Protocol helpers for Universal Remote infrared receiving and learning."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.infrared import InfraredReceivedSignal
 from infrared_protocols.commands import Command
 from infrared_protocols.commands.nec import NECCommand
+
+from .base import (
+    CommandMatchKey as CommandMatchKey,
+    DecodedInfraredCommand,
+)
 
 PROTOCOL_NEC = "nec"
 PROTOCOL_NEC1_F16 = "nec1_f16"
@@ -22,23 +26,7 @@ NEC_REPEAT_TOLERANCE = 0.4
 NEC_FULL_FRAME_TIMING_COUNT = 67
 NEC_DATA_BIT_COUNT = 32
 
-type CommandMatchKey = tuple[str, int, int, int | None]
 type SignalDecoder = Callable[[InfraredReceivedSignal], Command | None]
-
-
-@dataclass(frozen=True, slots=True)
-class DecodedInfraredCommand:
-    """Protocol-aware decoded infrared command used for matching."""
-
-    protocol: str
-    address: int
-    primary: int
-    secondary: int | None = None
-
-    @property
-    def match_key(self) -> CommandMatchKey:
-        """Return a stable protocol-aware command matching key."""
-        return (self.protocol, self.address, self.primary, self.secondary)
 
 
 def _nec_full_frame_debug_data(timings: list[int]) -> dict[str, Any]:
