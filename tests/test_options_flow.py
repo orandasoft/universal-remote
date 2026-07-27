@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from custom_components.universal_remote import learn as learn_module
 from custom_components.universal_remote import options_flow as options_flow_module
 from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
@@ -26,19 +27,24 @@ from custom_components.universal_remote.infrared_library import (
 )
 from custom_components.universal_remote.learn import (
     LEARN_DECODER_AUTO,
-    LEARN_DECODER_REGISTRY,
     LEARN_DECODER_NEC,
     LEARN_DECODER_NEC1_F16,
     LEARN_DECODER_NONE,
-    LearnDecoderDefinition,
     LearnCapture,
     LearnResult,
+    learn_decoder_definitions,
 )
 from custom_components.universal_remote.learn_candidates import (
     CANDIDATE_CAPTURED,
     CANDIDATE_NORMALIZED,
     LearnCandidate,
     LearnCandidateError,
+)
+from custom_components.universal_remote.protocols.base import (
+    ReceiveProtocolHandler,
+)
+from custom_components.universal_remote.protocols.registry import (
+    build_protocol_registry,
 )
 from custom_components.universal_remote.options_flow import (
     COMMAND_DATA,
@@ -2626,20 +2632,22 @@ def test_learn_decoder_label() -> None:
 
 
 def test_learn_decoder_options() -> None:
-    """Test decoder selector options come from the decoder registry."""
-    assert [decoder.key for decoder in LEARN_DECODER_REGISTRY] == [
+    """Test decoder selector options come from the protocol registry."""
+    definitions = learn_decoder_definitions()
+
+    assert [decoder.key for decoder in definitions] == [
         LEARN_DECODER_AUTO,
         LEARN_DECODER_NONE,
         LEARN_DECODER_NEC,
         LEARN_DECODER_NEC1_F16,
     ]
-    assert [decoder.label_key for decoder in LEARN_DECODER_REGISTRY] == [
+    assert [decoder.label_key for decoder in definitions] == [
         "auto",
         "none",
         "nec",
         "nec1_f16",
     ]
-    assert [decoder.fallback_label for decoder in LEARN_DECODER_REGISTRY] == [
+    assert [decoder.fallback_label for decoder in definitions] == [
         "Auto (recommended)",
         "None / captured only",
         "NEC",
@@ -2653,20 +2661,30 @@ def test_learn_decoder_options() -> None:
     ]
 
 
-def test_learn_decoder_registry_extends_selector_without_flow_changes(
+def test_protocol_registry_extends_decoder_selector_without_flow_changes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test a registered decoder automatically appears in the flow selector."""
-    custom_decoder = LearnDecoderDefinition(
-        "custom",
-        "custom",
-        "Custom protocol",
-        lambda _signal: None,
+    """Test a learning-capable handler automatically appears in the selector."""
+    custom_handler = ReceiveProtocolHandler(
+        protocol_id="custom",
+        label_key="custom",
+        learning_confidence=50,
+        decode=lambda _signal: None,
+        normalize=lambda _command: None,
+        learning_label="Custom protocol",
+        learning_metadata=lambda _normalized: {},
+    )
+    registry = build_protocol_registry(
+        (
+            *learn_module.PROTOCOL_REGISTRY.handlers.values(),
+            custom_handler,
+        ),
+        learn_module.PROTOCOL_REGISTRY.decoder_families,
     )
     monkeypatch.setattr(
-        options_flow_module,
-        "LEARN_DECODER_REGISTRY",
-        (*LEARN_DECODER_REGISTRY, custom_decoder),
+        learn_module,
+        "PROTOCOL_REGISTRY",
+        registry,
     )
 
     assert options_flow_module.learn_decoder_options()[-1] == {

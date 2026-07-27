@@ -35,7 +35,6 @@ from .helpers import (
 )
 from .learn import (
     LEARN_DECODER_AUTO,
-    LEARN_DECODER_REGISTRY,
     LEARN_DECODERS,
     LearnCapture,
     LearnResult,
@@ -44,6 +43,7 @@ from .learn import (
     LearnSessionReceiverUnavailableError,
     LearnSessionTimeoutError,
     build_learn_result,
+    learn_decoder_definitions,
 )
 from .learn_candidates import (
     CANDIDATE_CAPTURED,
@@ -174,7 +174,7 @@ def learn_decoder_options() -> list[selector.SelectOptionDict]:
     """Return selector options for learned-command decoders."""
     return [
         selector.SelectOptionDict(value=decoder.key, label=decoder.fallback_label)
-        for decoder in LEARN_DECODER_REGISTRY
+        for decoder in learn_decoder_definitions()
     ]
 
 
@@ -186,7 +186,7 @@ def learn_decoder_label(decoder_key: str | None) -> str:
     return next(
         (
             decoder.fallback_label
-            for decoder in LEARN_DECODER_REGISTRY
+            for decoder in learn_decoder_definitions()
             if decoder.key == decoder_key
         ),
         decoder_key,

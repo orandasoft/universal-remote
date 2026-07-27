@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,47 +19,28 @@ from .learn_candidates import (
     LearnCandidate,
     build_learn_candidates,
 )
-from .protocols import (
-    PROTOCOL_NEC,
-    PROTOCOL_NEC1_F16,
-    DecodedInfraredCommand,
-    _decode_nec_signal,
-    _decode_nec1_f16_signal,
-    _format_hex,
-    _is_nec_repeat_frame,
-    _normalize_nec_command,
-    _normalize_nec1_f16_command,
-)
+from .protocols.base import ReceiveProtocolHandler
+from .protocols.registry import PROTOCOL_REGISTRY
 
 MIN_CAPTURE_TIMING_COUNT = 4
 MIN_CAPTURE_TOTAL_DURATION_US = 1_000
 DEFAULT_LEARN_TIMEOUT = 30.0
 LEARN_DECODER_AUTO = "auto"
 LEARN_DECODER_NONE = "none"
-LEARN_DECODER_NEC = PROTOCOL_NEC
-LEARN_DECODER_NEC1_F16 = PROTOCOL_NEC1_F16
 
-
-@dataclass(frozen=True, slots=True)
-class LearnDecodeResult:
-    """Protocol-independent result returned by a learning decoder adapter."""
-
-    command: Command
-    metadata: dict[str, Any]
-    confidence: int
-
-
-type LearnDecoder = Callable[[InfraredReceivedSignal], LearnDecodeResult | None]
+# Compatibility aliases retained for stored flow state and external imports.
+# Concrete learning support is discovered from PROTOCOL_REGISTRY.
+LEARN_DECODER_NEC = "nec"
+LEARN_DECODER_NEC1_F16 = "nec1_f16"
 
 
 @dataclass(frozen=True, slots=True)
 class LearnDecoderDefinition:
-    """One decoder option and its protocol-specific adapter."""
+    """One user-facing learning decoder option."""
 
     key: str
     label_key: str
     fallback_label: str
-    decode: LearnDecoder | None = None
 
 
 _LEARN_RECEIVER_LOCKS = "learn_receiver_locks"
@@ -171,7 +151,7 @@ class LearnSessionManager:
             if capture_future.done():
                 return
 
-            if _is_nec_repeat_frame(signal.timings):
+            if _repeat_event_type(signal) is not None:
                 return
 
             try:
@@ -267,128 +247,128 @@ def _normalized_command_for_capture(
     decoder: str = LEARN_DECODER_AUTO,
 ) -> tuple[Command | None, dict[str, Any] | None]:
     """Return a normalized decoded command and metadata for a capture."""
-    definition = _decoder_definition(decoder)
-    if definition is None:
-        raise LearnSessionInvalidDecoderError
-
     if decoder == LEARN_DECODER_NONE:
         return None, None
 
-    signal = InfraredReceivedSignal(capture.timings, modulation=capture.modulation)
+    signal = InfraredReceivedSignal(
+        capture.timings,
+        modulation=capture.modulation,
+    )
+
     if decoder != LEARN_DECODER_AUTO:
-        decode = definition.decode
-        assert decode is not None
-        result = decode(signal)
+        handler = _learning_handler_for_decoder(decoder)
+        if handler is None:
+            raise LearnSessionInvalidDecoderError
+
+        result = _decode_learning_handler(handler, signal)
         if result is None:
             return None, None
-        return result.command, result.metadata
 
-    successful_results: list[tuple[int, LearnDecodeResult]] = []
-    for registry_index, registered_decoder in enumerate(LEARN_DECODER_REGISTRY):
-        if registered_decoder.decode is None:
+        return result
+
+    successful_results: list[
+        tuple[
+            int,
+            ReceiveProtocolHandler,
+            Command,
+            dict[str, Any],
+        ]
+    ] = []
+
+    for registry_index, handler in enumerate(_learning_handlers()):
+        result = _decode_learning_handler(handler, signal)
+        if result is None:
             continue
-        if result := registered_decoder.decode(signal):
-            successful_results.append((registry_index, result))
+
+        command, metadata = result
+        successful_results.append(
+            (
+                registry_index,
+                handler,
+                command,
+                metadata,
+            )
+        )
 
     if not successful_results:
         return None, None
 
-    _, best_result = max(
+    _, _, command, metadata = max(
         successful_results,
-        key=lambda item: (item[1].confidence, -item[0]),
-    )
-    return best_result.command, best_result.metadata
-
-
-def _decoder_definition(decoder: str) -> LearnDecoderDefinition | None:
-    """Return a registered decoder definition by key."""
-    return next(
-        (
-            definition
-            for definition in LEARN_DECODER_REGISTRY
-            if definition.key == decoder
+        key=lambda item: (
+            item[1].learning_confidence,
+            -item[0],
         ),
-        None,
     )
+    return command, metadata
 
 
-def _normalized_nec_command(
+def _decode_learning_handler(
+    handler: ReceiveProtocolHandler,
     signal: InfraredReceivedSignal,
-) -> LearnDecodeResult | None:
-    """Return a normalized NEC command and metadata for a signal."""
-    nec_command = _decode_nec_signal(signal)
-    if nec_command is None:
+) -> tuple[Command, dict[str, Any]] | None:
+    """Decode one signal and build protocol-owned learning metadata."""
+    metadata_builder = handler.learning_metadata
+    if metadata_builder is None:
         return None
 
-    decoded = _normalize_nec_command(nec_command)
-    if decoded is None:
+    result = handler.decode(signal)
+    if result is None:
         return None
 
-    return LearnDecodeResult(
-        command=nec_command,
-        metadata=_decoded_command_metadata(PROTOCOL_NEC, decoded),
-        # Standard NEC validates the command/inverse-command byte pair, so it
-        # is the more specific interpretation when both NEC-family decoders
-        # accept the same frame.
-        confidence=200,
-    )
-
-
-def _normalized_nec1_f16_command(
-    signal: InfraredReceivedSignal,
-) -> LearnDecodeResult | None:
-    """Return a normalized NEC1-f16 command and metadata for a signal."""
-    nec1_f16_command = _decode_nec1_f16_signal(signal)
-    if nec1_f16_command is None:
-        return None
-
-    decoded = _normalize_nec1_f16_command(nec1_f16_command)
-    if decoded is None:
-        return None
-
-    return LearnDecodeResult(
-        command=nec1_f16_command,
-        metadata=_decoded_command_metadata(PROTOCOL_NEC1_F16, decoded),
-        # NEC1-F16 accepts the final byte as a subfunction and is therefore the
-        # broader interpretation of an otherwise NEC-shaped frame.
-        confidence=100,
-    )
-
-
-def _decoded_command_metadata(
-    decoder: str,
-    decoded: DecodedInfraredCommand,
-) -> dict[str, Any]:
-    """Return privacy-safe metadata for a normalized learned command."""
-    metadata: dict[str, Any] = {
-        "decoder": decoder,
-        "protocol": decoded.protocol,
-        "address": _format_hex(decoded.address, 4),
-        "primary": _format_hex(decoded.primary, 2),
+    protocol_metadata = dict(metadata_builder(result.normalized))
+    metadata = {
+        **protocol_metadata,
+        "decoder": handler.protocol_id,
+        "protocol": result.normalized.protocol_id,
     }
-    if decoded.secondary is not None:
-        metadata["secondary"] = _format_hex(decoded.secondary, 2)
-
-    return metadata
+    return result.command, metadata
 
 
-LEARN_DECODER_REGISTRY = (
-    LearnDecoderDefinition(LEARN_DECODER_AUTO, "auto", "Auto (recommended)"),
-    LearnDecoderDefinition(LEARN_DECODER_NONE, "none", "None / captured only"),
-    LearnDecoderDefinition(
-        LEARN_DECODER_NEC,
-        "nec",
-        "NEC",
-        _normalized_nec_command,
-    ),
-    LearnDecoderDefinition(
-        LEARN_DECODER_NEC1_F16,
-        "nec1_f16",
-        "NEC1-F16",
-        _normalized_nec1_f16_command,
-    ),
-)
-LEARN_DECODERS = tuple(decoder.key for decoder in LEARN_DECODER_REGISTRY)
+def _learning_handlers() -> tuple[ReceiveProtocolHandler, ...]:
+    """Return learning-capable handlers in deterministic registry order."""
+    return tuple(
+        handler
+        for handler in PROTOCOL_REGISTRY.handlers.values()
+        if handler.learning_metadata is not None
+    )
+
+
+def _learning_handler_for_decoder(
+    decoder: str,
+) -> ReceiveProtocolHandler | None:
+    """Return one learning-capable concrete protocol handler."""
+    handler = PROTOCOL_REGISTRY.handler_for_protocol(decoder)
+    if handler is None or handler.learning_metadata is None:
+        return None
+    return handler
+
+
+def learn_decoder_definitions() -> tuple[LearnDecoderDefinition, ...]:
+    """Return user-facing decoder options derived from the protocol registry."""
+    return (
+        LearnDecoderDefinition(
+            LEARN_DECODER_AUTO,
+            "auto",
+            "Auto (recommended)",
+        ),
+        LearnDecoderDefinition(
+            LEARN_DECODER_NONE,
+            "none",
+            "None / captured only",
+        ),
+        *(
+            LearnDecoderDefinition(
+                handler.protocol_id,
+                handler.label_key,
+                handler.learning_label or handler.protocol_id,
+            )
+            for handler in _learning_handlers()
+        ),
+    )
+
+
+LEARN_DECODERS = tuple(definition.key for definition in learn_decoder_definitions())
 
 
 def _capture_from_signal(signal: InfraredReceivedSignal) -> LearnCapture:
@@ -435,9 +415,20 @@ def _capture_modulation(modulation: int | None) -> tuple[int, bool]:
     return DEFAULT_LEARN_MODULATION, True
 
 
-def _likely_protocol(timings: list[int]) -> str | None:
-    """Return an informational protocol guess for captured timings."""
-    if _is_nec_repeat_frame(timings):
-        return "nec_repeat"
+def _repeat_event_type(signal: InfraredReceivedSignal) -> str | None:
+    """Return the first registered repeat event type matching a signal."""
+    for handler in PROTOCOL_REGISTRY.handlers.values():
+        decode_repeat = handler.decode_repeat
+        if decode_repeat is None:
+            continue
+
+        result = decode_repeat(signal, None)
+        if result is not None:
+            return result.event_type
 
     return None
+
+
+def _likely_protocol(timings: list[int]) -> str | None:
+    """Return an informational protocol guess for captured timings."""
+    return _repeat_event_type(InfraredReceivedSignal(timings, modulation=None))

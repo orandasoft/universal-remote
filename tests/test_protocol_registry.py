@@ -72,6 +72,8 @@ def test_normalized_command_supports_non_nec_identity() -> None:
     assert result.command is command
     assert result.normalized is normalized
     assert handler.protocol_id == "fake"
+    assert handler.learning_label is None
+    assert handler.learning_metadata is None
     assert handler.repeat_event_type is None
     assert handler.decode_repeat is None
     assert handler.diagnostic_data is None
@@ -199,6 +201,15 @@ def test_nec_handler_decodes_normalized_identity() -> None:
         "command": "0x09",
     }
 
+    assert nec_protocol.NEC_HANDLER.learning_label == "NEC"
+    assert nec_protocol.NEC_HANDLER.learning_confidence == 200
+    metadata_builder = nec_protocol.NEC_HANDLER.learning_metadata
+    assert metadata_builder is not None
+    assert metadata_builder(result.normalized) == {
+        "address": "0xFB04",
+        "primary": "0x09",
+    }
+
 
 def test_nec1_f16_handler_decodes_normalized_identity() -> None:
     """Test the NEC1-F16 handler preserves function and subfunction identity."""
@@ -218,6 +229,16 @@ def test_nec1_f16_handler_decodes_normalized_identity() -> None:
         "address": "0xFB04",
         "function": "0xDB",
         "subfunction": "0x32",
+    }
+
+    assert nec_protocol.NEC1_F16_HANDLER.learning_label == "NEC1-F16"
+    assert nec_protocol.NEC1_F16_HANDLER.learning_confidence == 100
+    metadata_builder = nec_protocol.NEC1_F16_HANDLER.learning_metadata
+    assert metadata_builder is not None
+    assert metadata_builder(result.normalized) == {
+        "address": "0xFB04",
+        "primary": "0xDB",
+        "secondary": "0x32",
     }
 
 

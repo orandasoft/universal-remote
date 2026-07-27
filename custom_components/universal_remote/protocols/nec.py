@@ -304,6 +304,37 @@ def _decode_nec1_f16_result(
     )
 
 
+def _nec_learning_metadata(
+    normalized: NormalizedInfraredCommand,
+) -> dict[str, Any]:
+    """Return learning metadata for a normalized NEC command."""
+    address, primary, secondary = normalized.identity
+    assert isinstance(address, int)
+    assert isinstance(primary, int)
+    assert secondary is None
+
+    return {
+        "address": _format_hex(address, 4),
+        "primary": _format_hex(primary, 2),
+    }
+
+
+def _nec1_f16_learning_metadata(
+    normalized: NormalizedInfraredCommand,
+) -> dict[str, Any]:
+    """Return learning metadata for a normalized NEC1-F16 command."""
+    address, primary, secondary = normalized.identity
+    assert isinstance(address, int)
+    assert isinstance(primary, int)
+    assert isinstance(secondary, int)
+
+    return {
+        "address": _format_hex(address, 4),
+        "primary": _format_hex(primary, 2),
+        "secondary": _format_hex(secondary, 2),
+    }
+
+
 def _decode_nec_repeat_result(
     signal: InfraredReceivedSignal,
     previous_event: Mapping[str, Any] | None,
@@ -352,6 +383,8 @@ NEC_HANDLER = ReceiveProtocolHandler(
     learning_confidence=200,
     decode=_decode_nec_result,
     normalize=_normalize_nec_identity,
+    learning_label="NEC",
+    learning_metadata=_nec_learning_metadata,
     repeat_event_type="nec_repeat",
     decode_repeat=_decode_nec_repeat_result,
     diagnostic_data=_nec_diagnostic_data,
@@ -363,5 +396,7 @@ NEC1_F16_HANDLER = ReceiveProtocolHandler(
     learning_confidence=100,
     decode=_decode_nec1_f16_result,
     normalize=_normalize_nec1_f16_identity,
+    learning_label="NEC1-F16",
+    learning_metadata=_nec1_f16_learning_metadata,
     diagnostic_data=_nec_diagnostic_data,
 )

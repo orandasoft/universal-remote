@@ -64,6 +64,10 @@ type DiagnosticDataBuilder = Callable[
     [InfraredReceivedSignal],
     Mapping[str, Any],
 ]
+type LearningMetadataBuilder = Callable[
+    [NormalizedInfraredCommand],
+    Mapping[str, Any],
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +79,8 @@ class ReceiveProtocolHandler:
     learning_confidence: int
     decode: ProtocolSignalDecoder
     normalize: ProtocolCommandNormalizer
+    learning_label: str | None = None
+    learning_metadata: LearningMetadataBuilder | None = None
     repeat_event_type: str | None = None
     decode_repeat: ProtocolRepeatDecoder | None = None
     diagnostic_data: DiagnosticDataBuilder | None = None

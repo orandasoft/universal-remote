@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterable
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from homeassistant.components.infrared import InfraredReceivedSignal
@@ -19,10 +19,7 @@ from custom_components.universal_remote.learn import (
     LEARN_DECODER_NEC,
     LEARN_DECODER_NEC1_F16,
     LEARN_DECODER_NONE,
-    LEARN_DECODER_REGISTRY,
     LEARN_DECODERS,
-    LearnDecodeResult,
-    LearnDecoderDefinition,
     LearnCapture,
     LearnResult,
     LearnSessionInvalidCaptureError,
@@ -39,7 +36,14 @@ from custom_components.universal_remote.learn_candidates import (
 from custom_components.universal_remote.protocols import (
     PROTOCOL_NEC,
     PROTOCOL_NEC1_F16,
-    DecodedInfraredCommand,
+)
+from custom_components.universal_remote.protocols.base import (
+    NormalizedInfraredCommand,
+    ProtocolDecodeResult,
+    ReceiveProtocolHandler,
+)
+from custom_components.universal_remote.protocols.registry import (
+    build_protocol_registry,
 )
 
 RECEIVER_ID = "infrared.test_receiver"
@@ -423,12 +427,90 @@ def _capture(
     )
 
 
+def _fake_learning_handler(
+    protocol_id: str,
+    *,
+    command: Command | None = None,
+    confidence: int = 100,
+    label: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    matches: bool = True,
+    calls: list[str] | None = None,
+    learning: bool = True,
+) -> ReceiveProtocolHandler:
+    """Return a configurable fake learning-capable protocol handler."""
+    command_value = (
+        command
+        if command is not None
+        else cast(Command, FakeDecodedCommand(VALID_OTHER_TIMINGS))
+    )
+    normalized = NormalizedInfraredCommand(
+        protocol_id=protocol_id,
+        identity=(protocol_id, 1),
+        event_data={"value": 1},
+    )
+    metadata_value = (
+        metadata
+        if metadata is not None
+        else {
+            "address": "0x0001",
+            "primary": "0x02",
+        }
+    )
+
+    def decode(
+        _signal_value: InfraredReceivedSignal,
+    ) -> ProtocolDecodeResult | None:
+        if calls is not None:
+            calls.append(protocol_id)
+        if not matches:
+            return None
+        return ProtocolDecodeResult(
+            command=command_value,
+            normalized=normalized,
+        )
+
+    def normalize(
+        _command: Command,
+    ) -> NormalizedInfraredCommand:
+        return normalized
+
+    def build_metadata(
+        _normalized: NormalizedInfraredCommand,
+    ) -> dict[str, Any]:
+        return dict(metadata_value)
+
+    return ReceiveProtocolHandler(
+        protocol_id=protocol_id,
+        label_key=protocol_id,
+        learning_confidence=confidence,
+        decode=decode,
+        normalize=normalize,
+        learning_label=label,
+        learning_metadata=build_metadata if learning else None,
+    )
+
+
+def _patch_learning_registry(
+    monkeypatch: pytest.MonkeyPatch,
+    *handlers: ReceiveProtocolHandler,
+) -> None:
+    """Patch learning to use one explicit temporary protocol registry."""
+    monkeypatch.setattr(
+        learn_module,
+        "PROTOCOL_REGISTRY",
+        build_protocol_registry(handlers, {}),
+    )
+
+
 def test_build_learn_result_uses_captured_candidate_without_decode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test learn result uses captured candidate when no decoder matches."""
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
-    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
+    """Test learning uses captured data when no registered handler matches."""
+    _patch_learning_registry(
+        monkeypatch,
+        _fake_learning_handler("unmatched", matches=False),
+    )
 
     result = learn_module.build_learn_result(_capture(modulation_assumed=True))
 
@@ -440,7 +522,7 @@ def test_build_learn_result_uses_captured_candidate_without_decode(
 
 
 def test_learn_decoders_are_stable() -> None:
-    """Test supported learn decoder constants."""
+    """Test supported production learning decoder options."""
     assert LEARN_DECODERS == (
         LEARN_DECODER_AUTO,
         LEARN_DECODER_NONE,
@@ -448,114 +530,70 @@ def test_learn_decoders_are_stable() -> None:
         LEARN_DECODER_NEC1_F16,
     )
 
+    definitions = learn_module.learn_decoder_definitions()
+    assert [definition.key for definition in definitions] == list(LEARN_DECODERS)
+    assert [definition.label_key for definition in definitions] == [
+        "auto",
+        "none",
+        "nec",
+        "nec1_f16",
+    ]
+    assert [definition.fallback_label for definition in definitions] == [
+        "Auto (recommended)",
+        "None / captured only",
+        "NEC",
+        "NEC1-F16",
+    ]
 
-def test_registered_decoder_extends_explicit_and_auto_learning(
+
+def test_registered_handler_extends_explicit_and_auto_learning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test a decoder adapter extends learning without orchestration changes."""
-    command = FakeDecodedCommand()
-    calls: list[InfraredReceivedSignal] = []
-
-    def decode_custom(
-        signal: InfraredReceivedSignal,
-    ) -> LearnDecodeResult:
-        calls.append(signal)
-        return LearnDecodeResult(
-            command=cast(Command, command),
-            metadata={
-                "decoder": "custom",
-                "protocol": "custom",
-                "address": "0x0001",
-                "primary": "0x02",
-            },
-            confidence=100,
-        )
-
-    custom_decoder = LearnDecoderDefinition(
+    """Test a registered handler extends learning without orchestration edits."""
+    calls: list[str] = []
+    handler = _fake_learning_handler(
         "custom",
-        "custom",
-        "Custom",
-        decode_custom,
+        label="Custom",
+        metadata={
+            "address": "0x0001",
+            "primary": "0x02",
+        },
+        calls=calls,
     )
-    monkeypatch.setattr(
-        learn_module,
-        "LEARN_DECODER_REGISTRY",
-        (*LEARN_DECODER_REGISTRY, custom_decoder),
-    )
+    _patch_learning_registry(monkeypatch, handler)
 
-    explicit = learn_module.build_learn_result(_capture(), decoder="custom")
+    explicit = learn_module.build_learn_result(
+        _capture(),
+        decoder="custom",
+    )
+    automatic = learn_module.build_learn_result(_capture())
 
     assert [candidate.key for candidate in explicit.candidates] == [
         CANDIDATE_CAPTURED,
         CANDIDATE_NORMALIZED,
     ]
     assert explicit.candidates[1].metadata["decoder"] == "custom"
-
-    monkeypatch.setattr(
-        learn_module,
-        "LEARN_DECODER_REGISTRY",
-        (
-            LearnDecoderDefinition(
-                LEARN_DECODER_AUTO,
-                "auto",
-                "Auto (recommended)",
-            ),
-            LearnDecoderDefinition(
-                LEARN_DECODER_NONE,
-                "none",
-                "None / captured only",
-            ),
-            custom_decoder,
-        ),
-    )
-
-    automatic = learn_module.build_learn_result(_capture())
-
+    assert explicit.candidates[1].metadata["protocol"] == "custom"
     assert automatic.candidates[1].metadata["decoder"] == "custom"
-    assert len(calls) == 2
+    assert calls == ["custom", "custom"]
 
 
-def test_auto_decoder_selects_highest_confidence_result(
+def test_auto_decoder_selects_highest_confidence_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test Auto chooses the highest-confidence successful adapter."""
+    """Test Auto chooses the highest-confidence successful handler."""
     calls: list[str] = []
-    low_command = cast(Command, FakeDecodedCommand())
-    high_command = cast(Command, FakeDecodedCommand(VALID_OTHER_TIMINGS))
-
-    def low_confidence(
-        _signal: InfraredReceivedSignal,
-    ) -> LearnDecodeResult:
-        calls.append("low")
-        return LearnDecodeResult(
-            command=low_command,
-            metadata={"decoder": "low", "protocol": "low"},
-            confidence=10,
-        )
-
-    def high_confidence(
-        _signal: InfraredReceivedSignal,
-    ) -> LearnDecodeResult:
-        calls.append("high")
-        return LearnDecodeResult(
-            command=high_command,
-            metadata={"decoder": "high", "protocol": "high"},
-            confidence=20,
-        )
-
-    monkeypatch.setattr(
-        learn_module,
-        "LEARN_DECODER_REGISTRY",
-        (
-            LearnDecoderDefinition(
-                LEARN_DECODER_AUTO,
-                "auto",
-                "Auto (recommended)",
-            ),
-            LearnDecoderDefinition("low", "low", "Low", low_confidence),
-            LearnDecoderDefinition("high", "high", "High", high_confidence),
-        ),
+    low = _fake_learning_handler(
+        "low",
+        confidence=10,
+        calls=calls,
     )
+    high = _fake_learning_handler(
+        "high",
+        confidence=20,
+        calls=calls,
+    )
+    _patch_learning_registry(monkeypatch, low, high)
 
     result = learn_module.build_learn_result(_capture())
 
@@ -563,327 +601,237 @@ def test_auto_decoder_selects_highest_confidence_result(
     assert calls == ["low", "high"]
 
 
-def test_auto_prefers_standard_nec_when_both_nec_decoders_match(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test Auto prefers checksum-validated NEC over the broader NEC1-F16."""
-    nec_command = cast(Command, FakeDecodedCommand())
-    nec1_f16_command = cast(Command, FakeDecodedCommand(VALID_OTHER_TIMINGS))
-
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: nec_command)
-    monkeypatch.setattr(
-        learn_module,
-        "_normalize_nec_command",
-        lambda _command: DecodedInfraredCommand(
-            protocol=PROTOCOL_NEC,
-            address=0xFB04,
-            primary=0x09,
-        ),
-    )
-    monkeypatch.setattr(
-        learn_module,
-        "_decode_nec1_f16_signal",
-        lambda _signal: nec1_f16_command,
-    )
-    monkeypatch.setattr(
-        learn_module,
-        "_normalize_nec1_f16_command",
-        lambda _command: DecodedInfraredCommand(
-            protocol=PROTOCOL_NEC1_F16,
-            address=0xFB04,
-            primary=0x09,
-            secondary=0xF6,
-        ),
-    )
-
-    result = learn_module.build_learn_result(_capture())
-
-    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC
-    assert result.candidates[1].metadata["protocol"] == PROTOCOL_NEC
-    assert result.candidates[1].metadata["address"] == "0xFB04"
-    assert result.candidates[1].metadata["primary"] == "0x09"
-    assert "secondary" not in result.candidates[1].metadata
-
-
-def test_auto_uses_nec1_f16_when_standard_nec_does_not_match(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test Auto still selects NEC1-F16 for a genuine subfunction frame."""
-    nec1_f16_command = cast(Command, FakeDecodedCommand())
-
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
-    monkeypatch.setattr(
-        learn_module,
-        "_decode_nec1_f16_signal",
-        lambda _signal: nec1_f16_command,
-    )
-    monkeypatch.setattr(
-        learn_module,
-        "_normalize_nec1_f16_command",
-        lambda _command: DecodedInfraredCommand(
-            protocol=PROTOCOL_NEC1_F16,
-            address=0xFB04,
-            primary=0xDB,
-            secondary=0x00,
-        ),
-    )
-
-    result = learn_module.build_learn_result(_capture())
-
-    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC1_F16
-    assert result.candidates[1].metadata["protocol"] == PROTOCOL_NEC1_F16
-    assert result.candidates[1].metadata["address"] == "0xFB04"
-    assert result.candidates[1].metadata["primary"] == "0xDB"
-    assert result.candidates[1].metadata["secondary"] == "0x00"
-
-
 def test_auto_decoder_uses_registry_order_for_equal_confidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test registry order breaks ties between equally confident results."""
-    command = cast(Command, FakeDecodedCommand())
-
-    def first(
-        _signal: InfraredReceivedSignal,
-    ) -> LearnDecodeResult:
-        return LearnDecodeResult(
-            command=command,
-            metadata={"decoder": "first", "protocol": "first"},
-            confidence=10,
-        )
-
-    def second(
-        _signal: InfraredReceivedSignal,
-    ) -> LearnDecodeResult:
-        return LearnDecodeResult(
-            command=command,
-            metadata={"decoder": "second", "protocol": "second"},
-            confidence=10,
-        )
-
-    monkeypatch.setattr(
-        learn_module,
-        "LEARN_DECODER_REGISTRY",
-        (
-            LearnDecoderDefinition(
-                LEARN_DECODER_AUTO,
-                "auto",
-                "Auto (recommended)",
-            ),
-            LearnDecoderDefinition("first", "first", "First", first),
-            LearnDecoderDefinition("second", "second", "Second", second),
-        ),
-    )
+    """Test explicit registry order breaks equal-confidence ties."""
+    first = _fake_learning_handler("first", confidence=10)
+    second = _fake_learning_handler("second", confidence=10)
+    _patch_learning_registry(monkeypatch, first, second)
 
     result = learn_module.build_learn_result(_capture())
 
     assert result.candidates[1].metadata["decoder"] == "first"
 
 
-def test_build_learn_result_decoder_none_uses_captured_only(
+def test_auto_prefers_standard_nec_confidence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test None decoder does not attempt protocol normalization."""
-
-    def fail_decode(_signal: InfraredReceivedSignal) -> None:
-        pytest.fail("decoder should not be called")
-
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", fail_decode)
-    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", fail_decode)
-
-    result = learn_module.build_learn_result(_capture(), decoder=LEARN_DECODER_NONE)
-
-    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
-    assert result.candidates[0].recommended is True
-
-
-def test_build_learn_result_rejects_invalid_decoder() -> None:
-    """Test invalid decoder names are rejected."""
-    with pytest.raises(LearnSessionInvalidDecoderError):
-        learn_module.build_learn_result(_capture(), decoder="invalid")
-
-
-def test_build_learn_result_adds_normalized_nec_candidate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test learn result includes a normalized NEC candidate when decoded."""
-    command = FakeDecodedCommand()
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: command)
-    monkeypatch.setattr(
-        learn_module,
-        "_normalize_nec_command",
-        lambda _command: DecodedInfraredCommand(
-            protocol=PROTOCOL_NEC,
-            address=0x04,
-            primary=0x08,
-        ),
+    """Test Auto prefers standard NEC when both NEC handlers match."""
+    calls: list[str] = []
+    nec = _fake_learning_handler(
+        PROTOCOL_NEC,
+        confidence=200,
+        label="NEC",
+        metadata={
+            "address": "0xFB04",
+            "primary": "0x09",
+        },
+        calls=calls,
     )
+    nec1_f16 = _fake_learning_handler(
+        PROTOCOL_NEC1_F16,
+        confidence=100,
+        label="NEC1-F16",
+        metadata={
+            "address": "0xFB04",
+            "primary": "0x09",
+            "secondary": "0xF6",
+        },
+        calls=calls,
+    )
+    _patch_learning_registry(monkeypatch, nec, nec1_f16)
 
     result = learn_module.build_learn_result(_capture())
 
-    assert [candidate.key for candidate in result.candidates] == [
-        CANDIDATE_CAPTURED,
-        CANDIDATE_NORMALIZED,
-    ]
-    assert result.candidates[0].recommended is False
-    assert result.candidates[1].recommended is True
-    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC
-    assert result.candidates[1].metadata["protocol"] == PROTOCOL_NEC
-    assert result.candidates[1].metadata["address"] == "0x0004"
-    assert result.candidates[1].metadata["primary"] == "0x08"
-    assert "secondary" not in result.candidates[1].metadata
+    metadata = result.candidates[1].metadata
+    assert metadata["decoder"] == PROTOCOL_NEC
+    assert metadata["protocol"] == PROTOCOL_NEC
+    assert metadata["address"] == "0xFB04"
+    assert metadata["primary"] == "0x09"
+    assert "secondary" not in metadata
+    assert calls == [PROTOCOL_NEC, PROTOCOL_NEC1_F16]
 
 
-def test_build_learn_result_explicit_nec_decoder_does_not_try_nec1_f16(
+def test_auto_uses_nec1_f16_when_standard_nec_does_not_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test explicit NEC decoder does not try other decoders."""
-    command = FakeDecodedCommand()
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: command)
-    monkeypatch.setattr(
-        learn_module,
-        "_normalize_nec_command",
-        lambda _command: DecodedInfraredCommand(
-            protocol=PROTOCOL_NEC,
-            address=0x04,
-            primary=0x08,
-        ),
+    """Test Auto selects NEC1-F16 when standard NEC rejects the signal."""
+    nec = _fake_learning_handler(
+        PROTOCOL_NEC,
+        confidence=200,
+        label="NEC",
+        matches=False,
     )
-
-    def fail_decode(_signal: InfraredReceivedSignal) -> None:
-        pytest.fail("NEC1-f16 decoder should not be called")
-
-    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", fail_decode)
-
-    result = learn_module.build_learn_result(_capture(), decoder=LEARN_DECODER_NEC)
-
-    assert [candidate.key for candidate in result.candidates] == [
-        CANDIDATE_CAPTURED,
-        CANDIDATE_NORMALIZED,
-    ]
-    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC
-
-
-def test_build_learn_result_explicit_nec_decoder_returns_captured_when_unmatched(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test explicit NEC decoder returns captured-only when NEC does not match."""
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
-
-    def fail_decode(_signal: InfraredReceivedSignal) -> None:
-        pytest.fail("NEC1-f16 decoder should not be called")
-
-    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", fail_decode)
-
-    result = learn_module.build_learn_result(_capture(), decoder=LEARN_DECODER_NEC)
-
-    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
-    assert result.candidates[0].recommended is True
-
-
-def test_build_learn_result_falls_back_to_nec1_f16_candidate(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test NEC1-f16 decode is used when NEC decode does not match."""
-    command = FakeDecodedCommand()
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
-    monkeypatch.setattr(
-        learn_module,
-        "_decode_nec1_f16_signal",
-        lambda _signal: command,
+    nec1_f16 = _fake_learning_handler(
+        PROTOCOL_NEC1_F16,
+        confidence=100,
+        label="NEC1-F16",
+        metadata={
+            "address": "0xFB04",
+            "primary": "0xDB",
+            "secondary": "0x00",
+        },
     )
-    monkeypatch.setattr(
-        learn_module,
-        "_normalize_nec1_f16_command",
-        lambda _command: DecodedInfraredCommand(
-            protocol=PROTOCOL_NEC1_F16,
-            address=0xFB04,
-            primary=0xDB,
-            secondary=0x32,
-        ),
-    )
+    _patch_learning_registry(monkeypatch, nec, nec1_f16)
 
     result = learn_module.build_learn_result(_capture())
 
-    assert [candidate.key for candidate in result.candidates] == [
-        CANDIDATE_CAPTURED,
-        CANDIDATE_NORMALIZED,
-    ]
-    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC1_F16
-    assert result.candidates[1].metadata["protocol"] == PROTOCOL_NEC1_F16
-    assert result.candidates[1].metadata["address"] == "0xFB04"
-    assert result.candidates[1].metadata["primary"] == "0xDB"
-    assert result.candidates[1].metadata["secondary"] == "0x32"
+    metadata = result.candidates[1].metadata
+    assert metadata["decoder"] == PROTOCOL_NEC1_F16
+    assert metadata["protocol"] == PROTOCOL_NEC1_F16
+    assert metadata["address"] == "0xFB04"
+    assert metadata["primary"] == "0xDB"
+    assert metadata["secondary"] == "0x00"
 
 
-def test_build_learn_result_explicit_nec1_f16_decoder_does_not_try_nec(
+def test_build_learn_result_decoder_none_skips_handlers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test explicit NEC1-f16 decoder does not try NEC first."""
-    command = FakeDecodedCommand()
-
-    def fail_decode(_signal: InfraredReceivedSignal) -> None:
-        pytest.fail("NEC decoder should not be called")
-
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", fail_decode)
-    monkeypatch.setattr(
-        learn_module,
-        "_decode_nec1_f16_signal",
-        lambda _signal: command,
+    """Test None returns captured-only without invoking handlers."""
+    calls: list[str] = []
+    _patch_learning_registry(
+        monkeypatch,
+        _fake_learning_handler("should_not_run", calls=calls),
     )
-    monkeypatch.setattr(
-        learn_module,
-        "_normalize_nec1_f16_command",
-        lambda _command: DecodedInfraredCommand(
-            protocol=PROTOCOL_NEC1_F16,
-            address=0xFB04,
-            primary=0xDB,
-            secondary=0x32,
-        ),
-    )
-
-    result = learn_module.build_learn_result(_capture(), decoder=LEARN_DECODER_NEC1_F16)
-
-    assert [candidate.key for candidate in result.candidates] == [
-        CANDIDATE_CAPTURED,
-        CANDIDATE_NORMALIZED,
-    ]
-    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC1_F16
-
-
-def test_build_learn_result_explicit_nec1_f16_returns_captured_when_unmatched(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test explicit NEC1-f16 decoder returns captured-only when unmatched."""
-    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
-
-    def fail_decode(_signal: InfraredReceivedSignal) -> None:
-        pytest.fail("NEC decoder should not be called")
-
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", fail_decode)
 
     result = learn_module.build_learn_result(
         _capture(),
-        decoder=LEARN_DECODER_NEC1_F16,
+        decoder=LEARN_DECODER_NONE,
+    )
+
+    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
+    assert result.candidates[0].recommended is True
+    assert calls == []
+
+
+def test_build_learn_result_rejects_invalid_decoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test unknown explicit decoder names are rejected."""
+    _patch_learning_registry(monkeypatch)
+
+    with pytest.raises(LearnSessionInvalidDecoderError):
+        learn_module.build_learn_result(
+            _capture(),
+            decoder="invalid",
+        )
+
+
+def test_explicit_decoder_only_invokes_selected_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test an explicit decoder does not try other handlers."""
+    calls: list[str] = []
+    nec = _fake_learning_handler(
+        PROTOCOL_NEC,
+        label="NEC",
+        calls=calls,
+    )
+    nec1_f16 = _fake_learning_handler(
+        PROTOCOL_NEC1_F16,
+        label="NEC1-F16",
+        calls=calls,
+    )
+    _patch_learning_registry(monkeypatch, nec, nec1_f16)
+
+    result = learn_module.build_learn_result(
+        _capture(),
+        decoder=PROTOCOL_NEC,
+    )
+
+    assert result.candidates[1].metadata["decoder"] == PROTOCOL_NEC
+    assert calls == [PROTOCOL_NEC]
+
+
+def test_explicit_decoder_returns_captured_when_unmatched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test an explicit handler may reject a captured signal."""
+    handler = _fake_learning_handler(
+        PROTOCOL_NEC,
+        label="NEC",
+        matches=False,
+    )
+    _patch_learning_registry(monkeypatch, handler)
+
+    result = learn_module.build_learn_result(
+        _capture(),
+        decoder=PROTOCOL_NEC,
     )
 
     assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
     assert result.candidates[0].recommended is True
 
 
-def test_build_learn_result_skips_candidate_when_normalization_fails(
+def test_non_learning_handler_is_not_exposed_or_accepted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test decoded commands without normalized metadata are ignored."""
-    command = FakeDecodedCommand()
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: command)
-    monkeypatch.setattr(learn_module, "_normalize_nec_command", lambda _command: None)
-    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
+    """Test receive-only handlers are excluded from learning."""
+    handler = _fake_learning_handler(
+        "receive_only",
+        learning=False,
+    )
+    _patch_learning_registry(monkeypatch, handler)
+
+    assert [
+        definition.key for definition in learn_module.learn_decoder_definitions()
+    ] == [
+        LEARN_DECODER_AUTO,
+        LEARN_DECODER_NONE,
+    ]
+    assert (
+        learn_module._decode_learning_handler(
+            handler,
+            _signal(),
+        )
+        is None
+    )
+
+    with pytest.raises(LearnSessionInvalidDecoderError):
+        learn_module.build_learn_result(
+            _capture(),
+            decoder="receive_only",
+        )
+
+
+def test_learning_definition_falls_back_to_protocol_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a handler without a display label uses its protocol id."""
+    handler = _fake_learning_handler(
+        "fallback_protocol",
+        label=None,
+    )
+    _patch_learning_registry(monkeypatch, handler)
+
+    definition = learn_module.learn_decoder_definitions()[-1]
+
+    assert definition.key == "fallback_protocol"
+    assert definition.label_key == "fallback_protocol"
+    assert definition.fallback_label == "fallback_protocol"
+
+
+def test_protocol_metadata_cannot_override_identity_fields(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test handler metadata cannot spoof decoder or protocol identity."""
+    handler = _fake_learning_handler(
+        "trusted",
+        metadata={
+            "decoder": "spoofed",
+            "protocol": "spoofed",
+            "custom": "value",
+        },
+    )
+    _patch_learning_registry(monkeypatch, handler)
 
     result = learn_module.build_learn_result(_capture())
 
-    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
-    assert result.candidates[0].recommended is True
+    metadata = result.candidates[1].metadata
+    assert metadata["decoder"] == "trusted"
+    assert metadata["protocol"] == "trusted"
+    assert metadata["custom"] == "value"
 
 
 async def test_async_learn_once_returns_learn_result(
@@ -894,8 +842,6 @@ async def test_async_learn_once_returns_learn_result(
     _patch_receivers(monkeypatch)
     subscription = FakeReceiverSubscription()
     _patch_subscription(monkeypatch, subscription)
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", lambda _signal: None)
-    monkeypatch.setattr(learn_module, "_decode_nec1_f16_signal", lambda _signal: None)
     manager = LearnSessionManager(hass)
 
     task = asyncio.create_task(
@@ -915,33 +861,3 @@ async def test_async_learn_once_returns_learn_result(
     assert result.capture.timings == VALID_TIMINGS
     assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
     assert subscription.unsubscribe_calls == 1
-
-
-def test_build_learn_result_explicit_nec1_f16_skips_when_normalization_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test NEC1-f16 decoder returns captured-only when normalization fails."""
-    command = FakeDecodedCommand()
-
-    def fail_decode(_signal: InfraredReceivedSignal) -> None:
-        pytest.fail("NEC decoder should not be called")
-
-    monkeypatch.setattr(learn_module, "_decode_nec_signal", fail_decode)
-    monkeypatch.setattr(
-        learn_module,
-        "_decode_nec1_f16_signal",
-        lambda _signal: command,
-    )
-    monkeypatch.setattr(
-        learn_module,
-        "_normalize_nec1_f16_command",
-        lambda _command: None,
-    )
-
-    result = learn_module.build_learn_result(
-        _capture(),
-        decoder=LEARN_DECODER_NEC1_F16,
-    )
-
-    assert [candidate.key for candidate in result.candidates] == [CANDIDATE_CAPTURED]
-    assert result.candidates[0].recommended is True
