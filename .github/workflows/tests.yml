@@ -30,7 +30,9 @@ jobs:
 
       - name: Run Ruff
         run: |
+          ruff --version
           ruff check custom_components/universal_remote tests
+          ruff format --check custom_components/universal_remote tests
 
       - name: Run mypy
         run: |
