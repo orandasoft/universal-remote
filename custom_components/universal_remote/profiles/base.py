@@ -33,6 +33,16 @@ class CommandPresentation:
 
 
 @dataclass(frozen=True, slots=True)
+class ProfileCapability:
+    """Immutable composable device-profile capability."""
+
+    capability_id: str
+
+    def validate(self) -> None:
+        """Validate capability-specific configuration."""
+
+
+@dataclass(frozen=True, slots=True)
 class DeviceProfile:
     """Immutable Home Assistant semantics for one device type."""
 
