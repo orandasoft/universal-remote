@@ -71,7 +71,7 @@ def test_normalized_command_supports_non_nec_identity() -> None:
     assert result.command is command
     assert result.normalized is normalized
     assert handler.protocol_id == "fake"
-    assert handler.recognizes_repeat is None
+    assert handler.decode_repeat is None
     assert handler.diagnostic_data is None
 
 
@@ -234,16 +234,58 @@ def test_nec_handler_normalizers_reject_unrelated_commands() -> None:
 
 
 def test_nec_handler_optional_behaviors() -> None:
-    """Test NEC repeat recognition and diagnostic callbacks."""
+    """Test NEC repeat decoding and diagnostic callbacks."""
     repeat_signal = InfraredReceivedSignal(
         [9000, -2250, 562],
         modulation=38_000,
     )
 
-    recognizes_repeat = nec_protocol.NEC_HANDLER.recognizes_repeat
-    assert recognizes_repeat is not None
-    assert recognizes_repeat(repeat_signal) is True
-    assert nec_protocol.NEC1_F16_HANDLER.recognizes_repeat is None
+    decode_repeat = nec_protocol.NEC_HANDLER.decode_repeat
+    assert decode_repeat is not None
+
+    repeat_without_previous = decode_repeat(repeat_signal, None)
+    assert repeat_without_previous is not None
+    assert repeat_without_previous.event_type == "nec_repeat"
+    assert repeat_without_previous.protocol_id == nec_protocol.PROTOCOL_NEC
+    assert repeat_without_previous.event_data == {"repeat": True}
+
+    previous_event = {
+        "event_type": "dtv_num_2",
+        "protocol": nec_protocol.PROTOCOL_NEC1_F16,
+        "address": "0xFB04",
+        "function": "0xDB",
+        "subfunction": "0x32",
+        "command_name": "DTV_NUM_2",
+    }
+    repeat_with_previous = decode_repeat(
+        repeat_signal,
+        previous_event,
+    )
+    assert repeat_with_previous is not None
+    assert repeat_with_previous.event_type == "nec_repeat"
+    assert repeat_with_previous.protocol_id == nec_protocol.PROTOCOL_NEC1_F16
+    assert repeat_with_previous.event_data == {
+        "repeat": True,
+        "previous_event_type": "dtv_num_2",
+        "previous_protocol": nec_protocol.PROTOCOL_NEC1_F16,
+        "previous_address": "0xFB04",
+        "previous_command": None,
+        "previous_function": "0xDB",
+        "previous_subfunction": "0x32",
+        "previous_command_name": "DTV_NUM_2",
+    }
+
+    assert (
+        decode_repeat(
+            InfraredReceivedSignal(
+                [1, 2],
+                modulation=38_000,
+            ),
+            None,
+        )
+        is None
+    )
+    assert nec_protocol.NEC1_F16_HANDLER.decode_repeat is None
 
     diagnostic_data = nec_protocol.NEC_HANDLER.diagnostic_data
     assert diagnostic_data is not None

@@ -42,7 +42,24 @@ type ProtocolCommandNormalizer = Callable[
     [Command],
     NormalizedInfraredCommand | None,
 ]
-type RepeatRecognizer = Callable[[InfraredReceivedSignal], bool]
+
+
+@dataclass(frozen=True, slots=True)
+class ProtocolRepeatResult:
+    """Protocol-specific repeat event identity and safe event data."""
+
+    event_type: str
+    protocol_id: str
+    event_data: Mapping[str, Any]
+
+
+type ProtocolRepeatDecoder = Callable[
+    [
+        InfraredReceivedSignal,
+        Mapping[str, Any] | None,
+    ],
+    ProtocolRepeatResult | None,
+]
 type DiagnosticDataBuilder = Callable[
     [InfraredReceivedSignal],
     Mapping[str, Any],
@@ -58,7 +75,7 @@ class ReceiveProtocolHandler:
     learning_confidence: int
     decode: ProtocolSignalDecoder
     normalize: ProtocolCommandNormalizer
-    recognizes_repeat: RepeatRecognizer | None = None
+    decode_repeat: ProtocolRepeatDecoder | None = None
     diagnostic_data: DiagnosticDataBuilder | None = None
 
 

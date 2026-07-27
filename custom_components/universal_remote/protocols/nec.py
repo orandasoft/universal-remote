@@ -1,5 +1,6 @@
 """NEC-family infrared protocol helpers."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.infrared import InfraredReceivedSignal
@@ -10,6 +11,7 @@ from .base import (
     DecodedInfraredCommand,
     NormalizedInfraredCommand,
     ProtocolDecodeResult,
+    ProtocolRepeatResult,
     ReceiveProtocolHandler,
 )
 
@@ -302,9 +304,39 @@ def _decode_nec1_f16_result(
     )
 
 
-def _recognizes_nec_repeat(signal: InfraredReceivedSignal) -> bool:
-    """Return whether a signal is a standalone NEC repeat frame."""
-    return _is_nec_repeat_frame(signal.timings)
+def _decode_nec_repeat_result(
+    signal: InfraredReceivedSignal,
+    previous_event: Mapping[str, Any] | None,
+) -> ProtocolRepeatResult | None:
+    """Decode a standalone NEC repeat frame and its association metadata."""
+    if not _is_nec_repeat_frame(signal.timings):
+        return None
+
+    protocol_id = (
+        previous_event.get("protocol", PROTOCOL_NEC)
+        if previous_event is not None
+        else PROTOCOL_NEC
+    )
+    event_data: dict[str, Any] = {"repeat": True}
+
+    if previous_event is not None:
+        event_data.update(
+            {
+                "previous_event_type": previous_event.get("event_type"),
+                "previous_protocol": previous_event.get("protocol"),
+                "previous_address": previous_event.get("address"),
+                "previous_command": previous_event.get("command"),
+                "previous_function": previous_event.get("function"),
+                "previous_subfunction": previous_event.get("subfunction"),
+                "previous_command_name": previous_event.get("command_name"),
+            }
+        )
+
+    return ProtocolRepeatResult(
+        event_type="nec_repeat",
+        protocol_id=protocol_id,
+        event_data=event_data,
+    )
 
 
 def _nec_diagnostic_data(
@@ -320,7 +352,7 @@ NEC_HANDLER = ReceiveProtocolHandler(
     learning_confidence=200,
     decode=_decode_nec_result,
     normalize=_normalize_nec_identity,
-    recognizes_repeat=_recognizes_nec_repeat,
+    decode_repeat=_decode_nec_repeat_result,
     diagnostic_data=_nec_diagnostic_data,
 )
 
