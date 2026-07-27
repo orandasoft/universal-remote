@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 from .base import ReceiveProtocolHandler
+from .nec import (
+    NEC1_F16_HANDLER,
+    NEC_HANDLER,
+    PROTOCOL_NEC,
+    PROTOCOL_NEC1_F16,
+)
 
 
 class ProtocolRegistryError(ValueError):
@@ -77,3 +83,25 @@ def build_protocol_registry(
         handlers=MappingProxyType(handler_map),
         decoder_families=MappingProxyType(family_map),
     )
+
+
+PROTOCOL_HANDLERS: Mapping[str, ReceiveProtocolHandler] = MappingProxyType(
+    {
+        PROTOCOL_NEC: NEC_HANDLER,
+        PROTOCOL_NEC1_F16: NEC1_F16_HANDLER,
+    }
+)
+
+DECODER_FAMILIES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        PROTOCOL_NEC: (
+            PROTOCOL_NEC,
+            PROTOCOL_NEC1_F16,
+        ),
+    }
+)
+
+PROTOCOL_REGISTRY = build_protocol_registry(
+    PROTOCOL_HANDLERS.values(),
+    DECODER_FAMILIES,
+)

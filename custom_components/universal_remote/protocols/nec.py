@@ -6,7 +6,12 @@ from homeassistant.components.infrared import InfraredReceivedSignal
 from infrared_protocols.commands import Command
 from infrared_protocols.commands.nec import NECCommand
 
-from .base import DecodedInfraredCommand
+from .base import (
+    DecodedInfraredCommand,
+    NormalizedInfraredCommand,
+    ProtocolDecodeResult,
+    ReceiveProtocolHandler,
+)
 
 PROTOCOL_NEC = "nec"
 PROTOCOL_NEC1_F16 = "nec1_f16"
@@ -224,3 +229,106 @@ def _nec_command_key(command: Command) -> tuple[int, int] | None:
         return (address, command_value)
 
     return None
+
+
+def _normalize_nec_identity(
+    command: Command,
+) -> NormalizedInfraredCommand | None:
+    """Normalize an NEC command through the protocol-neutral contract."""
+    decoded = _normalize_nec_command(command)
+    if decoded is None:
+        return None
+
+    return NormalizedInfraredCommand(
+        protocol_id=PROTOCOL_NEC,
+        identity=(decoded.address, decoded.primary, decoded.secondary),
+        event_data={
+            "address": _format_hex(decoded.address, 4),
+            "command": _format_hex(decoded.primary, 2),
+        },
+    )
+
+
+def _normalize_nec1_f16_identity(
+    command: Command,
+) -> NormalizedInfraredCommand | None:
+    """Normalize an NEC1-F16 command through the protocol-neutral contract."""
+    decoded = _normalize_nec1_f16_command(command)
+    if decoded is None or decoded.secondary is None:
+        return None
+
+    return NormalizedInfraredCommand(
+        protocol_id=PROTOCOL_NEC1_F16,
+        identity=(decoded.address, decoded.primary, decoded.secondary),
+        event_data={
+            "address": _format_hex(decoded.address, 4),
+            "function": _format_hex(decoded.primary, 2),
+            "subfunction": _format_hex(decoded.secondary, 2),
+        },
+    )
+
+
+def _decode_nec_result(
+    signal: InfraredReceivedSignal,
+) -> ProtocolDecodeResult | None:
+    """Decode and normalize one NEC signal."""
+    command = _decode_nec_signal(signal)
+    if command is None:
+        return None
+
+    normalized = _normalize_nec_identity(command)
+    assert normalized is not None
+
+    return ProtocolDecodeResult(
+        command=command,
+        normalized=normalized,
+    )
+
+
+def _decode_nec1_f16_result(
+    signal: InfraredReceivedSignal,
+) -> ProtocolDecodeResult | None:
+    """Decode and normalize one NEC1-F16 signal."""
+    command = _decode_nec1_f16_signal(signal)
+    if command is None:
+        return None
+
+    normalized = _normalize_nec1_f16_identity(command)
+    assert normalized is not None
+
+    return ProtocolDecodeResult(
+        command=command,
+        normalized=normalized,
+    )
+
+
+def _recognizes_nec_repeat(signal: InfraredReceivedSignal) -> bool:
+    """Return whether a signal is a standalone NEC repeat frame."""
+    return _is_nec_repeat_frame(signal.timings)
+
+
+def _nec_diagnostic_data(
+    signal: InfraredReceivedSignal,
+) -> dict[str, Any]:
+    """Return privacy-safe NEC timing diagnostic data."""
+    return _nec_full_frame_debug_data(list(signal.timings))
+
+
+NEC_HANDLER = ReceiveProtocolHandler(
+    protocol_id=PROTOCOL_NEC,
+    label_key="nec",
+    learning_confidence=200,
+    decode=_decode_nec_result,
+    normalize=_normalize_nec_identity,
+    recognizes_repeat=_recognizes_nec_repeat,
+    diagnostic_data=_nec_diagnostic_data,
+)
+
+NEC1_F16_HANDLER = ReceiveProtocolHandler(
+    protocol_id=PROTOCOL_NEC1_F16,
+    label_key="nec1_f16",
+    learning_confidence=100,
+    decode=_decode_nec1_f16_result,
+    normalize=_normalize_nec1_f16_identity,
+    diagnostic_data=_nec_diagnostic_data,
+)

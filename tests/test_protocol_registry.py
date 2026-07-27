@@ -4,14 +4,20 @@ from typing import cast
 
 import pytest
 from homeassistant.components.infrared import InfraredReceivedSignal
+from infrared_protocols.codes.lg.tv import LGTVCodeJP
 from infrared_protocols.commands import Command
+from infrared_protocols.commands.nec import NECCommand
 
+from custom_components.universal_remote.protocols import nec as nec_protocol
 from custom_components.universal_remote.protocols.base import (
     NormalizedInfraredCommand,
     ProtocolDecodeResult,
     ReceiveProtocolHandler,
 )
 from custom_components.universal_remote.protocols.registry import (
+    DECODER_FAMILIES,
+    PROTOCOL_HANDLERS,
+    PROTOCOL_REGISTRY,
     ProtocolRegistryError,
     build_protocol_registry,
 )
@@ -123,3 +129,135 @@ def test_protocol_registry_rejects_missing_family_members() -> None:
             (_handler("registered"),),
             {"family": ("registered", "missing", "also_missing")},
         )
+
+
+def _command_signal(command: Command) -> InfraredReceivedSignal:
+    """Return a received signal generated from a library command."""
+    return InfraredReceivedSignal(
+        command.get_raw_timings(),
+        modulation=38_000,
+    )
+
+
+def test_production_registry_contains_ordered_nec_family() -> None:
+    """Test the production registry declares the NEC decoder family."""
+    assert PROTOCOL_HANDLERS == {
+        nec_protocol.PROTOCOL_NEC: nec_protocol.NEC_HANDLER,
+        nec_protocol.PROTOCOL_NEC1_F16: nec_protocol.NEC1_F16_HANDLER,
+    }
+    assert DECODER_FAMILIES == {
+        nec_protocol.PROTOCOL_NEC: (
+            nec_protocol.PROTOCOL_NEC,
+            nec_protocol.PROTOCOL_NEC1_F16,
+        )
+    }
+    assert PROTOCOL_REGISTRY.handlers_for_family(nec_protocol.PROTOCOL_NEC) == (
+        nec_protocol.NEC_HANDLER,
+        nec_protocol.NEC1_F16_HANDLER,
+    )
+
+
+def test_nec_handler_decodes_normalized_identity() -> None:
+    """Test the NEC handler returns the existing NEC identity and event data."""
+    result = nec_protocol.NEC_HANDLER.decode(
+        _command_signal(
+            NECCommand(
+                address=0xFB04,
+                command=0x09,
+            )
+        )
+    )
+
+    assert result is not None
+    assert result.normalized.protocol_id == nec_protocol.PROTOCOL_NEC
+    assert result.normalized.match_key == (
+        nec_protocol.PROTOCOL_NEC,
+        0xFB04,
+        0x09,
+        None,
+    )
+    assert result.normalized.event_data == {
+        "address": "0xFB04",
+        "command": "0x09",
+    }
+
+
+def test_nec1_f16_handler_decodes_normalized_identity() -> None:
+    """Test the NEC1-F16 handler preserves function and subfunction identity."""
+    result = nec_protocol.NEC1_F16_HANDLER.decode(
+        _command_signal(LGTVCodeJP.DTV_NUM_2.to_command())
+    )
+
+    assert result is not None
+    assert result.normalized.protocol_id == nec_protocol.PROTOCOL_NEC1_F16
+    assert result.normalized.match_key == (
+        nec_protocol.PROTOCOL_NEC1_F16,
+        0xFB04,
+        0xDB,
+        0x32,
+    )
+    assert result.normalized.event_data == {
+        "address": "0xFB04",
+        "function": "0xDB",
+        "subfunction": "0x32",
+    }
+
+
+@pytest.mark.parametrize(
+    "handler",
+    (
+        nec_protocol.NEC_HANDLER,
+        nec_protocol.NEC1_F16_HANDLER,
+    ),
+)
+def test_nec_handlers_reject_invalid_signals(
+    handler: ReceiveProtocolHandler,
+) -> None:
+    """Test concrete NEC handlers reject undecodable timings."""
+    assert (
+        handler.decode(
+            InfraredReceivedSignal(
+                [1, 2],
+                modulation=38_000,
+            )
+        )
+        is None
+    )
+
+
+def test_nec_handler_normalizers_reject_unrelated_commands() -> None:
+    """Test NEC normalizers reject commands without NEC identity fields."""
+    command = cast(Command, object())
+
+    assert nec_protocol._normalize_nec_identity(command) is None
+    assert nec_protocol._normalize_nec1_f16_identity(command) is None
+
+
+def test_nec_handler_optional_behaviors() -> None:
+    """Test NEC repeat recognition and diagnostic callbacks."""
+    repeat_signal = InfraredReceivedSignal(
+        [9000, -2250, 562],
+        modulation=38_000,
+    )
+
+    recognizes_repeat = nec_protocol.NEC_HANDLER.recognizes_repeat
+    assert recognizes_repeat is not None
+    assert recognizes_repeat(repeat_signal) is True
+    assert nec_protocol.NEC1_F16_HANDLER.recognizes_repeat is None
+
+    diagnostic_data = nec_protocol.NEC_HANDLER.diagnostic_data
+    assert diagnostic_data is not None
+    assert (
+        diagnostic_data(
+            InfraredReceivedSignal(
+                [1, 2],
+                modulation=38_000,
+            )
+        )
+        == {}
+    )
+
+    assert (
+        nec_protocol.NEC1_F16_HANDLER.diagnostic_data
+        is nec_protocol.NEC_HANDLER.diagnostic_data
+    )
