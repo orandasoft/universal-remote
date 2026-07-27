@@ -9,7 +9,7 @@ from infrared_protocols.codes.lg.tv import LGTVCodeJP
 from infrared_protocols.commands import Command
 from infrared_protocols.commands.nec import NECCommand
 
-from custom_components.universal_remote import protocols as protocol_helpers
+from custom_components.universal_remote.protocols import nec as protocol_helpers
 
 
 def _signal(
