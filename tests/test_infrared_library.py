@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from infrared_protocols.codes.lg.tv import LGTVCodeJP
+from infrared_protocols.commands.nec import NECCommand
 
 from custom_components.universal_remote.const import (
     DEVICE_TYPE_GENERIC,
@@ -34,6 +35,7 @@ from custom_components.universal_remote.infrared_library import (
     validate_infrared_library_codeset,
     validate_infrared_library_device_type,
 )
+from custom_components.universal_remote.pronto import decode_pronto_hex
 
 
 class _LibraryCommand:
@@ -387,15 +389,37 @@ def test_generate_pronto_from_library_command() -> None:
     assert result.split()[2] == "0002"
 
 
-def test_generate_lg_tv_jp_nec1_f16_command() -> None:
-    """Test generating an LG Japan NEC1-f16 library command."""
+@pytest.mark.parametrize(
+    ("command_name", "expected_command", "expected_subfunction"),
+    [
+        ("AMAZON", 0x5C, None),
+        ("NETFLIX", 0x56, None),
+        ("DTV_NUM_2", 0xDB, 0x32),
+    ],
+)
+def test_generate_lg_tv_jp_command_identity(
+    command_name: str,
+    expected_command: int,
+    expected_subfunction: int | None,
+) -> None:
+    """Test the identity of generated LG TV Japan library commands."""
     pronto = generate_pronto_from_library_command(
         "lg_tv_jp",
-        "DTV_NUM_2",
+        command_name,
         0,
     )
 
-    assert pronto.startswith("0000")
+    decoded_pronto = decode_pronto_hex(pronto)
+    command = NECCommand.from_raw_timings(
+        list(decoded_pronto.timings),
+        decode_subfunction=expected_subfunction is not None,
+    )
+
+    assert decoded_pronto.modulation == pytest.approx(38_000, abs=50)
+    assert command is not None
+    assert command.address == 0xFB04
+    assert command.command == expected_command
+    assert command.subfunction == expected_subfunction
 
 
 @pytest.mark.parametrize(
