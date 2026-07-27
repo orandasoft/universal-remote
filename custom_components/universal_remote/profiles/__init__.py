@@ -14,6 +14,11 @@ from .registry import (
     ProfileRegistryError,
     build_profile_registry,
 )
+from .resolver import (
+    command_is_profile_source,
+    profile_role_commands,
+    profile_source_commands,
+)
 from .tv import PROFILE_TV, TV_PROFILE
 
 __all__ = [
@@ -30,4 +35,7 @@ __all__ = [
     "ProfileRegistryError",
     "SourceRule",
     "build_profile_registry",
+    "command_is_profile_source",
+    "profile_role_commands",
+    "profile_source_commands",
 ]

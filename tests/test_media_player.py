@@ -10,6 +10,7 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
+from custom_components.universal_remote import media_player as media_player_module
 from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
@@ -23,13 +24,19 @@ from custom_components.universal_remote.const import (
     DEVICE_TYPE_TV,
     DOMAIN,
 )
-from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from custom_components.universal_remote.media_player import (
     UniversalRemoteTvMediaPlayer,
     async_setup_entry,
     cleanup_stale_media_player_entities,
     media_player_unique_id,
 )
+from custom_components.universal_remote.profiles import (
+    CommandRole,
+    DeviceProfile,
+    SourceRule,
+    build_profile_registry,
+)
+from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -193,6 +200,70 @@ async def test_async_setup_entry_skips_generic_remote(
     )
 
     assert entity_id is None
+
+
+async def test_async_setup_entry_uses_registered_profile(
+    hass: HomeAssistant,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test a registered media-player profile drives entity creation."""
+    profile = DeviceProfile(
+        profile_id="custom",
+        device_type="custom",
+        entity_domains=frozenset({"media_player"}),
+        roles=(
+            CommandRole("volume_up", ("LOUDER",)),
+            CommandRole("volume_down", ("SOFTER",)),
+        ),
+        sources=(SourceRule("Aux", ("AUX",)),),
+    )
+    monkeypatch.setattr(
+        media_player_module,
+        "PROFILE_REGISTRY",
+        build_profile_registry((profile,)),
+    )
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        options={},
+    )
+    entry.add_to_hass(hass)
+    async_add_entities = Mock()
+
+    monkeypatch.setattr(
+        media_player_module,
+        "universal_remotes_from_config_entry",
+        lambda _entry: [
+            {
+                CONF_REMOTE_ID: REMOTE_ID,
+                CONF_REMOTE_NAME: REMOTE_NAME,
+                CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
+                CONF_REMOTE_DEVICE_TYPE: "custom",
+                CONF_REMOTE_COMMANDS: {
+                    "LOUDER": _command_object(RAW_COMMAND),
+                    "SOFTER": _command_object(RAW_COMMAND),
+                    "AUX": _command_object(RAW_COMMAND),
+                },
+            }
+        ],
+    )
+
+    await media_player_module.async_setup_entry(
+        hass,
+        entry,
+        async_add_entities,
+    )
+
+    async_add_entities.assert_called_once()
+    entities = async_add_entities.call_args.args[0]
+    assert len(entities) == 1
+
+    entity = entities[0]
+    assert entity.source_list == ["Aux"]
+    assert entity.supported_features == (
+        MediaPlayerEntityFeature.VOLUME_STEP | MediaPlayerEntityFeature.SELECT_SOURCE
+    )
 
 
 async def test_async_setup_entry_ignores_receiver_only_entry(

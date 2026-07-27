@@ -18,7 +18,6 @@ from custom_components.universal_remote.const import (
     DEVICE_TYPE_GENERIC,
     DEVICE_TYPE_TV,
     DOMAIN,
-    TV_SOURCE_COMMAND_MAP,
 )
 from custom_components.universal_remote.diagnostics import (
     async_get_config_entry_diagnostics,
@@ -26,9 +25,16 @@ from custom_components.universal_remote.diagnostics import (
 from custom_components.universal_remote.infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
 )
+from custom_components.universal_remote.profiles import TV_PROFILE
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+TV_SOURCE_COMMAND_NAMES = tuple(
+    candidate_name
+    for source in TV_PROFILE.sources
+    for candidate_name in source.candidates
+)
 
 
 @pytest.fixture(autouse=True)
@@ -219,7 +225,7 @@ async def test_diagnostics_source_count_matches_tv_source_map(
 ) -> None:
     """Test diagnostics counts every source exposed by the TV source map."""
     source_commands = {
-        command_name: "38000:1,2" for command_name in TV_SOURCE_COMMAND_MAP.values()
+        command_name: "38000:1,2" for command_name in TV_SOURCE_COMMAND_NAMES
     }
     entry = MockConfigEntry(
         domain=DOMAIN,
@@ -240,7 +246,7 @@ async def test_diagnostics_source_count_matches_tv_source_map(
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
-    assert diagnostics["universal_remote"]["source_count"] == len(TV_SOURCE_COMMAND_MAP)
+    assert diagnostics["universal_remote"]["source_count"] == len(TV_PROFILE.sources)
 
 
 async def test_diagnostics_source_count_uses_normalized_source_lookup(

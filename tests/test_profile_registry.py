@@ -20,6 +20,9 @@ from custom_components.universal_remote.profiles import (
     ProfileRegistryError,
     SourceRule,
     build_profile_registry,
+    command_is_profile_source,
+    profile_role_commands,
+    profile_source_commands,
 )
 
 
@@ -113,6 +116,40 @@ def test_profile_presentation_overrides_are_immutable() -> None:
     )
     with pytest.raises(TypeError):
         mutable_overrides["OTHER"] = CommandPresentation()
+
+
+def test_profile_command_resolution_preserves_profile_order() -> None:
+    """Test role and source resolution follows profile declaration order."""
+    profile = DeviceProfile(
+        profile_id="resolver",
+        device_type="resolver",
+        roles=(
+            CommandRole(
+                "volume_up",
+                ("VOLUME_UP", "VOL_UP"),
+            ),
+        ),
+        sources=(
+            SourceRule("Aux", ("AUX_INPUT", "AUX")),
+            SourceRule("TV", ("TV",)),
+        ),
+    )
+    commands = {
+        "tv": "tv-command",
+        "vol up": "fallback-volume-command",
+        "volume-up": "preferred-volume-command",
+        "aux-input": "aux-command",
+    }
+
+    assert profile_role_commands(profile, commands) == {
+        "volume_up": "volume-up",
+    }
+    assert profile_source_commands(profile, commands) == {
+        "Aux": "aux-input",
+        "TV": "tv",
+    }
+    assert command_is_profile_source(profile, "aux input")
+    assert not command_is_profile_source(profile, "volume up")
 
 
 def test_fake_profile_registers_without_consumer_changes() -> None:

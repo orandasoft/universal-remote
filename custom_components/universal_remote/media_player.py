@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.media_player import (
+    DOMAIN as MEDIA_PLAYER_DOMAIN,
     MediaPlayerDeviceClass,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
@@ -16,14 +17,13 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .command_ui import tv_media_player_source_commands
 from .const import (
     CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
-    DEVICE_TYPE_TV,
+    DEVICE_TYPE_GENERIC,
     DOMAIN,
 )
 from .helpers import (
@@ -35,23 +35,17 @@ from .helpers import (
     universal_remote_device_info,
     universal_remotes_from_config_entry,
 )
+from .profiles import (
+    PROFILE_REGISTRY,
+    TV_PROFILE,
+    DeviceProfile,
+    profile_role_commands,
+    profile_source_commands,
+)
 from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 from .send import async_send_infrared_command
 
 PARALLEL_UPDATES = 1
-
-_ROLE_COMMANDS: dict[str, tuple[str, ...]] = {
-    "turn_on": ("POWER_ON",),
-    "turn_off": ("POWER_OFF",),
-    "volume_up": ("VOLUME_UP", "VOL_UP"),
-    "volume_down": ("VOLUME_DOWN", "VOL_DOWN"),
-    "mute": ("MUTE", "VOLUME_MUTE"),
-    "channel_up": ("CHANNEL_UP", "CH_UP"),
-    "channel_down": ("CHANNEL_DOWN", "CH_DOWN"),
-    "play": ("PLAY",),
-    "pause": ("PAUSE",),
-    "stop": ("STOP",),
-}
 
 
 def media_player_unique_id(entry_id: str, remote_id: str) -> str:
@@ -100,7 +94,9 @@ async def async_setup_entry(
     )
 
     for remote in universal_remotes_from_config_entry(entry):
-        if remote.get(CONF_REMOTE_DEVICE_TYPE) != DEVICE_TYPE_TV:
+        device_type = str(remote.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
+        profile = PROFILE_REGISTRY.profile_for_device_type(device_type)
+        if profile is None or not profile.supports_entity(MEDIA_PLAYER_DOMAIN):
             continue
 
         remote_id = remote.get(CONF_REMOTE_ID)
@@ -128,6 +124,7 @@ async def async_setup_entry(
                     remote.get(CONF_REMOTE_COMMANDS, {})
                 ),
                 unique_id=unique_id,
+                profile=profile,
                 runtime=runtime,
             )
         )
@@ -154,6 +151,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         infrared_emitter_id: str,
         commands: Mapping[str, Mapping[str, Any]],
         unique_id: str,
+        profile: DeviceProfile = TV_PROFILE,
         runtime: UniversalRemoteRuntime | None = None,
     ) -> None:
         """Initialize the Universal Remote TV media player."""
@@ -161,8 +159,14 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         self._infrared_emitter_id = infrared_emitter_id
         self._runtime = runtime
         self._commands = normalize_command_objects(commands)
-        self._source_commands = tv_media_player_source_commands(self._commands)
-        self._role_commands = _role_commands(self._commands)
+        self._source_commands = profile_source_commands(
+            profile,
+            self._commands,
+        )
+        self._role_commands = profile_role_commands(
+            profile,
+            self._commands,
+        )
         self._attr_unique_id = unique_id
         self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
         self._attr_source_list = list(self._source_commands) or None
@@ -319,20 +323,6 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
             self._infrared_emitter_id,
             command_data,
         )
-
-
-def _role_commands(commands: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
-    """Return available media-player roles mapped to configured command names."""
-    roles: dict[str, str] = {}
-
-    for role, candidate_names in _ROLE_COMMANDS.items():
-        for candidate_name in candidate_names:
-            configured_command = find_configured_command(commands, candidate_name)
-            if configured_command is not None:
-                roles[role] = configured_command[0]
-                break
-
-    return roles
 
 
 def _supported_features(

@@ -20,7 +20,13 @@ from custom_components.universal_remote.command_ui import (
     command_label,
     tv_media_player_source_commands,
 )
-from custom_components.universal_remote.const import TV_SOURCE_COMMAND_MAP
+from custom_components.universal_remote.profiles import TV_PROFILE
+
+TV_SOURCE_COMMAND_NAMES = tuple(
+    candidate_name
+    for source in TV_PROFILE.sources
+    for candidate_name in source.candidates
+)
 
 
 @pytest.mark.parametrize(
@@ -133,8 +139,8 @@ def test_command_is_media_player_source(command_name: str, expected: bool) -> No
     assert command_is_media_player_source(command_name) is expected
 
 
-@pytest.mark.parametrize("command_name", TV_SOURCE_COMMAND_MAP.values())
-def test_all_tv_source_map_commands_are_media_player_sources(
+@pytest.mark.parametrize("command_name", TV_SOURCE_COMMAND_NAMES)
+def test_all_tv_profile_source_commands_are_media_player_sources(
     command_name: str,
 ) -> None:
     """Test every configured TV source-map command is classified as a source."""

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
+from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
@@ -18,7 +19,6 @@ from .const import (
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
     DEVICE_TYPE_GENERIC,
-    DEVICE_TYPE_TV,
 )
 from .event import receiver_event_types_for_codeset
 from .helpers import (
@@ -32,6 +32,7 @@ from .infrared_library import (
     infrared_library_codeset_supports_receiver,
 )
 from .learn import LEARN_DECODER_AUTO, LEARN_DECODER_NONE, LEARN_DECODERS
+from .profiles import PROFILE_REGISTRY
 
 TO_REDACT = {"device_id", "unique_id", "uuid"}
 
@@ -118,6 +119,7 @@ def _diagnostic_remotes(
         )
         source_count = len(tv_media_player_source_commands(command_mapping))
         device_type = str(item.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
+        profile = PROFILE_REGISTRY.profile_for_device_type(device_type)
         codeset_id = str(item.get(CONF_REMOTE_CODESET, NO_INFRARED_LIBRARY_CODESET))
         receiver_event_expected = isinstance(infrared_receiver_id, str)
         receiver_decoder = infrared_library_codeset_receiver_decoder_id(codeset_id)
@@ -171,7 +173,8 @@ def _diagnostic_remotes(
                 "device_type": device_type,
                 "codeset": codeset_id,
                 "media_player_expected": (
-                    device_type == DEVICE_TYPE_TV
+                    profile is not None
+                    and profile.supports_entity(MEDIA_PLAYER_DOMAIN)
                     and isinstance(infrared_emitter_id, str)
                 ),
                 "button_count": button_count,

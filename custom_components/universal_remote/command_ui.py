@@ -4,8 +4,11 @@ from collections.abc import Mapping
 import re
 from typing import Any, Final
 
-from .const import TV_SOURCE_COMMAND_MAP
-from .helpers import find_configured_command
+from .profiles import (
+    TV_PROFILE,
+    command_is_profile_source,
+    profile_source_commands,
+)
 
 COMMAND_CATEGORY_POWER: Final = "power"
 COMMAND_CATEGORY_VOLUME: Final = "volume"
@@ -149,19 +152,12 @@ def tv_media_player_source_commands(
     commands: Mapping[str, Any],
 ) -> dict[str, str]:
     """Return TV source labels mapped to configured command names."""
-    sources: dict[str, str] = {}
-
-    for source, candidate_name in TV_SOURCE_COMMAND_MAP.items():
-        configured_command = find_configured_command(commands, candidate_name)
-        if configured_command is not None:
-            sources[source] = configured_command[0]
-
-    return sources
+    return profile_source_commands(TV_PROFILE, commands)
 
 
 def command_is_media_player_source(command_name: str) -> bool:
     """Return whether a command should be exposed as a media-player source."""
-    return bool(tv_media_player_source_commands({command_name: None}))
+    return command_is_profile_source(TV_PROFILE, command_name)
 
 
 def command_icon(command_name: str) -> str:
