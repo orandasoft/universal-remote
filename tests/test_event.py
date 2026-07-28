@@ -1228,8 +1228,9 @@ def test_load_codeset_enum_returns_none_for_unknown_codeset() -> None:
 
 def test_load_codeset_enum_returns_none_for_import_error() -> None:
     """Test missing codeset modules fail closed."""
-    with patch.dict(
-        event_platform.INFRARED_LIBRARY_CODESETS,
+    with patch.object(
+        event_platform,
+        "INFRARED_LIBRARY_CODESETS",
         {
             "broken": SimpleNamespace(
                 module="custom_components.universal_remote.missing_codeset",
@@ -1243,8 +1244,9 @@ def test_load_codeset_enum_returns_none_for_import_error() -> None:
 def test_load_codeset_enum_returns_none_for_missing_enum_class() -> None:
     """Test missing enum classes fail closed."""
     with (
-        patch.dict(
-            event_platform.INFRARED_LIBRARY_CODESETS,
+        patch.object(
+            event_platform,
+            "INFRARED_LIBRARY_CODESETS",
             {
                 "broken": SimpleNamespace(
                     module="fake.module",
@@ -1260,8 +1262,9 @@ def test_load_codeset_enum_returns_none_for_missing_enum_class() -> None:
 def test_load_codeset_enum_returns_none_for_non_enum_class() -> None:
     """Test non-enum classes fail closed."""
     with (
-        patch.dict(
-            event_platform.INFRARED_LIBRARY_CODESETS,
+        patch.object(
+            event_platform,
+            "INFRARED_LIBRARY_CODESETS",
             {
                 "broken": SimpleNamespace(
                     module="fake.module",

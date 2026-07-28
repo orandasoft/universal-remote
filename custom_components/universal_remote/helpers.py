@@ -31,13 +31,17 @@ from .const import (
     DEVICE_TYPE_GENERIC,
     DOMAIN,
 )
+from .command_names import (
+    find_command_key as find_command_key,
+    find_configured_command as find_configured_command,
+    normalize_command_name as normalize_command_name,
+)
 from .infrared_library import (
     infrared_library_codeset_device_type,
     validate_infrared_library_device_type,
 )
 
 _REMOTE_ID_RE = re.compile(r"[^a-z0-9_]+")
-_COMMAND_NAME_RE = re.compile(r"[^A-Z0-9_]+")
 
 
 def available_infrared_emitters(
@@ -273,13 +277,6 @@ def unique_remote_id(
     return f"{remote_id}_{counter}"
 
 
-def normalize_command_name(name: str) -> str:
-    """Normalize a user-provided command name."""
-    value = name.strip().upper().replace(" ", "_")
-    value = _COMMAND_NAME_RE.sub("_", value)
-    return value.strip("_")
-
-
 def command_payload(command: Any) -> str | None:
     """Return command payload from a stored command value."""
     if isinstance(command, str) and command:
@@ -305,36 +302,6 @@ def command_object(command_data: str, *, create_button: bool) -> dict[str, Any]:
         CONF_COMMAND_DATA: command_data,
         CONF_COMMAND_CREATE_BUTTON: create_button,
     }
-
-
-def find_command_key(
-    commands: Mapping[str, Any],
-    normalized_command_name: str,
-) -> str | None:
-    """Return the existing command key matching a normalized command name."""
-    return next(
-        (
-            command_name
-            for command_name in commands
-            if normalize_command_name(str(command_name)) == normalized_command_name
-        ),
-        None,
-    )
-
-
-def find_configured_command(
-    commands: Mapping[str, Any],
-    command_name: str,
-) -> tuple[str, Any] | None:
-    """Return the configured command key and stored value matching a command name."""
-    if command_name in commands:
-        return command_name, commands[command_name]
-
-    command_key = find_command_key(commands, normalize_command_name(command_name))
-    if command_key is None:
-        return None
-
-    return command_key, commands[command_key]
 
 
 def universal_remote_device_info(

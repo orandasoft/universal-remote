@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Final
 
-from ...helpers import find_configured_command, normalize_command_name
+from ...command_names import find_configured_command, normalize_command_name
 from ..base import ProfileCapability
 
 CAPABILITY_JAPANESE_TUNER: Final = "japanese_tuner"

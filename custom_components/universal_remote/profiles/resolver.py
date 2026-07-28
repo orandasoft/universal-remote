@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from ..helpers import find_configured_command
+from ..command_names import find_configured_command
 from .base import DeviceProfile
 
 

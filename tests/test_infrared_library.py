@@ -8,14 +8,15 @@ import pytest
 from infrared_protocols.codes.lg.tv import LGTVCodeJP
 from infrared_protocols.commands.nec import NECCommand
 
+from custom_components.universal_remote.codesets import CodesetDefinition
 from custom_components.universal_remote.const import (
     DEVICE_TYPE_GENERIC,
     DEVICE_TYPE_TV,
 )
 from custom_components.universal_remote.infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
-    InfraredLibraryCodeset,
     InfraredLibraryCommandError,
+    _codeset_device_type,
     _load_infrared_library_enum,
     _timings_to_pronto_hex,
     generate_commands_from_library_codeset,
@@ -156,6 +157,20 @@ class _BadTimingsMember:
 def _fake_enum(member: object) -> type:
     """Return a fake enum-like object."""
     return type("FakeEnum", (), {"__members__": {"POWER": member}})
+
+
+def test_codeset_device_type_rejects_missing_profile() -> None:
+    """Test an invalid codeset profile binding fails closed."""
+    codeset = CodesetDefinition(
+        codeset_id="missing_profile",
+        label="Missing profile",
+        module="test.module",
+        enum_class="TestCode",
+        profile_id="missing",
+    )
+
+    with pytest.raises(InfraredLibraryCommandError):
+        _codeset_device_type(codeset)
 
 
 def test_infrared_library_codeset_available_handles_load_errors() -> None:
@@ -305,10 +320,12 @@ def test_infrared_library_command_options() -> None:
 def test_load_infrared_library_enum_success() -> None:
     """Test successful infrared library enum loading."""
     codesets = {
-        "test": InfraredLibraryCodeset(
+        "test": CodesetDefinition(
+            codeset_id="test",
             label="Test",
             module="test.module",
             enum_class="TestEnum",
+            profile_id=DEVICE_TYPE_GENERIC,
         )
     }
     module = type("TestModule", (), {"TestEnum": _FakeLibraryCode})
@@ -338,10 +355,12 @@ def test_load_infrared_library_enum_errors() -> None:
         _load_infrared_library_enum("missing")
 
     bad_codesets = {
-        "bad": InfraredLibraryCodeset(
+        "bad": CodesetDefinition(
+            codeset_id="bad",
             label="Bad",
             module="bad.module",
             enum_class="BadEnum",
+            profile_id=DEVICE_TYPE_GENERIC,
         )
     }
 

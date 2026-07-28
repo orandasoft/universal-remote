@@ -1,6 +1,6 @@
 """Helpers for generating Universal Remote commands from the infrared library."""
 
-from dataclasses import dataclass
+from collections.abc import Mapping
 from enum import Enum
 from importlib import import_module
 import logging
@@ -8,8 +8,10 @@ from typing import Final
 
 from homeassistant.helpers import selector
 
+from .codesets import CODESET_REGISTRY, CodesetDefinition
 from .command import CommandParseError, validate_remote_command_payload
 from .const import DEVICE_TYPE_GENERIC, DEVICE_TYPE_TV
+from .profiles import PROFILE_REGISTRY
 from .pronto import ProntoError, encode_pronto_hex
 
 
@@ -22,56 +24,26 @@ DEVICE_TYPE_LABELS: Final[dict[str, str]] = {
 }
 
 
-@dataclass(frozen=True)
-class InfraredLibraryCodeset:
-    """Description of an allowed infrared library codeset."""
-
-    label: str
-    module: str
-    enum_class: str
-    device_type: str | None = None
-    receiver_decoder_id: str | None = None
-
-
-INFRARED_LIBRARY_CODESETS: Final[dict[str, InfraredLibraryCodeset]] = {
-    "lg_tv": InfraredLibraryCodeset(
-        label="LG TV",
-        module="infrared_protocols.codes.lg.tv",
-        enum_class="LGTVCode",
-        device_type=DEVICE_TYPE_TV,
-        receiver_decoder_id="nec",
-    ),
-    "lg_tv_jp": InfraredLibraryCodeset(
-        label="LG TV Japan",
-        module="infrared_protocols.codes.lg.tv",
-        enum_class="LGTVCodeJP",
-        device_type=DEVICE_TYPE_TV,
-        receiver_decoder_id="nec",
-    ),
-    "samsung_tv": InfraredLibraryCodeset(
-        label="Samsung TV",
-        module="infrared_protocols.codes.samsung.tv",
-        enum_class="SamsungTVCode",
-        device_type=DEVICE_TYPE_TV,
-    ),
-    "sharp_aquos_tv": InfraredLibraryCodeset(
-        label="Sharp AQUOS TV",
-        module="infrared_protocols.codes.sharp.aquos_tv",
-        enum_class="SharpAquosTVCode",
-        device_type=DEVICE_TYPE_TV,
-    ),
-    "vizio_tv": InfraredLibraryCodeset(
-        label="Vizio TV",
-        module="infrared_protocols.codes.vizio.tv",
-        enum_class="VizioTVCode",
-        device_type=DEVICE_TYPE_TV,
-        receiver_decoder_id="nec",
-    ),
-}
+# Compatibility exports retained while callers migrate to codesets.py.
+InfraredLibraryCodeset = CodesetDefinition
+INFRARED_LIBRARY_CODESETS: Mapping[str, CodesetDefinition] = (
+    CODESET_REGISTRY.definitions
+)
 
 
 class InfraredLibraryCommandError(Exception):
     """Raised when an infrared library command cannot be generated."""
+
+
+def _codeset_device_type(
+    codeset: CodesetDefinition,
+) -> str:
+    """Return the device type supplied by a codeset's base profile."""
+    profile = PROFILE_REGISTRY.profile_for_id(codeset.profile_id)
+    if profile is None:
+        raise InfraredLibraryCommandError
+
+    return profile.device_type
 
 
 def infrared_library_codeset_available(codeset_id: str) -> bool:
@@ -101,7 +73,7 @@ def infrared_library_codeset_options(
     options.extend(
         selector.SelectOptionDict(value=codeset_id, label=codeset.label)
         for codeset_id, codeset in INFRARED_LIBRARY_CODESETS.items()
-        if device_type is None or codeset.device_type == device_type
+        if device_type is None or _codeset_device_type(codeset) == device_type
     )
     return options
 
@@ -113,9 +85,9 @@ def infrared_library_device_type_options(
     """Build the dropdown list of available device types."""
     device_types = sorted(
         {
-            codeset.device_type
+            _codeset_device_type(codeset)
             for codeset in INFRARED_LIBRARY_CODESETS.values()
-            if codeset.device_type is not None
+            if _codeset_device_type(codeset) is not None
         }
     )
 
@@ -149,7 +121,7 @@ def infrared_library_device_type_label(device_type: str) -> str:
 def validate_infrared_library_device_type(device_type: str) -> bool:
     """Return whether a device type is supported."""
     return device_type == DEVICE_TYPE_GENERIC or any(
-        codeset.device_type == device_type
+        _codeset_device_type(codeset) == device_type
         for codeset in INFRARED_LIBRARY_CODESETS.values()
     )
 
@@ -178,7 +150,7 @@ def infrared_library_codeset_label(codeset_id: str) -> str:
 def infrared_library_codeset_device_type(codeset_id: str) -> str | None:
     """Return the device type for an infrared library codeset."""
     codeset = INFRARED_LIBRARY_CODESETS.get(codeset_id)
-    return codeset.device_type if codeset is not None else None
+    return _codeset_device_type(codeset) if codeset is not None else None
 
 
 def is_infrared_library_codeset_selected(codeset_id: str) -> bool:
@@ -197,20 +169,20 @@ def validate_infrared_library_codeset(
 
     codeset = INFRARED_LIBRARY_CODESETS.get(codeset_id)
     return codeset is not None and (
-        device_type is None or codeset.device_type == device_type
+        device_type is None or _codeset_device_type(codeset) == device_type
     )
 
 
 def infrared_library_codeset_supports_receiver(codeset_id: str) -> bool:
     """Return whether a codeset supports received signal decoding."""
     codeset = INFRARED_LIBRARY_CODESETS.get(codeset_id)
-    return codeset is not None and codeset.receiver_decoder_id is not None
+    return codeset is not None and codeset.decoder_family_id is not None
 
 
 def infrared_library_codeset_receiver_decoder_id(codeset_id: str) -> str | None:
     """Return the receiver decoder id for an infrared library codeset."""
     codeset = INFRARED_LIBRARY_CODESETS.get(codeset_id)
-    return codeset.receiver_decoder_id if codeset is not None else None
+    return codeset.decoder_family_id if codeset is not None else None
 
 
 def _load_infrared_library_enum(codeset_id: str) -> type[Enum]:
