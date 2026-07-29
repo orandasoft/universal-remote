@@ -12,6 +12,7 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .helpers import normalize_command_name
+from .resolved import ResolvedRemoteProfile
 from .send import async_send_infrared_command
 
 JAPANESE_TUNERS: tuple[str, ...] = ("DTV", "BS", "CS1", "CS2", "BS4K", "CS4K")
@@ -23,6 +24,7 @@ class UniversalRemoteData:
     """Runtime data stored on a Universal Remote config entry."""
 
     runtime: UniversalRemoteRuntime | None
+    resolved_profile: ResolvedRemoteProfile | None = None
 
 
 @dataclass(frozen=True, slots=True)

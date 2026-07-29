@@ -102,6 +102,12 @@ async def test_setup_creates_runtime_for_empty_command_map(
     assert runtime_data.runtime.infrared_emitter_id == INFRARED_EMITTER_ID
     assert runtime_data.runtime.available_tuners == ()
 
+    resolved_profile = runtime_data.resolved_profile
+    assert resolved_profile is not None
+    assert resolved_profile.profile.device_type == DEVICE_TYPE_TV
+    assert resolved_profile.codeset is None
+    assert resolved_profile.capabilities == ()
+
 
 async def test_setup_creates_runtime_with_normalized_commands(
     hass: HomeAssistant,
@@ -201,6 +207,13 @@ async def test_setup_and_unload_receiver_only_entry(
 
         runtime_data = _runtime_data(entry)
         assert runtime_data.runtime is None
+
+        resolved_profile = runtime_data.resolved_profile
+        assert resolved_profile is not None
+        assert resolved_profile.profile.device_type == DEVICE_TYPE_TV
+        assert resolved_profile.codeset is not None
+        assert resolved_profile.codeset.codeset_id == "lg_tv"
+        assert resolved_profile.capabilities == ()
 
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()

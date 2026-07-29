@@ -4,8 +4,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_INFRARED_EMITTER_ID, CONF_REMOTE_COMMANDS
+from .const import (
+    CONF_INFRARED_EMITTER_ID,
+    CONF_REMOTE_CODESET,
+    CONF_REMOTE_COMMANDS,
+    CONF_REMOTE_DEVICE_TYPE,
+)
 from .helpers import normalize_command_mapping, universal_remote_from_config_entry_data
+from .resolved import resolve_remote_profile
 from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 
 PLATFORMS = [
@@ -58,8 +64,16 @@ def _runtime_data_from_config_entry(
         }
     )
     runtime = None
+    resolved_profile = None
 
     if remote is not None:
+        device_type = remote.get(CONF_REMOTE_DEVICE_TYPE)
+        codeset_id = remote.get(CONF_REMOTE_CODESET)
+        resolved_profile = resolve_remote_profile(
+            device_type=device_type if isinstance(device_type, str) else None,
+            codeset_id=codeset_id if isinstance(codeset_id, str) else None,
+        )
+
         infrared_emitter_id = remote.get(CONF_INFRARED_EMITTER_ID)
         if isinstance(infrared_emitter_id, str) and infrared_emitter_id:
             runtime = UniversalRemoteRuntime(
@@ -70,4 +84,7 @@ def _runtime_data_from_config_entry(
                 ),
             )
 
-    return UniversalRemoteData(runtime=runtime)
+    return UniversalRemoteData(
+        runtime=runtime,
+        resolved_profile=resolved_profile,
+    )
