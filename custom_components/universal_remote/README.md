@@ -40,7 +40,7 @@ Depending on the configured infrared targets, Universal Remote can create:
 - a `remote` entity when an infrared emitter is configured
 - `button` entities for commands where button creation is enabled, when an infrared emitter is configured
 - a `media_player` entity for TV remotes when an infrared emitter is configured
-- a `select` entity for tuner selection when TV tuner support is detected
+- a `select` entity for tuner selection when the resolved remote has an available tuner capability
 - an `event` entity for received commands when an infrared receiver is configured
 
 The TV media player is assumed-state. It does not know the real power, volume, channel, source, or playback state of the physical device, although it may update assumed power and source state after commands are sent through Universal Remote.
@@ -55,7 +55,7 @@ Universal remotes can be configured as a generic remote or as a supported device
 
 Device type controls which device-oriented entities can be created. For example, TV remotes with an infrared emitter create a TV `media_player` entity.
 
-A codeset is an optional infrared command library profile for sending, but it is required when configuring an infrared receiver. Codesets are filtered by device type and can be used to import commands during setup or later from the options flow.
+A codeset identifies a supported infrared command library and may also supply the integration's semantic binding for the remote, including its device profile, receive decoder family, and optional capabilities. A codeset is optional for sending and receiving, but a supported codeset is required for friendly named receiver-event matching. Without one, supported decoded signals can still be exposed through protocol-level events such as `nec`. Codesets are filtered by device type and can be used to import commands during setup or later from the options flow.
 
 Supported TV codesets include:
 
@@ -64,6 +64,8 @@ Supported TV codesets include:
 - Samsung TV
 - Sharp AQUOS TV
 - Vizio TV
+
+The **LG TV Japan** codeset (`lg_tv_jp`) resolves to the TV profile and adds the regional `japanese_tuner` capability. Other TV codesets and manually configured TV remotes do not gain Japanese tuner behavior merely from commands with similar names.
 
 Protocol decoding currently supports NEC-family protocols. Friendly named receiver events and command matching are currently available for supported NEC-based codesets such as LG TV, LG TV Japan, and Vizio TV. Other codesets may still be used for command import and sending, but may not yet support named receiver events.
 
@@ -81,6 +83,8 @@ Supported command payload formats include:
 - text-based timing formats
 
 Commands may also be imported from a supported infrared library codeset.
+
+Imported library commands are converted to Pronto Hex and stored with the Universal Remote configuration. Updating Universal Remote or the `infrared-protocols` dependency does not automatically regenerate commands that were imported previously. Import the codeset again when you intentionally want to replace stored commands with the current library definitions.
 
 ---
 
@@ -163,6 +167,8 @@ When adding or importing commands, the flow can create button entities for those
 
 Buttons are regular Home Assistant `button` entities. Pressing a button sends the stored infrared command through the linked infrared emitter.
 
+When the resolved device profile or capability supplies command presentation information, button labels and icons use it before falling back to generic command-name formatting.
+
 ---
 
 ## TV media player
@@ -181,7 +187,7 @@ Examples:
 - `PLAY`, `PAUSE`, and `STOP` enable playback controls.
 - Supported source commands can appear in the media player source list.
 
-Source support is derived from configured command names.
+Source support is resolved from the TV profile and the commands configured for the remote.
 
 Commands such as `TV`, `TV_INPUT`, `DTV`, `BS`, `BS4K`, `CS1`, `CS2`, `CS4K`, `INPUT`, `SOURCE`, `HDMI_1`, `HDMI_2`, `HDMI_3`, `HDMI_4`, and `HDMI_5` may appear as selectable sources when they are configured for the remote. Component inputs and app shortcuts such as `NETFLIX` or `AMAZON_PRIME` may also appear when supported by the selected codeset.
 
@@ -191,15 +197,33 @@ Because the media player is assumed-state, it sends commands but does not receiv
 
 ## Japanese TV tuner support
 
-Universal Remote can expose a tuner `select` entity for TV command sets that include Japanese tuner families such as `DTV`, `BS`, `CS1`, `CS2`, `BS4K`, or `CS4K`.
+Japanese tuner behavior is enabled by the resolved `japanese_tuner` capability. The supported **LG TV Japan** codeset (`lg_tv_jp`) resolves the remote to the TV profile and attaches this capability.
 
-The tuner select entity is created only when tuner support is detected from configured commands. A tuner is considered available only when both the tuner selector command and at least one same-tuner numeric command are configured. For example, `BS` plus `BS_NUM_1` exposes `BS`; `BS` plus generic `NUM_1` does not.
+Selecting TV as the device type and manually adding commands named `DTV`, `BS`, `CS1`, `CS2`, `BS4K`, `CS4K`, or `BS_NUM_1` does not enable Japanese tuner behavior by itself. Other TV codesets do not receive this regional capability.
 
-When a tuner is selected, generic numeric commands `NUM_1` through `NUM_12` are resolved to the selected tuner-specific command when one exists. For example, after selecting `BS`, sending `NUM_1` sends `BS_NUM_1` if that command is configured.
+The Japanese tuner capability declares these tuner families:
 
-This tuner-aware command resolution is shared by the `remote`, `button`, TV `media_player`, and tuner `select` entities. Raw infrared payload fallback remains limited to `remote.send_command`.
+- `DTV`
+- `BS`
+- `CS1`
+- `CS2`
+- `BS4K`
+- `CS4K`
 
-When a configured infrared receiver and supported codeset are used, matched non-repeat received tuner commands can update the selected tuner state. Repeat frames do not update tuner state.
+It also declares numeric values 1 through 12.
+
+The tuner `select` entity is created only when at least one capability-declared tuner is available. A tuner is considered available when both of the following commands are configured:
+
+- its selector command, such as `BS`
+- at least one same-tuner numeric command, such as `BS_NUM_1`
+
+A generic numeric command such as `NUM_1` does not make a tuner available. For example, `BS` plus `NUM_1` is not enough to expose `BS`; `BS` plus `BS_NUM_1` is enough.
+
+When a tuner is selected, a generic numeric command is routed to the corresponding tuner-specific command when the number is declared by the capability and that command is configured. For example, after selecting `BS`, sending `NUM_1` sends `BS_NUM_1` when `BS_NUM_1` exists.
+
+The same capability-driven runtime is shared by the `remote`, `button`, TV `media_player`, and tuner `select` entities. This keeps selected tuner state and command routing synchronized across those entities. Raw infrared payload fallback remains limited to `remote.send_command`.
+
+When a configured infrared receiver and supported codeset are used, matched non-repeat tuner selector or tuner-number commands can update the selected tuner state according to the capability's receive-update policy. Repeat frames do not update tuner state. When the selected tuner is also exposed as a TV media-player source, the assumed source is synchronized.
 
 ## Availability and repairs
 
@@ -228,5 +252,5 @@ Diagnostics are intended to help troubleshoot configuration issues without expos
 - Received command history is capped and stores decoded summaries only, not raw timings.
 - Sending commands requires a linked infrared emitter.
 - Receiving command events requires a linked infrared receiver. A supported codeset enables named command events such as `power` or `volume_up`; otherwise, decoded NEC-family commands are exposed as `nec` events with decoded address and command data.
-- The tuner select entity is created only when tuner-specific command support is detected.
+- The tuner select entity is created only when the resolved tuner capability has at least one available tuner.
 - Friendly named receiver events are currently limited to supported codesets; unmatched NEC-family commands are exposed as `nec` events.
