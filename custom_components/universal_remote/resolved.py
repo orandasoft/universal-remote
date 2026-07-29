@@ -10,7 +10,11 @@ from .codesets import (
     CodesetRegistry,
 )
 from .const import DEVICE_TYPE_GENERIC
-from .profiles.base import DeviceProfile, ProfileCapability
+from .profiles.base import (
+    CommandPresentation,
+    DeviceProfile,
+    ProfileCapability,
+)
 from .profiles.registry import PROFILE_REGISTRY, ProfileRegistry
 
 
@@ -34,6 +38,46 @@ class ResolvedRemoteProfile:
                 if capability.capability_id == capability_id
             ),
             None,
+        )
+
+    def presentation(
+        self,
+        command_name: str,
+    ) -> CommandPresentation | None:
+        """Return merged profile and capability presentation."""
+        presentations = (
+            self.profile.presentation(command_name),
+            *(
+                capability.presentation(command_name)
+                for capability in self.capabilities
+            ),
+        )
+
+        label: str | None = None
+        icon: str | None = None
+        category: str | None = None
+        matched = False
+
+        for presentation in presentations:
+            if presentation is None:
+                continue
+
+            matched = True
+
+            if label is None:
+                label = presentation.label
+            if icon is None:
+                icon = presentation.icon
+            if category is None:
+                category = presentation.category
+
+        if not matched:
+            return None
+
+        return CommandPresentation(
+            label=label,
+            icon=icon,
+            category=category,
         )
 
 

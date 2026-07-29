@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Final
 
 from ...command_names import find_configured_command, normalize_command_name
-from ..base import ProfileCapability
+from ..base import CommandPresentation, ProfileCapability
 
 CAPABILITY_JAPANESE_TUNER: Final = "japanese_tuner"
 
@@ -175,6 +175,36 @@ class TunerCapability(ProfileCapability):
                 for number in self.numbers
             ):
                 return tuner.tuner_id
+
+        return None
+
+    def presentation(
+        self,
+        command_name: str,
+    ) -> CommandPresentation | None:
+        """Return tuner-specific presentation for one command."""
+        normalized = normalize_command_name(command_name)
+
+        for tuner in self.tuners:
+            if any(
+                normalize_command_name(candidate) == normalized
+                for candidate in tuner.selector_candidates
+            ):
+                return CommandPresentation(
+                    label=tuner.tuner_id,
+                    icon="mdi:import",
+                    category="input",
+                )
+
+            for number in self.numbers:
+                if normalized == self._tuner_number_name(
+                    tuner.tuner_id,
+                    number,
+                ):
+                    return CommandPresentation(
+                        label=f"{tuner.tuner_id} Number {number}",
+                        category="numeric",
+                    )
 
         return None
 

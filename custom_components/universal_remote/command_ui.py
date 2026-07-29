@@ -1,14 +1,20 @@
 """UI helpers for Universal Remote commands."""
 
+from __future__ import annotations
+
 from collections.abc import Mapping
 import re
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
 
 from .profiles import (
     TV_PROFILE,
+    CommandPresentation,
     command_is_profile_source,
     profile_source_commands,
 )
+
+if TYPE_CHECKING:
+    from .resolved import ResolvedRemoteProfile
 
 COMMAND_CATEGORY_POWER: Final = "power"
 COMMAND_CATEGORY_VOLUME: Final = "volume"
@@ -24,9 +30,7 @@ COMMAND_CATEGORY_APP: Final = "app"
 COMMAND_CATEGORY_OTHER: Final = "other"
 
 _NUMBER_COMMAND_RE: Final = re.compile(r"^(?:NUM|NUMBER)_(\d+)$")
-_PREFIXED_NUMBER_COMMAND_RE: Final = re.compile(
-    r"^(DTV|BS|CS1|CS2|BS4K|CS4K)_(?:NUM|NUMBER)_(\d+)$"
-)
+_PREFIXED_NUMBER_COMMAND_RE: Final = re.compile(r"^(.+?)_(?:NUM|NUMBER)_(\d+)$")
 _HDMI_COMMAND_RE: Final = re.compile(r"^HDMI_(\d+)$")
 
 _COMMAND_ICONS: Final[dict[str, str]] = {
@@ -160,8 +164,27 @@ def command_is_media_player_source(command_name: str) -> bool:
     return command_is_profile_source(TV_PROFILE, command_name)
 
 
-def command_icon(command_name: str) -> str:
+def _resolved_presentation(
+    command_name: str,
+    resolved_profile: ResolvedRemoteProfile | None,
+) -> CommandPresentation | None:
+    """Return resolved presentation when semantic context is available."""
+    if resolved_profile is None:
+        return None
+
+    return resolved_profile.presentation(command_name)
+
+
+def command_icon(
+    command_name: str,
+    *,
+    resolved_profile: ResolvedRemoteProfile | None = None,
+) -> str:
     """Return the best icon for a command button."""
+    presentation = _resolved_presentation(command_name, resolved_profile)
+    if presentation is not None and presentation.icon is not None:
+        return presentation.icon
+
     normalized = command_name.upper()
     if normalized in _COMMAND_ICONS:
         return _COMMAND_ICONS[normalized]
@@ -178,12 +201,23 @@ def command_icon(command_name: str) -> str:
     return "mdi:remote"
 
 
-def command_label(command_name: str) -> str:
+def command_label(
+    command_name: str,
+    *,
+    resolved_profile: ResolvedRemoteProfile | None = None,
+) -> str:
     """Return a user-facing command label."""
+    presentation = _resolved_presentation(command_name, resolved_profile)
+    if presentation is not None and presentation.label is not None:
+        return presentation.label
+
     normalized = command_name.strip().upper()
 
     if match := _PREFIXED_NUMBER_COMMAND_RE.fullmatch(normalized):
-        return f"{match.group(1)} Number {match.group(2)}"
+        prefix = " ".join(
+            _label_part(part) for part in match.group(1).split("_") if part
+        )
+        return f"{prefix} Number {match.group(2)}"
 
     if match := _NUMBER_COMMAND_RE.fullmatch(normalized):
         return f"Number {match.group(1)}"
@@ -197,8 +231,16 @@ def command_label(command_name: str) -> str:
     return " ".join(_label_part(part) for part in normalized.split("_") if part)
 
 
-def command_category(command_name: str) -> str:
+def command_category(
+    command_name: str,
+    *,
+    resolved_profile: ResolvedRemoteProfile | None = None,
+) -> str:
     """Return the UI category for a command name."""
+    presentation = _resolved_presentation(command_name, resolved_profile)
+    if presentation is not None and presentation.category is not None:
+        return presentation.category
+
     normalized = command_name.upper()
 
     if normalized.startswith("POWER") or normalized == "TOGGLE":

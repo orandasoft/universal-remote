@@ -82,9 +82,12 @@ async def async_setup_entry(
     expected_unique_ids: set[str] = set()
 
     runtime_data = getattr(entry, "runtime_data", None)
-    runtime = (
-        runtime_data.runtime if isinstance(runtime_data, UniversalRemoteData) else None
-    )
+    if isinstance(runtime_data, UniversalRemoteData):
+        runtime = runtime_data.runtime
+        resolved_profile = runtime_data.resolved_profile
+    else:
+        runtime = None
+        resolved_profile = None
 
     for remote in universal_remotes_from_config_entry(entry):
         remote_id = remote.get(CONF_REMOTE_ID)
@@ -120,8 +123,14 @@ async def async_setup_entry(
                     unique_id=unique_id,
                     description=UniversalRemoteButtonEntityDescription(
                         key=normalize_command_name(command_name).lower(),
-                        name=command_label(command_name),
-                        icon=command_icon(command_name),
+                        name=command_label(
+                            command_name,
+                            resolved_profile=resolved_profile,
+                        ),
+                        icon=command_icon(
+                            command_name,
+                            resolved_profile=resolved_profile,
+                        ),
                         command_name=command_name,
                         command_data=command_data,
                     ),

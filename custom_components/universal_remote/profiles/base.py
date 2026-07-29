@@ -41,6 +41,13 @@ class ProfileCapability:
     def validate(self) -> None:
         """Validate capability-specific configuration."""
 
+    def presentation(
+        self,
+        command_name: str,
+    ) -> CommandPresentation | None:
+        """Return capability-specific presentation for one command."""
+        return None
+
 
 @dataclass(frozen=True, slots=True)
 class DeviceProfile:
