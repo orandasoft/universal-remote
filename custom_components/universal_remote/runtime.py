@@ -12,12 +12,9 @@ from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .helpers import normalize_command_name
+from .profiles.capabilities.japanese_tuner import TunerCapability
 from .resolved import ResolvedRemoteProfile
 from .send import async_send_infrared_command
-
-JAPANESE_TUNERS: tuple[str, ...] = ("DTV", "BS", "CS1", "CS2", "BS4K", "CS4K")
-JAPANESE_NUMBERS = range(1, 13)
-
 
 @dataclass(slots=True)
 class UniversalRemoteData:
@@ -48,12 +45,14 @@ class UniversalRemoteRuntime:
         hass: HomeAssistant,
         infrared_emitter_id: str,
         commands: Mapping[str, str],
+        tuner_capability: TunerCapability | None = None,
         translation_domain: str = DOMAIN,
     ) -> None:
         """Initialize the runtime."""
         self.hass = hass
         self.infrared_emitter_id = infrared_emitter_id
         self._commands = dict(commands)
+        self._tuner_capability = tuner_capability
         self._translation_domain = translation_domain
         self._selected_tuner: str | None = None
         self._send_lock = asyncio.Lock()
@@ -64,7 +63,11 @@ class UniversalRemoteRuntime:
             normalized = normalize_command_name(configured_name)
             self._commands_by_normalized_name.setdefault(normalized, configured_name)
 
-        self._available_tuners = self._detect_available_tuners()
+        self._available_tuners = (
+            tuner_capability.available_tuners(self._commands)
+            if tuner_capability is not None
+            else ()
+        )
 
     @property
     def selected_tuner(self) -> str | None:
@@ -133,7 +136,11 @@ class UniversalRemoteRuntime:
     @callback
     def async_note_received_command(self, command_name: str) -> None:
         """Update assumed tuner state from a matched physical received command."""
-        implied_tuner = self._implied_tuner(command_name)
+        capability = self._tuner_capability
+        if capability is None or not capability.update_after_received_match:
+            return
+
+        implied_tuner = capability.implied_tuner(command_name)
         if implied_tuner is not None:
             self._set_selected_tuner(implied_tuner)
 
@@ -155,25 +162,6 @@ class UniversalRemoteRuntime:
 
         return _remove_listener
 
-    def _detect_available_tuners(self) -> tuple[str, ...]:
-        """Return tuners that have selector and tuner-specific number commands."""
-        normalized_commands = {
-            normalize_command_name(command_name) for command_name in self._commands
-        }
-        tuners: list[str] = []
-
-        for tuner in JAPANESE_TUNERS:
-            if tuner not in normalized_commands:
-                continue
-
-            if any(
-                f"{tuner}_NUM_{number}" in normalized_commands
-                for number in JAPANESE_NUMBERS
-            ):
-                tuners.append(tuner)
-
-        return tuple(tuners)
-
     def _lookup_configured_name(self, command_name: str) -> str | None:
         """Return the configured command key matching a command name."""
         if command_name in self._commands:
@@ -187,16 +175,18 @@ class UniversalRemoteRuntime:
         self, command_name: str, *, allow_raw: bool
     ) -> ResolvedCommand:
         """Resolve a requested command name to a payload."""
-        normalized_name = normalize_command_name(command_name)
-
-        if self._selected_tuner is not None and self._is_keypad_number(normalized_name):
-            tuner_command_name = f"{self._selected_tuner}_{normalized_name}"
-            configured_tuner_name = self._lookup_configured_name(tuner_command_name)
-            if configured_tuner_name is not None:
+        capability = self._tuner_capability
+        if capability is not None:
+            routed_name = capability.routed_keypad_command_name(
+                self._selected_tuner,
+                command_name,
+                self._commands,
+            )
+            if routed_name is not None:
                 return ResolvedCommand(
                     requested_name=command_name,
-                    command_name=configured_tuner_name,
-                    payload=self._commands[configured_tuner_name],
+                    command_name=routed_name,
+                    payload=self._commands[routed_name],
                     configured=True,
                     implied_tuner=self._selected_tuner,
                     update_tuner_after_success=False,
@@ -204,14 +194,22 @@ class UniversalRemoteRuntime:
 
         configured_name = self._lookup_configured_name(command_name)
         if configured_name is not None:
-            implied_tuner = self._implied_tuner(configured_name)
+            implied_tuner = (
+                capability.implied_tuner(configured_name)
+                if capability is not None
+                else None
+            )
             return ResolvedCommand(
                 requested_name=command_name,
                 command_name=configured_name,
                 payload=self._commands[configured_name],
                 configured=True,
                 implied_tuner=implied_tuner,
-                update_tuner_after_success=implied_tuner is not None,
+                update_tuner_after_success=(
+                    implied_tuner is not None
+                    and capability is not None
+                    and capability.update_after_sent_success
+                ),
             )
 
         if allow_raw:
@@ -274,24 +272,3 @@ class UniversalRemoteRuntime:
         for listener in list(self._listeners):
             listener()
 
-    @staticmethod
-    def _is_keypad_number(normalized_name: str) -> bool:
-        """Return whether a normalized command is NUM_1 through NUM_12."""
-        return any(normalized_name == f"NUM_{number}" for number in JAPANESE_NUMBERS)
-
-    @staticmethod
-    def _implied_tuner(command_name: str) -> str | None:
-        """Return tuner implied by a command name."""
-        normalized_name = normalize_command_name(command_name)
-
-        for tuner in JAPANESE_TUNERS:
-            if normalized_name == tuner:
-                return tuner
-
-            if any(
-                normalized_name == f"{tuner}_NUM_{number}"
-                for number in JAPANESE_NUMBERS
-            ):
-                return tuner
-
-        return None

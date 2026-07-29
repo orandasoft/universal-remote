@@ -5,6 +5,7 @@ from unittest.mock import patch
 from custom_components.universal_remote import _async_update_listener
 from custom_components.universal_remote.const import (
     CONF_INFRARED_EMITTER_ID,
+    CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
@@ -122,6 +123,7 @@ async def test_setup_creates_runtime_with_normalized_commands(
             CONF_REMOTE_NAME: REMOTE_NAME,
             CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            CONF_REMOTE_CODESET: "lg_tv_jp",
         },
         options={
             CONF_REMOTE_COMMANDS: {
@@ -144,6 +146,44 @@ async def test_setup_creates_runtime_with_normalized_commands(
     runtime_data = _runtime_data(entry)
     assert isinstance(runtime_data.runtime, UniversalRemoteRuntime)
     assert runtime_data.runtime.available_tuners == ("BS",)
+
+
+async def test_manual_tv_commands_do_not_enable_regional_tuner(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test a manual TV does not gain Japanese tuner semantics."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Manual TV",
+        data={
+            CONF_REMOTE_ID: REMOTE_ID,
+            CONF_REMOTE_NAME: REMOTE_NAME,
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "BS": RAW_COMMAND,
+                "BS_NUM_1": RAW_COMMAND,
+            },
+        },
+        unique_id="manual_tv",
+    )
+    entry.add_to_hass(hass)
+
+    with patch.object(
+        hass.config_entries,
+        "async_forward_entry_setups",
+        return_value=True,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    runtime_data = _runtime_data(entry)
+    assert isinstance(runtime_data.runtime, UniversalRemoteRuntime)
+    assert runtime_data.runtime.available_tuners == ()
+    assert runtime_data.runtime.selected_tuner is None
 
 
 async def test_options_update_listener_reloads_entry(

@@ -36,6 +36,7 @@ from custom_components.universal_remote.profiles import (
     SourceRule,
     build_profile_registry,
 )
+from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
 from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
@@ -722,6 +723,7 @@ async def test_media_player_runtime_listener_updates_source_for_available_source
         hass=hass,
         infrared_emitter_id=infrared_emitter,
         commands={"CS4K": RAW_COMMAND, "CS4K_NUM_1": RAW_COMMAND},
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = UniversalRemoteTvMediaPlayer(
         remote_id=REMOTE_ID,
@@ -753,6 +755,7 @@ async def test_media_player_runtime_listener_ignores_non_source_tuner(
         hass=hass,
         infrared_emitter_id=infrared_emitter,
         commands={"DTV": RAW_COMMAND, "DTV_NUM_1": RAW_COMMAND},
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = UniversalRemoteTvMediaPlayer(
         remote_id=REMOTE_ID,
@@ -781,6 +784,7 @@ async def test_media_player_runtime_listener_ignores_current_source(
         hass=hass,
         infrared_emitter_id=infrared_emitter,
         commands={"CS4K": RAW_COMMAND, "CS4K_NUM_1": RAW_COMMAND},
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = UniversalRemoteTvMediaPlayer(
         remote_id=REMOTE_ID,

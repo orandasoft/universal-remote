@@ -93,6 +93,7 @@ async def test_setup_entities_share_runtime_across_services(
             CONF_REMOTE_NAME: REMOTE_NAME,
             CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            CONF_REMOTE_CODESET: "lg_tv_jp",
         },
         options={
             CONF_REMOTE_COMMANDS: {
@@ -327,6 +328,7 @@ async def test_learned_tuner_number_reload_enables_select_and_num_overlay(
             CONF_REMOTE_NAME: REMOTE_NAME,
             CONF_INFRARED_EMITTER_ID: infrared_emitter,
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            CONF_REMOTE_CODESET: "lg_tv_jp",
         },
         options={
             CONF_REMOTE_COMMANDS: {

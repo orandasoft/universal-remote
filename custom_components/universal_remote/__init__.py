@@ -11,6 +11,7 @@ from .const import (
     CONF_REMOTE_DEVICE_TYPE,
 )
 from .helpers import normalize_command_mapping, universal_remote_from_config_entry_data
+from .profiles import CAPABILITY_JAPANESE_TUNER, TunerCapability
 from .resolved import resolve_remote_profile
 from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 
@@ -74,6 +75,14 @@ def _runtime_data_from_config_entry(
             codeset_id=codeset_id if isinstance(codeset_id, str) else None,
         )
 
+        tuner_capability = None
+        if resolved_profile is not None:
+            resolved_capability = resolved_profile.capability_for_id(
+                CAPABILITY_JAPANESE_TUNER
+            )
+            if isinstance(resolved_capability, TunerCapability):
+                tuner_capability = resolved_capability
+
         infrared_emitter_id = remote.get(CONF_INFRARED_EMITTER_ID)
         if isinstance(infrared_emitter_id, str) and infrared_emitter_id:
             runtime = UniversalRemoteRuntime(
@@ -82,6 +91,7 @@ def _runtime_data_from_config_entry(
                 commands=normalize_command_mapping(
                     remote.get(CONF_REMOTE_COMMANDS, {})
                 ),
+                tuner_capability=tuner_capability,
             )
 
     return UniversalRemoteData(

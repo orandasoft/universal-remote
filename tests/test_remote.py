@@ -15,6 +15,7 @@ from custom_components.universal_remote.const import (
     CONF_REMOTE_NAME,
     DOMAIN,
 )
+from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
 from custom_components.universal_remote.runtime import (
     UniversalRemoteData,
     UniversalRemoteRuntime,
@@ -488,6 +489,7 @@ async def test_send_command_runtime_overlay(
         hass=hass,
         infrared_emitter_id=INFRARED_EMITTER_ID,
         commands=commands,
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = _make_entity(hass, commands=commands, runtime=runtime)
 

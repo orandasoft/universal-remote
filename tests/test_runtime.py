@@ -5,6 +5,11 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from custom_components.universal_remote.const import DOMAIN
+from custom_components.universal_remote.profiles import (
+    JAPANESE_TUNER_CAPABILITY,
+    TunerCapability,
+    TunerRule,
+)
 from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -18,13 +23,113 @@ RAW_COMMAND_THIRD = "38000:4500,4500,560,560"
 def _runtime(
     hass: HomeAssistant,
     commands: dict[str, str],
+    *,
+    tuner_capability: TunerCapability | None = JAPANESE_TUNER_CAPABILITY,
 ) -> UniversalRemoteRuntime:
     """Create a runtime for tests."""
     return UniversalRemoteRuntime(
         hass=hass,
         infrared_emitter_id=INFRARED_EMITTER_ID,
         commands=commands,
+        tuner_capability=tuner_capability,
     )
+
+
+async def test_tuner_behavior_requires_capability(
+    hass: HomeAssistant,
+) -> None:
+    """Test regional tuner behavior is disabled without a capability."""
+    runtime = _runtime(
+        hass,
+        {
+            "BS": RAW_COMMAND,
+            "NUM_1": RAW_COMMAND_ALT,
+            "BS_NUM_1": RAW_COMMAND_THIRD,
+        },
+        tuner_capability=None,
+    )
+
+    assert runtime.available_tuners == ()
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(),
+    ) as mock_send:
+        await runtime.async_send_command_name("BS")
+        await runtime.async_send_command_name("NUM_1")
+
+    assert [call.args[2] for call in mock_send.await_args_list] == [
+        RAW_COMMAND,
+        RAW_COMMAND_ALT,
+    ]
+
+    runtime.async_note_received_command("BS_NUM_1")
+    assert runtime.selected_tuner is None
+
+
+async def test_runtime_accepts_fake_tuner_capability(
+    hass: HomeAssistant,
+) -> None:
+    """Test runtime tuner behavior is capability-driven and generic."""
+    capability = TunerCapability(
+        capability_id="radio",
+        tuners=(TunerRule("FM", ("RADIO",)),),
+        numbers=(7,),
+    )
+    runtime = _runtime(
+        hass,
+        {
+            "RADIO": RAW_COMMAND,
+            "NUM_7": RAW_COMMAND_ALT,
+            "FM_NUM_7": RAW_COMMAND_THIRD,
+        },
+        tuner_capability=capability,
+    )
+
+    assert runtime.available_tuners == ("FM",)
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(),
+    ) as mock_send:
+        await runtime.async_send_command_name("RADIO")
+        await runtime.async_send_command_name("NUM_7")
+
+    assert [call.args[2] for call in mock_send.await_args_list] == [
+        RAW_COMMAND,
+        RAW_COMMAND_THIRD,
+    ]
+    assert runtime.selected_tuner == "FM"
+
+
+async def test_tuner_capability_can_disable_state_updates(
+    hass: HomeAssistant,
+) -> None:
+    """Test capability update policies control assumed tuner state."""
+    capability = TunerCapability(
+        capability_id="radio",
+        tuners=(TunerRule("FM", ("RADIO",)),),
+        numbers=(7,),
+        update_after_sent_success=False,
+        update_after_received_match=False,
+    )
+    runtime = _runtime(
+        hass,
+        {
+            "RADIO": RAW_COMMAND,
+            "FM_NUM_7": RAW_COMMAND_ALT,
+        },
+        tuner_capability=capability,
+    )
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(),
+    ):
+        await runtime.async_send_command_name("RADIO")
+
+    runtime.async_note_received_command("FM_NUM_7")
+    assert runtime.selected_tuner is None
 
 
 async def test_available_tuners_require_selector_and_tuner_number(

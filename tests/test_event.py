@@ -25,6 +25,7 @@ from custom_components.universal_remote.protocols.base import (
 from custom_components.universal_remote.protocols.registry import (
     build_protocol_registry,
 )
+from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
 from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from custom_components.universal_remote.const import (
     CONF_INFRARED_RECEIVER_ID,
@@ -1289,6 +1290,7 @@ def test_event_entity_matched_command_updates_runtime_tuner(
         hass=hass,
         infrared_emitter_id="infrared.test_ir",
         commands={"BS": "38000:9000,4500", "BS_NUM_1": "38000:9000,2250"},
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
         remote_id="living_room_tv",
@@ -1335,6 +1337,7 @@ def test_event_entity_matched_cs4k_command_updates_runtime_tuner(
         hass=hass,
         infrared_emitter_id="infrared.test_ir",
         commands={"CS4K": "38000:9000,4500", "CS4K_NUM_2": "38000:9000,2250"},
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
         remote_id="living_room_tv",
@@ -1381,6 +1384,7 @@ def test_event_entity_repeat_does_not_update_runtime_tuner(
         hass=hass,
         infrared_emitter_id="infrared.test_ir",
         commands={"BS": "38000:9000,4500", "BS_NUM_1": "38000:9000,2250"},
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
         remote_id="living_room_tv",
@@ -1427,6 +1431,7 @@ def test_event_entity_unmatched_command_does_not_update_runtime_tuner(
         hass=hass,
         infrared_emitter_id="infrared.test_ir",
         commands={"BS": "38000:9000,4500", "BS_NUM_1": "38000:9000,2250"},
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
         remote_id="living_room_tv",
@@ -1517,6 +1522,7 @@ def test_event_entity_decodes_received_command_with_learned_runtime(
             "POWER": "38000:9000,4500",
             "LEARNED_POWER": "0000 006D 0002 0000 0152 00AA 0014 0017",
         },
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
         remote_id="living_room_tv",

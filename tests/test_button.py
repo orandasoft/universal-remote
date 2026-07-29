@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
 from custom_components.universal_remote.runtime import UniversalRemoteRuntime
 from custom_components.universal_remote.button import (
     UniversalRemoteButton,
@@ -363,6 +364,7 @@ async def test_button_num_overlays_after_runtime_tuner_selected(
             "NUM_1": "38000:9000,2250,560,560",
             "BS_NUM_1": "38000:4500,4500,560,560",
         },
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = UniversalRemoteButton(
         remote_id=REMOTE_ID,

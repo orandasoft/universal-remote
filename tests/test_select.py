@@ -13,6 +13,9 @@ from custom_components.universal_remote.const import (
     DEVICE_TYPE_TV,
     DOMAIN,
 )
+from custom_components.universal_remote.profiles import (
+    JAPANESE_TUNER_CAPABILITY,
+)
 from custom_components.universal_remote.runtime import (
     UniversalRemoteData,
     UniversalRemoteRuntime,
@@ -58,6 +61,7 @@ def _select_entry(
             hass=hass,
             infrared_emitter_id=infrared_emitter,
             commands=commands,
+            tuner_capability=JAPANESE_TUNER_CAPABILITY,
         )
     )
     entry.add_to_hass(hass)
@@ -74,6 +78,7 @@ def _tuner_select(
         hass=hass,
         infrared_emitter_id=infrared_emitter,
         commands=commands,
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = UniversalRemoteTunerSelect(
         runtime=runtime,
@@ -265,6 +270,7 @@ def test_select_available_without_hass_returns_true(
         hass=Mock(),
         infrared_emitter_id=infrared_emitter,
         commands={"BS": RAW_COMMAND, "BS_NUM_1": RAW_COMMAND_ALT},
+        tuner_capability=JAPANESE_TUNER_CAPABILITY,
     )
     entity = UniversalRemoteTunerSelect(
         runtime=runtime,
