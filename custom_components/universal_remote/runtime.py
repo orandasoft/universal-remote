@@ -16,6 +16,7 @@ from .profiles.capabilities.japanese_tuner import TunerCapability
 from .resolved import ResolvedRemoteProfile
 from .send import async_send_infrared_command
 
+
 @dataclass(slots=True)
 class UniversalRemoteData:
     """Runtime data stored on a Universal Remote config entry."""
@@ -271,4 +272,3 @@ class UniversalRemoteRuntime:
         self._selected_tuner = tuner
         for listener in list(self._listeners):
             listener()
-
