@@ -10,7 +10,7 @@ from homeassistant.helpers import selector
 
 from .codesets import CODESET_REGISTRY, CodesetDefinition
 from .command import CommandParseError, validate_remote_command_payload
-from .const import DEVICE_TYPE_GENERIC, DEVICE_TYPE_TV
+from .device_types import device_type_label, device_type_options, validate_device_type
 from .profiles import PROFILE_REGISTRY
 from .pronto import ProntoError, encode_pronto_hex
 
@@ -18,12 +18,6 @@ from .pronto import ProntoError, encode_pronto_hex
 NO_INFRARED_LIBRARY_CODESET: Final = "__none__"
 
 _LOGGER = logging.getLogger(__name__)
-DEVICE_TYPE_LABELS: Final[dict[str, str]] = {
-    DEVICE_TYPE_GENERIC: "Generic remote",
-    DEVICE_TYPE_TV: "TV",
-}
-
-
 # Compatibility exports retained while callers migrate to codesets.py.
 InfraredLibraryCodeset = CodesetDefinition
 INFRARED_LIBRARY_CODESETS: Mapping[str, CodesetDefinition] = (
@@ -82,48 +76,18 @@ def infrared_library_device_type_options(
     *,
     include_generic: bool = True,
 ) -> list[selector.SelectOptionDict]:
-    """Build the dropdown list of available device types."""
-    device_types = sorted(
-        {
-            _codeset_device_type(codeset)
-            for codeset in INFRARED_LIBRARY_CODESETS.values()
-            if _codeset_device_type(codeset) is not None
-        }
-    )
-
-    options: list[selector.SelectOptionDict] = []
-    if include_generic:
-        options.append(
-            selector.SelectOptionDict(
-                value=DEVICE_TYPE_GENERIC,
-                label=DEVICE_TYPE_LABELS[DEVICE_TYPE_GENERIC],
-            )
-        )
-
-    options.extend(
-        selector.SelectOptionDict(
-            value=device_type,
-            label=DEVICE_TYPE_LABELS.get(
-                device_type,
-                device_type.replace("_", " ").title(),
-            ),
-        )
-        for device_type in device_types
-    )
-    return options
+    """Return profile-backed device-type options for compatibility."""
+    return device_type_options(include_generic=include_generic)
 
 
 def infrared_library_device_type_label(device_type: str) -> str:
-    """Return a user-facing device type label."""
-    return DEVICE_TYPE_LABELS.get(device_type, device_type.replace("_", " ").title())
+    """Return a profile-backed device-type label for compatibility."""
+    return device_type_label(device_type)
 
 
 def validate_infrared_library_device_type(device_type: str) -> bool:
-    """Return whether a device type is supported."""
-    return device_type == DEVICE_TYPE_GENERIC or any(
-        _codeset_device_type(codeset) == device_type
-        for codeset in INFRARED_LIBRARY_CODESETS.values()
-    )
+    """Return profile-backed device-type validation for compatibility."""
+    return validate_device_type(device_type)
 
 
 def infrared_library_command_options(

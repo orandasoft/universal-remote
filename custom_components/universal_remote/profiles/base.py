@@ -55,6 +55,7 @@ class DeviceProfile:
 
     profile_id: str
     device_type: str
+    device_type_label: str | None = None
     entity_domains: frozenset[str] = frozenset()
     roles: tuple[CommandRole, ...] = ()
     sources: tuple[SourceRule, ...] = ()
@@ -70,6 +71,11 @@ class DeviceProfile:
             "presentation_overrides",
             MappingProxyType(dict(self.presentation_overrides)),
         )
+
+    @property
+    def display_name(self) -> str:
+        """Return the user-facing device-type name."""
+        return self.device_type_label or self.device_type.replace("_", " ").title()
 
     def role(self, role_id: str) -> CommandRole | None:
         """Return one role definition by ID."""

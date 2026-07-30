@@ -33,6 +33,20 @@ class ProfileRegistry:
         """Return the base profile for one stored device type."""
         return self.profiles_by_device_type.get(device_type)
 
+    @property
+    def device_type_profiles(self) -> tuple[DeviceProfile, ...]:
+        """Return profiles in explicit device-type registration order."""
+        return tuple(self.profiles.values())
+
+    def supports_device_type(self, device_type: str) -> bool:
+        """Return whether one stored device type has a registered profile."""
+        return device_type in self.profiles_by_device_type
+
+    def device_type_label(self, device_type: str) -> str | None:
+        """Return the user-facing label for one registered device type."""
+        profile = self.profile_for_device_type(device_type)
+        return profile.display_name if profile is not None else None
+
     def capability_for_id(
         self,
         capability_id: str,

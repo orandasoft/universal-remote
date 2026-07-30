@@ -35,6 +35,11 @@ from custom_components.universal_remote.infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
     InfraredLibraryCommandError,
 )
+from custom_components.universal_remote.profiles import (
+    GENERIC_PROFILE,
+    DeviceProfile,
+    build_profile_registry,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
@@ -485,6 +490,58 @@ async def test_user_flow_rejects_invalid_device_type(
     assert result["errors"] == {CONF_REMOTE_DEVICE_TYPE: "invalid_device_type"}
 
 
+async def test_profile_device_type_without_codeset_can_be_configured(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test a registered profile does not require a codeset definition."""
+    climate_profile = DeviceProfile(
+        profile_id="climate",
+        device_type="climate",
+        device_type_label="Climate",
+        entity_domains=frozenset({"climate"}),
+    )
+    profile_registry = build_profile_registry((GENERIC_PROFILE, climate_profile))
+    flow = _direct_flow(hass)
+
+    with (
+        patch(
+            "custom_components.universal_remote.device_types.PROFILE_REGISTRY",
+            profile_registry,
+        ),
+        patch(
+            "custom_components.universal_remote.config_flow.available_infrared_emitters",
+            return_value={infrared_emitter: "Test IR"},
+        ),
+        patch.object(flow, "async_set_unique_id", AsyncMock(return_value=None)),
+        patch.object(flow, "_abort_if_unique_id_configured", return_value=None),
+    ):
+        result = await flow.async_step_user(
+            {
+                CONF_REMOTE_NAME: "Bedroom AC",
+                CONF_INFRARED_EMITTER_ID: infrared_emitter,
+                CONF_REMOTE_DEVICE_TYPE: "climate",
+            }
+        )
+
+        assert result["type"] is FlowResultType.FORM
+        assert result["step_id"] == "select_codeset"
+        assert result["description_placeholders"] == {"device_type": "Climate"}
+
+        result = await flow.async_step_select_codeset(
+            {CONF_REMOTE_CODESET: NO_INFRARED_LIBRARY_CODESET}
+        )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"] == {
+        CONF_REMOTE_ID: "bedroom_ac",
+        CONF_REMOTE_NAME: "Bedroom AC",
+        CONF_INFRARED_EMITTER_ID: infrared_emitter,
+        CONF_REMOTE_DEVICE_TYPE: "climate",
+    }
+    assert result["options"] == {}
+
+
 async def test_user_flow_tv_device_type_shows_codeset_step(
     hass: HomeAssistant,
     infrared_emitter: str,
@@ -496,11 +553,6 @@ async def test_user_flow_tv_device_type_shows_codeset_step(
         patch(
             "custom_components.universal_remote.config_flow.available_infrared_emitters",
             return_value={infrared_emitter: "Test IR"},
-        ),
-        patch(
-            "custom_components.universal_remote.config_flow."
-            "validate_infrared_library_device_type",
-            return_value=True,
         ),
         patch.object(flow, "async_set_unique_id", AsyncMock(return_value=None)),
         patch.object(flow, "_abort_if_unique_id_configured", return_value=None),
@@ -907,11 +959,6 @@ async def test_reconfigure_rejects_invalid_device_type(
             "custom_components.universal_remote.config_flow.available_infrared_emitters",
             return_value={infrared_emitter: "Test IR"},
         ),
-        patch(
-            "custom_components.universal_remote.config_flow."
-            "validate_infrared_library_device_type",
-            return_value=False,
-        ),
     ):
         result = await flow.async_step_reconfigure(
             {
@@ -938,11 +985,6 @@ async def test_reconfigure_tv_device_type_shows_codeset_step(
         patch(
             "custom_components.universal_remote.config_flow.available_infrared_emitters",
             return_value={infrared_emitter: "Test IR"},
-        ),
-        patch(
-            "custom_components.universal_remote.config_flow."
-            "validate_infrared_library_device_type",
-            return_value=True,
         ),
         patch(
             "custom_components.universal_remote.config_flow."

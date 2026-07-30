@@ -31,6 +31,7 @@ from .const import (
     DEVICE_TYPE_GENERIC,
     DOMAIN,
 )
+from .device_types import validate_device_type
 from .command_names import (
     find_command_key as find_command_key,
     find_configured_command as find_configured_command,
@@ -38,7 +39,6 @@ from .command_names import (
 )
 from .infrared_library import (
     infrared_library_codeset_device_type,
-    validate_infrared_library_device_type,
 )
 
 _REMOTE_ID_RE = re.compile(r"[^a-z0-9_]+")
@@ -421,8 +421,7 @@ def _copy_optional_device_type(
     device_type = source.get(CONF_REMOTE_DEVICE_TYPE)
     stored_device_type = (
         device_type
-        if isinstance(device_type, str)
-        and validate_infrared_library_device_type(device_type)
+        if isinstance(device_type, str) and validate_device_type(device_type)
         else None
     )
 

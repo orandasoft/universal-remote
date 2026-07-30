@@ -610,8 +610,7 @@ def test_universal_remote_preserves_matching_codeset_device_type() -> None:
 def test_universal_remote_drops_codeset_when_device_type_conflicts() -> None:
     """Test conflicting stored device type drops the codeset."""
     with patch(
-        "custom_components.universal_remote.helpers."
-        "validate_infrared_library_device_type",
+        "custom_components.universal_remote.helpers.validate_device_type",
         return_value=True,
     ):
         assert universal_remote_from_config_entry_data(

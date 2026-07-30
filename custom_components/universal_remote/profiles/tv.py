@@ -8,6 +8,7 @@ PROFILE_TV = DEVICE_TYPE_TV
 TV_PROFILE = DeviceProfile(
     profile_id=PROFILE_TV,
     device_type=DEVICE_TYPE_TV,
+    device_type_label="TV",
     entity_domains=frozenset({"media_player"}),
     roles=(
         CommandRole("turn_on", ("POWER_ON",)),

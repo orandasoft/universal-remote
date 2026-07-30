@@ -19,6 +19,7 @@ from .const import (
     DEVICE_TYPE_GENERIC,
     DOMAIN,
 )
+from .device_types import device_type_label, device_type_options, validate_device_type
 from .helpers import (
     available_infrared_emitters,
     available_infrared_receivers,
@@ -41,12 +42,9 @@ from .infrared_library import (
     infrared_library_codeset_label,
     infrared_library_codeset_options,
     infrared_library_command_options,
-    infrared_library_device_type_label,
-    infrared_library_device_type_options,
     is_infrared_library_codeset_selected,
     validate_generated_command_payload,
     validate_infrared_library_codeset,
-    validate_infrared_library_device_type,
 )
 from .options_flow import UniversalRemoteOptionsFlow
 
@@ -118,7 +116,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if infrared_receiver_id and infrared_receiver_id not in infrared_receivers:
                 errors[CONF_INFRARED_RECEIVER_ID] = "infrared_receiver_unavailable"
 
-            if not validate_infrared_library_device_type(device_type):
+            if not validate_device_type(device_type):
                 errors[CONF_REMOTE_DEVICE_TYPE] = "invalid_device_type"
             remote_id = unique_remote_id(name, [])
 
@@ -172,7 +170,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         default=device_type_default,
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=infrared_library_device_type_options(),
+                            options=device_type_options(),
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
@@ -240,7 +238,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
             description_placeholders={
-                "device_type": infrared_library_device_type_label(device_type),
+                "device_type": device_type_label(device_type),
             },
         )
 
@@ -494,7 +492,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ):
                 errors[CONF_INFRARED_RECEIVER_ID] = "infrared_receiver_unavailable"
 
-            if not validate_infrared_library_device_type(device_type):
+            if not validate_device_type(device_type):
                 errors[CONF_REMOTE_DEVICE_TYPE] = "invalid_device_type"
             if not errors:
                 remote[CONF_REMOTE_NAME] = name
@@ -574,7 +572,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         else current_device_type,
                     ): selector.SelectSelector(
                         selector.SelectSelectorConfig(
-                            options=infrared_library_device_type_options(),
+                            options=device_type_options(),
                             mode=selector.SelectSelectorMode.DROPDOWN,
                         )
                     ),
@@ -646,7 +644,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
             description_placeholders={
-                "device_type": infrared_library_device_type_label(device_type),
+                "device_type": device_type_label(device_type),
             },
         )
 

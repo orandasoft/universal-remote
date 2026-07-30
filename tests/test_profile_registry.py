@@ -48,6 +48,13 @@ def test_production_profile_registry_is_deterministic() -> None:
     assert PROFILE_REGISTRY.profile_for_device_type(DEVICE_TYPE_TV) is TV_PROFILE
     assert PROFILE_REGISTRY.profile_for_id("missing") is None
     assert PROFILE_REGISTRY.profile_for_device_type("missing") is None
+    assert PROFILE_REGISTRY.device_type_profiles == (GENERIC_PROFILE, TV_PROFILE)
+    assert PROFILE_REGISTRY.supports_device_type(DEVICE_TYPE_GENERIC)
+    assert PROFILE_REGISTRY.supports_device_type(DEVICE_TYPE_TV)
+    assert not PROFILE_REGISTRY.supports_device_type("missing")
+    assert PROFILE_REGISTRY.device_type_label(DEVICE_TYPE_GENERIC) == "Generic remote"
+    assert PROFILE_REGISTRY.device_type_label(DEVICE_TYPE_TV) == "TV"
+    assert PROFILE_REGISTRY.device_type_label("missing") is None
 
 
 def test_generic_profile_has_no_device_specific_semantics() -> None:
