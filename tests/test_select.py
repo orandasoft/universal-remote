@@ -15,6 +15,8 @@ from custom_components.universal_remote.const import (
 )
 from custom_components.universal_remote.profiles import (
     JAPANESE_TUNER_CAPABILITY,
+    TunerCapability,
+    TunerRule,
 )
 from custom_components.universal_remote.runtime import (
     UniversalRemoteData,
@@ -72,13 +74,15 @@ def _tuner_select(
     hass: HomeAssistant,
     infrared_emitter: str,
     commands: dict[str, str],
+    *,
+    tuner_capability: TunerCapability = JAPANESE_TUNER_CAPABILITY,
 ) -> UniversalRemoteTunerSelect:
     """Create a tuner select entity for tests."""
     runtime = UniversalRemoteRuntime(
         hass=hass,
         infrared_emitter_id=infrared_emitter,
         commands=commands,
-        tuner_capability=JAPANESE_TUNER_CAPABILITY,
+        tuner_capability=tuner_capability,
     )
     entity = UniversalRemoteTunerSelect(
         runtime=runtime,
@@ -192,6 +196,43 @@ async def test_select_option_sends_tuner_and_updates_state(
     assert mock_send.await_args is not None
     assert mock_send.await_args.args == (hass, infrared_emitter, RAW_COMMAND)
     assert entity.current_option == "BS"
+    write_state.assert_called_once()
+
+
+async def test_select_option_resolves_stable_tuner_id_to_selector_alias(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test the select sends an alias while exposing the stable tuner ID."""
+    capability = TunerCapability(
+        capability_id="radio",
+        tuners=(TunerRule("FM", ("RADIO",)),),
+        numbers=(7,),
+    )
+    entity = _tuner_select(
+        hass,
+        infrared_emitter,
+        {
+            "RADIO": RAW_COMMAND,
+            "FM_NUM_7": RAW_COMMAND_ALT,
+        },
+        tuner_capability=capability,
+    )
+
+    assert entity.options == ["FM"]
+
+    with (
+        patch(
+            "custom_components.universal_remote.runtime.async_send_infrared_command",
+            AsyncMock(),
+        ) as mock_send,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
+        await entity.async_select_option("FM")
+
+    assert mock_send.await_args is not None
+    assert mock_send.await_args.args == (hass, infrared_emitter, RAW_COMMAND)
+    assert entity.current_option == "FM"
     write_state.assert_called_once()
 
 

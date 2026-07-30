@@ -80,6 +80,31 @@ class UniversalRemoteRuntime:
         """Return tuner selectors with tuner-specific keypad support."""
         return self._available_tuners
 
+    async def async_select_tuner(
+        self,
+        tuner_id: str,
+        *,
+        check_available: bool = True,
+    ) -> None:
+        """Select one tuner by its stable capability ID."""
+        capability = self._tuner_capability
+        selector_name = (
+            capability.selector_command_name(tuner_id, self._commands)
+            if capability is not None
+            else None
+        )
+        if selector_name is None:
+            raise HomeAssistantError(
+                translation_domain=self._translation_domain,
+                translation_key="remote_command_missing",
+                translation_placeholders={"command": tuner_id},
+            )
+
+        await self.async_send_command_name(
+            selector_name,
+            check_available=check_available,
+        )
+
     async def async_send_command_name(
         self,
         command_name: str,

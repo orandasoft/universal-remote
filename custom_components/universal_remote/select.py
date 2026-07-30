@@ -169,5 +169,5 @@ class UniversalRemoteTunerSelect(SelectEntity):
                 translation_placeholders={"option": option},
             )
 
-        await self._runtime.async_send_command_name(option)
+        await self._runtime.async_select_tuner(option)
         self.async_write_ha_state()

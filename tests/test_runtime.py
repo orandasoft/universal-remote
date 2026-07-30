@@ -102,6 +102,93 @@ async def test_runtime_accepts_fake_tuner_capability(
     assert runtime.selected_tuner == "FM"
 
 
+async def test_select_tuner_resolves_stable_id_to_selector_alias(
+    hass: HomeAssistant,
+) -> None:
+    """Test stable tuner selection sends the configured selector alias."""
+    capability = TunerCapability(
+        capability_id="radio",
+        tuners=(TunerRule("FM", ("RADIO",)),),
+        numbers=(7,),
+    )
+    runtime = _runtime(
+        hass,
+        {
+            "RADIO": RAW_COMMAND,
+            "FM_NUM_7": RAW_COMMAND_ALT,
+        },
+        tuner_capability=capability,
+    )
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(),
+    ) as mock_send:
+        await runtime.async_select_tuner("FM")
+
+    assert mock_send.await_args is not None
+    assert mock_send.await_args.args == (hass, INFRARED_EMITTER_ID, RAW_COMMAND)
+    assert runtime.selected_tuner == "FM"
+
+
+async def test_select_tuner_does_not_update_after_failed_alias_send(
+    hass: HomeAssistant,
+) -> None:
+    """Test failed selector-alias sends leave tuner state unchanged."""
+    capability = TunerCapability(
+        capability_id="radio",
+        tuners=(TunerRule("FM", ("RADIO",)),),
+        numbers=(7,),
+    )
+    runtime = _runtime(
+        hass,
+        {
+            "RADIO": RAW_COMMAND,
+            "FM_NUM_7": RAW_COMMAND_ALT,
+        },
+        tuner_capability=capability,
+    )
+
+    with patch(
+        "custom_components.universal_remote.runtime.async_send_infrared_command",
+        AsyncMock(
+            side_effect=HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="remote_send_failed",
+                translation_placeholders={"error": "boom"},
+            )
+        ),
+    ):
+        with pytest.raises(HomeAssistantError) as err:
+            await runtime.async_select_tuner("FM")
+
+    assert err.value.translation_key == "remote_send_failed"
+    assert runtime.selected_tuner is None
+
+
+async def test_select_tuner_rejects_missing_selector(
+    hass: HomeAssistant,
+) -> None:
+    """Test stable tuner selection requires a configured selector alias."""
+    capability = TunerCapability(
+        capability_id="radio",
+        tuners=(TunerRule("FM", ("RADIO",)),),
+        numbers=(7,),
+    )
+    runtime = _runtime(
+        hass,
+        {"FM_NUM_7": RAW_COMMAND_ALT},
+        tuner_capability=capability,
+    )
+
+    with pytest.raises(HomeAssistantError) as err:
+        await runtime.async_select_tuner("FM")
+
+    assert err.value.translation_key == "remote_command_missing"
+    assert err.value.translation_placeholders == {"command": "FM"}
+    assert runtime.selected_tuner is None
+
+
 async def test_tuner_capability_can_disable_state_updates(
     hass: HomeAssistant,
 ) -> None:
