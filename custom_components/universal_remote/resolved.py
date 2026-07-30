@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from .codesets import (
     CODESET_REGISTRY,
@@ -16,6 +18,38 @@ from .profiles.base import (
     ProfileCapability,
 )
 from .profiles.registry import PROFILE_REGISTRY, ProfileRegistry
+from .protocols.base import CommandMatchKey, ReceiveProtocolHandler
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedReceiverModel:
+    """Immutable receive-side bindings for one configured remote."""
+
+    codeset_id: str
+    decoder_family_id: str | None
+    handlers: tuple[ReceiveProtocolHandler, ...]
+    match_maps: Mapping[str, Mapping[CommandMatchKey, str]]
+    event_types: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        """Freeze protocol match maps supplied through mutable mappings."""
+        object.__setattr__(
+            self,
+            "match_maps",
+            MappingProxyType(
+                {
+                    protocol_id: MappingProxyType(dict(match_map))
+                    for protocol_id, match_map in self.match_maps.items()
+                }
+            ),
+        )
+
+    def match_map_for_protocol(
+        self,
+        protocol_id: str,
+    ) -> Mapping[CommandMatchKey, str]:
+        """Return the immutable command-name match map for one protocol."""
+        return self.match_maps.get(protocol_id, MappingProxyType({}))
 
 
 @dataclass(frozen=True, slots=True)

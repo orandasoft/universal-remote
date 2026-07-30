@@ -5,6 +5,7 @@ from unittest.mock import patch
 from custom_components.universal_remote import _async_update_listener
 from custom_components.universal_remote.const import (
     CONF_INFRARED_EMITTER_ID,
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
@@ -63,6 +64,7 @@ async def test_setup_and_unload_entry(
         runtime_data = _runtime_data(config_entry)
         assert isinstance(runtime_data.runtime, UniversalRemoteRuntime)
         assert runtime_data.runtime.infrared_emitter_id == INFRARED_EMITTER_ID
+        assert runtime_data.resolved_receiver is None
 
         assert await hass.config_entries.async_unload(config_entry.entry_id)
         await hass.async_block_till_done()
@@ -255,8 +257,55 @@ async def test_setup_and_unload_receiver_only_entry(
         assert resolved_profile.codeset.codeset_id == "lg_tv"
         assert resolved_profile.capabilities == ()
 
+        resolved_receiver = runtime_data.resolved_receiver
+        assert resolved_receiver is not None
+        assert resolved_receiver.codeset_id == "lg_tv"
+        assert resolved_receiver.decoder_family_id == "nec"
+        assert tuple(handler.protocol_id for handler in resolved_receiver.handlers) == (
+            "nec",
+            "nec1_f16",
+        )
+        assert "power" in resolved_receiver.event_types
+        assert "unknown" in resolved_receiver.event_types
+
         assert await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
 
     mock_forward.assert_called_once_with(entry, PLATFORMS)
     mock_unload.assert_called_once_with(entry, PLATFORMS)
+
+
+async def test_receiver_without_codeset_resolves_unknown_only_model(
+    hass: HomeAssistant,
+) -> None:
+    """Test receiver setup without a codeset resolves the sentinel model."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Raw Receiver",
+        data={
+            CONF_REMOTE_ID: "raw_receiver",
+            CONF_REMOTE_NAME: "Raw Receiver",
+            CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={},
+        unique_id="raw_receiver",
+    )
+    entry.add_to_hass(hass)
+
+    with patch.object(
+        hass.config_entries,
+        "async_forward_entry_setups",
+        return_value=True,
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    runtime_data = _runtime_data(entry)
+    resolved_receiver = runtime_data.resolved_receiver
+    assert resolved_receiver is not None
+    assert resolved_receiver.codeset_id == "__none__"
+    assert resolved_receiver.decoder_family_id is None
+    assert resolved_receiver.handlers == ()
+    assert resolved_receiver.match_maps == {}
+    assert resolved_receiver.event_types == ("unknown",)

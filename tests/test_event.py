@@ -7,7 +7,6 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock, patch
 
-import pytest
 from homeassistant.components.infrared import InfraredReceivedSignal
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -26,7 +25,11 @@ from custom_components.universal_remote.protocols.registry import (
     build_protocol_registry,
 )
 from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
-from custom_components.universal_remote.runtime import UniversalRemoteRuntime
+from custom_components.universal_remote.resolved import ResolvedReceiverModel
+from custom_components.universal_remote.runtime import (
+    UniversalRemoteData,
+    UniversalRemoteRuntime,
+)
 from custom_components.universal_remote.const import (
     CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
@@ -131,14 +134,6 @@ def _nec1_f16_timings() -> list[int]:
     return LGTVCodeJP.DTV_NUM_2.to_command().get_raw_timings()
 
 
-@pytest.fixture(autouse=True)
-def clear_codeset_match_map_cache() -> Generator[None, None, None]:
-    """Clear cached codeset match maps between tests."""
-    event_platform._codeset_match_map.cache_clear()
-    yield
-    event_platform._codeset_match_map.cache_clear()
-
-
 @contextmanager
 def _patched_nec_protocol_handlers(
     *,
@@ -199,9 +194,7 @@ def _patched_nec_protocol_handlers(
     )
 
     with patch.object(event_platform, "PROTOCOL_REGISTRY", registry):
-        event_platform._codeset_match_map.cache_clear()
         yield
-        event_platform._codeset_match_map.cache_clear()
 
 
 def test_event_unique_id() -> None:
@@ -259,7 +252,16 @@ async def test_async_setup_entry_adds_event_entity_for_available_receiver(
     hass: Any,
 ) -> None:
     """Test setup creates an event entity when the receiver is available."""
-    entry: Any = SimpleNamespace(data={}, options={}, entry_id="entry-id")
+    receiver_model = event_platform.resolve_receiver_model("lg_tv")
+    entry: Any = SimpleNamespace(
+        data={},
+        options={},
+        entry_id="entry-id",
+        runtime_data=UniversalRemoteData(
+            runtime=None,
+            resolved_receiver=receiver_model,
+        ),
+    )
     remote = {
         CONF_REMOTE_ID: "living_room_tv",
         CONF_REMOTE_NAME: "Living room TV",
@@ -301,6 +303,11 @@ async def test_async_setup_entry_adds_event_entity_for_available_receiver(
             "cleanup_stale_received_command_event_entities",
             cleanup_entities,
         ),
+        patch.object(
+            event_platform,
+            "resolve_receiver_model",
+            side_effect=AssertionError("receiver model should already be resolved"),
+        ),
     ):
         await event_platform.async_setup_entry(
             hass,
@@ -313,7 +320,8 @@ async def test_async_setup_entry_adds_event_entity_for_available_receiver(
     assert entity._attr_unique_id == "living_room_tv_received_command"
     assert entity._infrared_receiver_entity_id == "infrared.xiao_receiver"
     assert entity._codeset_id == "lg_tv"
-    assert entity._attr_event_types == event_platform._event_types_for_codeset("lg_tv")
+    assert entity._receiver_model is receiver_model
+    assert entity._attr_event_types == list(receiver_model.event_types)
     delete_missing_issue.assert_called_once_with(
         hass,
         remote_id="living_room_tv",
@@ -521,7 +529,7 @@ def test_received_command_event_entity_associates_repeat_at_timeout_boundary() -
         entity._handle_signal(signal)
 
     decode_signal.assert_called_once_with(
-        "lg_tv",
+        entity._receiver_model,
         signal,
         previous_decoded_event=previous_event,
     )
@@ -619,7 +627,7 @@ def test_received_command_event_entity_drops_stale_repeat_association() -> None:
         entity._handle_signal(signal)
 
     decode_signal.assert_called_once_with(
-        "lg_tv",
+        entity._receiver_model,
         signal,
         previous_decoded_event=None,
     )
@@ -664,7 +672,7 @@ def test_received_command_event_entity_drops_event_without_timestamp() -> None:
         entity._handle_signal(signal)
 
     decode_signal.assert_called_once_with(
-        "lg_tv",
+        entity._receiver_model,
         signal,
         previous_decoded_event=None,
     )
@@ -1181,6 +1189,89 @@ def test_decode_signal_event_uses_fake_registered_handler() -> None:
             "repeat": False,
             "device": "device-a",
             "function": 7,
+        },
+    )
+
+
+def test_decode_signal_event_uses_resolved_receiver_without_setup_lookups() -> None:
+    """Test signal handling consumes only pre-resolved receiver bindings."""
+    command = cast(Command, object())
+    normalized = NormalizedInfraredCommand(
+        protocol_id="fake_protocol",
+        identity=("device-a", 7),
+        event_data={"device": "device-a", "function": 7},
+    )
+
+    def decode(
+        _signal_value: InfraredReceivedSignal,
+    ) -> ProtocolDecodeResult:
+        return ProtocolDecodeResult(command=command, normalized=normalized)
+
+    def normalize(
+        _command: Command,
+    ) -> NormalizedInfraredCommand | None:
+        return None
+
+    handler = ReceiveProtocolHandler(
+        protocol_id="fake_protocol",
+        label_key="fake_protocol",
+        learning_confidence=50,
+        decode=decode,
+        normalize=normalize,
+    )
+    model = ResolvedReceiverModel(
+        codeset_id="fake_codeset",
+        decoder_family_id="fake_family",
+        handlers=(handler,),
+        match_maps={
+            "fake_protocol": {
+                normalized.match_key: "POWER",
+            }
+        },
+        event_types=("fake_protocol", "power", "unknown"),
+    )
+
+    with (
+        patch.object(
+            event_platform,
+            "resolve_receiver_model",
+            side_effect=AssertionError(
+                "receiver model was resolved during signal handling"
+            ),
+        ),
+        patch.object(
+            event_platform,
+            "_handlers_for_decoder",
+            side_effect=AssertionError(
+                "decoder family was resolved during signal handling"
+            ),
+        ),
+        patch.object(
+            event_platform,
+            "_load_codeset_enum",
+            side_effect=AssertionError(
+                "codeset enum was loaded during signal handling"
+            ),
+        ),
+        patch.object(
+            event_platform,
+            "_build_codeset_match_map",
+            side_effect=AssertionError("match map was rebuilt during signal handling"),
+        ),
+    ):
+        event_type, event_data = event_platform._decode_signal_event(model, _signal())
+
+    assert event_type == "power"
+    _assert_event_subset(
+        event_data,
+        {
+            "codeset": "fake_codeset",
+            "decoder": "fake_family",
+            "protocol": "fake_protocol",
+            "decoded": True,
+            "matched": True,
+            "repeat": False,
+            "command_name": "POWER",
         },
     )
 

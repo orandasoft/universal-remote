@@ -13,7 +13,7 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import DOMAIN
 from .helpers import normalize_command_name
 from .profiles.capabilities.japanese_tuner import TunerCapability
-from .resolved import ResolvedRemoteProfile
+from .resolved import ResolvedReceiverModel, ResolvedRemoteProfile
 from .send import async_send_infrared_command
 
 
@@ -23,6 +23,7 @@ class UniversalRemoteData:
 
     runtime: UniversalRemoteRuntime | None
     resolved_profile: ResolvedRemoteProfile | None = None
+    resolved_receiver: ResolvedReceiverModel | None = None
 
 
 @dataclass(frozen=True, slots=True)

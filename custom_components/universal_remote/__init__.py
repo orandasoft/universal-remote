@@ -6,11 +6,14 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     CONF_INFRARED_EMITTER_ID,
+    CONF_INFRARED_RECEIVER_ID,
     CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
 )
+from .event import resolve_receiver_model
 from .helpers import normalize_command_mapping, universal_remote_from_config_entry_data
+from .infrared_library import NO_INFRARED_LIBRARY_CODESET
 from .profiles import CAPABILITY_JAPANESE_TUNER, TunerCapability
 from .resolved import resolve_remote_profile
 from .runtime import UniversalRemoteData, UniversalRemoteRuntime
@@ -66,6 +69,7 @@ def _runtime_data_from_config_entry(
     )
     runtime = None
     resolved_profile = None
+    resolved_receiver = None
 
     if remote is not None:
         device_type = remote.get(CONF_REMOTE_DEVICE_TYPE)
@@ -74,6 +78,14 @@ def _runtime_data_from_config_entry(
             device_type=device_type if isinstance(device_type, str) else None,
             codeset_id=codeset_id if isinstance(codeset_id, str) else None,
         )
+
+        infrared_receiver_id = remote.get(CONF_INFRARED_RECEIVER_ID)
+        if isinstance(infrared_receiver_id, str) and infrared_receiver_id:
+            resolved_receiver = resolve_receiver_model(
+                codeset_id
+                if isinstance(codeset_id, str) and codeset_id
+                else NO_INFRARED_LIBRARY_CODESET
+            )
 
         tuner_capability = None
         if resolved_profile is not None:
@@ -97,4 +109,5 @@ def _runtime_data_from_config_entry(
     return UniversalRemoteData(
         runtime=runtime,
         resolved_profile=resolved_profile,
+        resolved_receiver=resolved_receiver,
     )

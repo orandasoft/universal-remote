@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
+from homeassistant.components.infrared import InfraredReceivedSignal
+from infrared_protocols.commands import Command
 
 from custom_components.universal_remote.codesets import (
     CODESET_REGISTRY,
@@ -23,9 +27,54 @@ from custom_components.universal_remote.profiles import (
     ProfileCapability,
     build_profile_registry,
 )
+from custom_components.universal_remote.protocols.base import (
+    CommandMatchKey,
+    NormalizedInfraredCommand,
+    ProtocolDecodeResult,
+    ReceiveProtocolHandler,
+)
 from custom_components.universal_remote.resolved import (
+    ResolvedReceiverModel,
     resolve_remote_profile,
 )
+
+
+def _fake_handler() -> ReceiveProtocolHandler:
+    """Return a minimal fake receive handler."""
+
+    def decode(_signal: InfraredReceivedSignal) -> ProtocolDecodeResult | None:
+        return None
+
+    def normalize(_command: Command) -> NormalizedInfraredCommand | None:
+        return None
+
+    return ReceiveProtocolHandler(
+        protocol_id="fake",
+        label_key="fake",
+        learning_confidence=1,
+        decode=decode,
+        normalize=normalize,
+    )
+
+
+def test_resolved_receiver_model_freezes_match_maps() -> None:
+    """Test receive-side match maps are copied and immutable."""
+    match_key: CommandMatchKey = ("fake", "device", 1)
+    source_map: dict[CommandMatchKey, str] = {match_key: "POWER"}
+    model = ResolvedReceiverModel(
+        codeset_id="fake_codeset",
+        decoder_family_id="fake_family",
+        handlers=(_fake_handler(),),
+        match_maps={"fake": source_map},
+        event_types=("fake", "power", "unknown"),
+    )
+
+    source_map[match_key] = "MUTE"
+
+    assert model.match_map_for_protocol("fake")[match_key] == "POWER"
+    assert model.match_map_for_protocol("missing") == {}
+    with pytest.raises(TypeError):
+        cast(dict[CommandMatchKey, str], model.match_maps["fake"])[match_key] = "MUTE"
 
 
 @pytest.mark.parametrize(

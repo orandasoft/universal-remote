@@ -2,7 +2,6 @@
 
 from collections import deque
 from enum import Enum
-from functools import lru_cache
 from importlib import import_module
 import logging
 from time import monotonic
@@ -34,7 +33,6 @@ from .infrared_library import (
     INFRARED_LIBRARY_CODESETS,
     NO_INFRARED_LIBRARY_CODESET,
     infrared_library_codeset_receiver_decoder_id,
-    is_infrared_library_codeset_selected,
 )
 from .protocols import PROTOCOL_UNKNOWN
 from .protocols.base import (
@@ -43,6 +41,7 @@ from .protocols.base import (
     ReceiveProtocolHandler,
 )
 from .protocols.registry import PROTOCOL_REGISTRY
+from .resolved import ResolvedReceiverModel
 from .runtime import UniversalRemoteData, UniversalRemoteRuntime
 from .repairs import (
     async_create_linked_infrared_receiver_missing_issue,
@@ -121,6 +120,11 @@ async def async_setup_entry(
     runtime = (
         runtime_data.runtime if isinstance(runtime_data, UniversalRemoteData) else None
     )
+    resolved_receiver = (
+        runtime_data.resolved_receiver
+        if isinstance(runtime_data, UniversalRemoteData)
+        else None
+    )
 
     remote = universal_remote_from_config_entry_data({**entry.data, **entry.options})
     if remote is not None:
@@ -154,6 +158,7 @@ async def async_setup_entry(
                     remote_name=remote_name,
                     receiver_entity_id=receiver_entity_id,
                     codeset_id=codeset_id,
+                    receiver_model=resolved_receiver,
                     runtime=runtime,
                 )
             )
@@ -182,6 +187,7 @@ class UniversalRemoteReceivedCommandEventEntity(
         remote_name: str,
         receiver_entity_id: str,
         codeset_id: str,
+        receiver_model: ResolvedReceiverModel | None = None,
         runtime: UniversalRemoteRuntime | None = None,
     ) -> None:
         """Initialize the received command event entity."""
@@ -190,7 +196,8 @@ class UniversalRemoteReceivedCommandEventEntity(
         self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
         self._infrared_receiver_entity_id = receiver_entity_id
         self._codeset_id = codeset_id
-        self._attr_event_types = _event_types_for_codeset(codeset_id)
+        self._receiver_model = receiver_model or resolve_receiver_model(codeset_id)
+        self._attr_event_types = list(self._receiver_model.event_types)
         self._received_event_history: deque[dict[str, Any]] = deque(
             maxlen=MAX_RECEIVED_EVENT_HISTORY,
         )
@@ -212,7 +219,7 @@ class UniversalRemoteReceivedCommandEventEntity(
             self._last_decoded_event_time = None
 
         event_type, event_data = _decode_signal_event(
-            self._codeset_id,
+            self._receiver_model,
             signal,
             previous_decoded_event=previous_decoded_event,
         )
@@ -259,34 +266,56 @@ def receiver_event_types_for_codeset(codeset_id: str) -> list[str]:
     return _event_types_for_codeset(codeset_id)
 
 
-def _event_types_for_codeset(codeset_id: str) -> list[str]:
-    """Return event types exposed by a receiver codeset."""
-    event_types = {EVENT_UNKNOWN}
-
+def resolve_receiver_model(codeset_id: str) -> ResolvedReceiverModel:
+    """Resolve immutable receive-side bindings for one configured remote."""
     decoder_id = infrared_library_codeset_receiver_decoder_id(codeset_id)
     handlers = _handlers_for_decoder(decoder_id)
-    if not handlers:
-        return sorted(event_types)
+    event_types = {EVENT_UNKNOWN}
+    match_maps: dict[str, dict[CommandMatchKey, str]] = {}
 
-    event_types.update(handler.protocol_id for handler in handlers)
-    event_types.update(_repeat_event_types_for_decoder(decoder_id))
+    if handlers:
+        event_types.update(handler.protocol_id for handler in handlers)
+        event_types.update(
+            handler.repeat_event_type
+            for handler in handlers
+            if handler.repeat_event_type is not None
+        )
 
-    enum_cls = _load_codeset_enum(codeset_id)
-    if enum_cls is not None:
-        event_types.update(_event_type(member.name) for member in enum_cls)
+        enum_cls = _load_codeset_enum(codeset_id)
+        if enum_cls is not None:
+            event_types.update(_event_type(member.name) for member in enum_cls)
+            match_maps = {
+                handler.protocol_id: _build_codeset_match_map(enum_cls, handler)
+                for handler in handlers
+            }
 
-    return sorted(event_types)
+    return ResolvedReceiverModel(
+        codeset_id=codeset_id,
+        decoder_family_id=decoder_id,
+        handlers=handlers,
+        match_maps=match_maps,
+        event_types=tuple(sorted(event_types)),
+    )
+
+
+def _event_types_for_codeset(codeset_id: str) -> list[str]:
+    """Return event types exposed by a receiver codeset."""
+    return list(resolve_receiver_model(codeset_id).event_types)
 
 
 def _decode_signal_event(
-    codeset_id: str,
+    receiver_model: ResolvedReceiverModel | str,
     signal: InfraredReceivedSignal,
     *,
     previous_decoded_event: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Decode a received signal into a Home Assistant event type and data."""
-    decoder_id = infrared_library_codeset_receiver_decoder_id(codeset_id)
-    handlers = _handlers_for_decoder(decoder_id)
+    if isinstance(receiver_model, str):
+        receiver_model = resolve_receiver_model(receiver_model)
+
+    codeset_id = receiver_model.codeset_id
+    decoder_id = receiver_model.decoder_family_id
+    handlers = receiver_model.handlers
     event_data: dict[str, Any] = {
         "codeset": codeset_id,
         "decoder": decoder_id,
@@ -296,7 +325,7 @@ def _decode_signal_event(
         "repeat": False,
     }
 
-    if not is_infrared_library_codeset_selected(codeset_id) or not handlers:
+    if not handlers:
         return EVENT_UNKNOWN, _with_timing_metadata(
             event_data,
             signal,
@@ -309,7 +338,7 @@ def _decode_signal_event(
             continue
 
         return _match_decoded_signal_event(
-            codeset_id,
+            receiver_model,
             event_data,
             normalized_command,
             handler,
@@ -344,7 +373,7 @@ def _decode_protocol_signal(
 
 
 def _match_decoded_signal_event(
-    codeset_id: str,
+    receiver_model: ResolvedReceiverModel,
     event_data: dict[str, Any],
     normalized_command: NormalizedInfraredCommand,
     handler: ReceiveProtocolHandler,
@@ -358,10 +387,9 @@ def _match_decoded_signal_event(
         }
     )
 
-    command_name = _codeset_match_map(
-        codeset_id,
-        handler.protocol_id,
-    ).get(normalized_command.match_key)
+    command_name = receiver_model.match_map_for_protocol(handler.protocol_id).get(
+        normalized_command.match_key
+    )
     if command_name is None:
         return handler.protocol_id, event_data
 
@@ -414,25 +442,11 @@ def _handlers_for_decoder(
     return PROTOCOL_REGISTRY.handlers_for_family(decoder_id)
 
 
-def _repeat_event_types_for_decoder(decoder_id: str | None) -> set[str]:
-    """Return repeat event types exposed by a receiver decoder."""
-    return {
-        handler.repeat_event_type
-        for handler in _handlers_for_decoder(decoder_id)
-        if handler.repeat_event_type is not None
-    }
-
-
-@lru_cache(maxsize=None)
-def _codeset_match_map(
-    codeset_id: str,
-    protocol_id: str,
+def _build_codeset_match_map(
+    enum_cls: type[Enum],
+    handler: ReceiveProtocolHandler,
 ) -> dict[CommandMatchKey, str]:
-    """Return a protocol-aware match map for a receiver codeset."""
-    handler = PROTOCOL_REGISTRY.handler_for_protocol(protocol_id)
-    enum_cls = _load_codeset_enum(codeset_id)
-    if handler is None or enum_cls is None:
-        return {}
+    """Build one protocol-aware match map from a loaded codeset enum."""
 
     match_map: dict[CommandMatchKey, str] = {}
     for member in enum_cls:
