@@ -62,7 +62,7 @@ async def test_outbound_send_does_not_consult_receive_or_codeset_definitions(
             ),
         ) as mock_load_enum,
         patch(
-            "custom_components.universal_remote.event.resolve_receiver_model",
+            "custom_components.universal_remote.receiver.resolve_receiver_model",
             side_effect=AssertionError(
                 "Receiver bindings resolved during outbound transmission"
             ),

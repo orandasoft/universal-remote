@@ -19,7 +19,7 @@ from .const import (
     CONF_REMOTE_NAME,
     DEVICE_TYPE_GENERIC,
 )
-from .event import receiver_event_types_for_codeset
+from .receiver import receiver_event_types_for_codeset
 from .helpers import (
     available_infrared_receivers,
     command_create_button,

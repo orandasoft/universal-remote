@@ -10,7 +10,7 @@ from .const import (
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
 )
-from .event import resolve_receiver_model
+from .receiver import resolve_receiver_model
 from .helpers import normalize_command_mapping, universal_remote_from_config_entry_data
 from .infrared_library import NO_INFRARED_LIBRARY_CODESET
 from .profiles import CAPABILITY_JAPANESE_TUNER, TunerCapability

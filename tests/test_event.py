@@ -14,6 +14,7 @@ from infrared_protocols.codes.lg.tv import LGTVCodeJP
 from infrared_protocols.commands import Command
 
 from custom_components.universal_remote import event as event_platform
+from custom_components.universal_remote import receiver as receiver_module
 from custom_components.universal_remote import protocols as protocol_helpers
 from custom_components.universal_remote.protocols import nec as nec_protocol
 from custom_components.universal_remote.protocols.base import (
@@ -194,7 +195,7 @@ def _patched_nec_protocol_handlers(
         },
     )
 
-    with patch.object(event_platform, "PROTOCOL_REGISTRY", registry):
+    with patch.object(receiver_module, "PROTOCOL_REGISTRY", registry):
         yield
 
 
@@ -253,7 +254,7 @@ async def test_async_setup_entry_adds_event_entity_for_available_receiver(
     hass: Any,
 ) -> None:
     """Test setup creates an event entity when the receiver is available."""
-    receiver_model = event_platform.resolve_receiver_model("lg_tv")
+    receiver_model = receiver_module.resolve_receiver_model("lg_tv")
     entry: Any = SimpleNamespace(
         data={},
         options={},
@@ -304,11 +305,6 @@ async def test_async_setup_entry_adds_event_entity_for_available_receiver(
             "cleanup_stale_received_command_event_entities",
             cleanup_entities,
         ),
-        patch.object(
-            event_platform,
-            "resolve_receiver_model",
-            side_effect=AssertionError("receiver model should already be resolved"),
-        ),
     ):
         await event_platform.async_setup_entry(
             hass,
@@ -320,7 +316,6 @@ async def test_async_setup_entry_adds_event_entity_for_available_receiver(
     entity = added_entities[0]
     assert entity._attr_unique_id == "living_room_tv_received_command"
     assert entity._infrared_receiver_entity_id == "infrared.xiao_receiver"
-    assert entity._codeset_id == "lg_tv"
     assert entity._receiver_model is receiver_model
     assert entity._attr_event_types == list(receiver_model.event_types)
     delete_missing_issue.assert_called_once_with(
@@ -340,7 +335,7 @@ async def test_async_setup_entry_adds_event_entity_for_available_receiver(
 
 async def test_async_setup_entry_creates_missing_receiver_issue(hass: Any) -> None:
     """Test setup creates a repair issue when the receiver is unavailable."""
-    receiver_model = event_platform.resolve_receiver_model("lg_tv")
+    receiver_model = receiver_module.resolve_receiver_model("lg_tv")
     entry: Any = SimpleNamespace(
         data={},
         options={},
@@ -399,7 +394,6 @@ async def test_async_setup_entry_creates_missing_receiver_issue(hass: Any) -> No
     entity = added_entities[0]
     assert entity._attr_unique_id == "living_room_tv_received_command"
     assert entity._infrared_receiver_entity_id == "infrared.missing_receiver"
-    assert entity._codeset_id == "lg_tv"
     create_issue.assert_called_once_with(
         hass,
         remote_id="living_room_tv",
@@ -423,7 +417,7 @@ def test_received_command_event_entity_handles_decoded_signal() -> None:
         remote_id="living_room_tv",
         remote_name="Living room TV",
         receiver_entity_id="infrared.xiao_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
     )
     event_data = {
         "protocol": protocol_helpers.PROTOCOL_NEC,
@@ -467,7 +461,9 @@ def test_received_command_event_history_omits_timing_previews() -> None:
         remote_id="receiver_only",
         remote_name="Receiver only",
         receiver_entity_id="infrared.xiao_receiver",
-        codeset_id=NO_INFRARED_LIBRARY_CODESET,
+        receiver_model=receiver_module.resolve_receiver_model(
+            NO_INFRARED_LIBRARY_CODESET
+        ),
     )
     first_timings = [243, -10000]
     second_timings = [300, -9000]
@@ -539,7 +535,7 @@ def test_received_command_event_entity_clears_last_decoded_event_on_unknown() ->
         remote_id="living_room_tv",
         remote_name="Living room TV",
         receiver_entity_id="infrared.xiao_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
     )
     entity._last_decoded_event = {
         "event_type": "mute",
@@ -577,7 +573,7 @@ def test_received_command_event_entity_associates_repeat_at_timeout_boundary() -
         remote_id="living_room_tv",
         remote_name="Living room TV",
         receiver_entity_id="infrared.xiao_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
     )
     previous_event = {
         "event_type": "mute",
@@ -625,7 +621,7 @@ def test_received_command_event_entity_refreshes_repeat_association() -> None:
         remote_id="living_room_tv",
         remote_name="Living room TV",
         receiver_entity_id="infrared.xiao_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
     )
     previous_event = {
         "event_type": "volume_up",
@@ -673,7 +669,7 @@ def test_received_command_event_entity_drops_stale_repeat_association() -> None:
         remote_id="living_room_tv",
         remote_name="Living room TV",
         receiver_entity_id="infrared.xiao_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
     )
     entity._last_decoded_event = {
         "event_type": "mute",
@@ -723,7 +719,7 @@ def test_received_command_event_entity_drops_event_without_timestamp() -> None:
         remote_id="living_room_tv",
         remote_name="Living room TV",
         receiver_entity_id="infrared.xiao_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
     )
     entity._last_decoded_event = {
         "event_type": "mute",
@@ -764,8 +760,8 @@ def test_received_command_event_entity_drops_event_without_timestamp() -> None:
 
 def test_event_types_for_codeset() -> None:
     """Test event types are generated from the selected codeset."""
-    with patch.object(event_platform, "_load_codeset_enum", return_value=FakeCode):
-        assert event_platform._event_types_for_codeset("lg_tv") == [
+    with patch.object(receiver_module, "_load_codeset_enum", return_value=FakeCode):
+        assert receiver_module.receiver_event_types_for_codeset("lg_tv") == [
             "nec",
             "nec1_f16",
             "nec_repeat",
@@ -777,31 +773,41 @@ def test_event_types_for_codeset() -> None:
 
 def test_event_types_for_unknown_codeset() -> None:
     """Test only unknown is exposed when no decoder is available."""
-    assert event_platform._event_types_for_codeset("missing") == ["unknown"]
+    assert receiver_module.receiver_event_types_for_codeset("missing") == ["unknown"]
 
 
 def test_receiver_event_types_for_codeset() -> None:
-    """Test public receiver event-type helper delegates to the private helper."""
+    """Test the public helper exposes event types from the resolved model."""
+    model = ResolvedReceiverModel(
+        codeset_id="lg_tv",
+        decoder_family_id="nec",
+        handlers=(),
+        match_maps={},
+        event_types=("nec", "unknown"),
+    )
+
     with patch.object(
-        event_platform,
-        "_event_types_for_codeset",
-        return_value=["nec", "unknown"],
-    ) as event_types_for_codeset:
-        assert event_platform.receiver_event_types_for_codeset("lg_tv") == [
+        receiver_module,
+        "resolve_receiver_model",
+        return_value=model,
+    ) as resolve_model:
+        assert receiver_module.receiver_event_types_for_codeset("lg_tv") == [
             "nec",
             "unknown",
         ]
 
-    event_types_for_codeset.assert_called_once_with("lg_tv")
+    resolve_model.assert_called_once_with("lg_tv")
 
 
 def test_decode_signal_event_matches_library_command() -> None:
     """Test a decoded NEC command is matched to the library command name."""
     with (
         _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
-        patch.object(event_platform, "_load_codeset_enum", return_value=FakeCode),
+        patch.object(receiver_module, "_load_codeset_enum", return_value=FakeCode),
     ):
-        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+        event_type, event_data = event_platform._decode_signal_event(
+            receiver_module.resolve_receiver_model("lg_tv"), _signal()
+        )
 
     assert event_type == "power"
     _assert_event_subset(
@@ -824,9 +830,11 @@ def test_decode_signal_event_returns_nec_for_unmatched_command() -> None:
     """Test unmatched decoded NEC commands return the nec event type."""
     with (
         _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(9, 9)),
-        patch.object(event_platform, "_load_codeset_enum", return_value=FakeCode),
+        patch.object(receiver_module, "_load_codeset_enum", return_value=FakeCode),
     ):
-        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+        event_type, event_data = event_platform._decode_signal_event(
+            receiver_module.resolve_receiver_model("lg_tv"), _signal()
+        )
 
     assert event_type == "nec"
     _assert_event_subset(
@@ -848,9 +856,11 @@ def test_decode_signal_event_returns_nec_without_enum() -> None:
     """Test missing library enums return the nec event type for decoded commands."""
     with (
         _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
-        patch.object(event_platform, "_load_codeset_enum", return_value=None),
+        patch.object(receiver_module, "_load_codeset_enum", return_value=None),
     ):
-        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+        event_type, event_data = event_platform._decode_signal_event(
+            receiver_module.resolve_receiver_model("lg_tv"), _signal()
+        )
 
     assert event_type == "nec"
     _assert_event_subset(
@@ -872,9 +882,11 @@ def test_decode_signal_event_skips_invalid_library_command() -> None:
     """Test enum members without usable commands are ignored."""
     with (
         _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
-        patch.object(event_platform, "_load_codeset_enum", return_value=BrokenCode),
+        patch.object(receiver_module, "_load_codeset_enum", return_value=BrokenCode),
     ):
-        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+        event_type, event_data = event_platform._decode_signal_event(
+            receiver_module.resolve_receiver_model("lg_tv"), _signal()
+        )
 
     assert event_type == "nec"
     assert event_data["protocol"] == "nec"
@@ -886,9 +898,13 @@ def test_decode_signal_event_matches_repeat_count_only_library_command() -> None
     """Test library commands can expose to_command(repeat_count=0)."""
     with (
         _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
-        patch.object(event_platform, "_load_codeset_enum", return_value=RepeatOnlyCode),
+        patch.object(
+            receiver_module, "_load_codeset_enum", return_value=RepeatOnlyCode
+        ),
     ):
-        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+        event_type, event_data = event_platform._decode_signal_event(
+            receiver_module.resolve_receiver_model("lg_tv"), _signal()
+        )
 
     assert event_type == "power"
     assert event_data["matched"] is True
@@ -900,12 +916,14 @@ def test_decode_signal_event_ignores_unusable_to_command() -> None:
     with (
         _patched_nec_protocol_handlers(nec_decode_result=FakeCommand(1, 2)),
         patch.object(
-            event_platform,
+            receiver_module,
             "_load_codeset_enum",
             return_value=BadToCommandCode,
         ),
     ):
-        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+        event_type, event_data = event_platform._decode_signal_event(
+            receiver_module.resolve_receiver_model("lg_tv"), _signal()
+        )
 
     assert event_type == "nec"
     assert event_data["matched"] is False
@@ -914,7 +932,7 @@ def test_decode_signal_event_ignores_unusable_to_command() -> None:
 def test_decode_signal_event_returns_unknown_for_unsupported_codeset() -> None:
     """Test unsupported receiver codesets return the unknown event type."""
     event_type, event_data = event_platform._decode_signal_event(
-        "samsung_tv",
+        receiver_module.resolve_receiver_model("samsung_tv"),
         _signal(),
     )
 
@@ -937,7 +955,9 @@ def test_decode_signal_event_returns_unknown_for_unsupported_codeset() -> None:
 
 def test_decode_signal_event_returns_unknown_without_codeset() -> None:
     """Test missing library codesets return the unknown event type."""
-    event_type, event_data = event_platform._decode_signal_event("none", _signal())
+    event_type, event_data = event_platform._decode_signal_event(
+        receiver_module.resolve_receiver_model("none"), _signal()
+    )
 
     assert event_type == "unknown"
     assert event_data["decoder"] is None
@@ -948,7 +968,7 @@ def test_decode_signal_event_returns_unknown_without_codeset() -> None:
 def test_decode_signal_event_returns_unknown_for_no_library_codeset() -> None:
     """Test the no-library sentinel returns the unknown event type."""
     event_type, event_data = event_platform._decode_signal_event(
-        NO_INFRARED_LIBRARY_CODESET,
+        receiver_module.resolve_receiver_model(NO_INFRARED_LIBRARY_CODESET),
         _signal(),
     )
 
@@ -962,7 +982,9 @@ def test_decode_signal_event_returns_unknown_for_no_library_codeset() -> None:
 def test_decode_signal_event_returns_unknown_when_decode_fails() -> None:
     """Test undecodable NEC signals return the unknown event type."""
     with _patched_nec_protocol_handlers(nec_decode_result=None):
-        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+        event_type, event_data = event_platform._decode_signal_event(
+            receiver_module.resolve_receiver_model("lg_tv"), _signal()
+        )
 
     assert event_type == "unknown"
     _assert_event_subset(
@@ -982,7 +1004,9 @@ def test_decode_signal_event_returns_unknown_when_decode_fails() -> None:
 def test_decode_signal_event_returns_unknown_without_nec_key() -> None:
     """Test decoded commands without NEC keys return the unknown event type."""
     with _patched_nec_protocol_handlers(nec_decode_result=object()):
-        event_type, event_data = event_platform._decode_signal_event("lg_tv", _signal())
+        event_type, event_data = event_platform._decode_signal_event(
+            receiver_module.resolve_receiver_model("lg_tv"), _signal()
+        )
 
     assert event_type == "unknown"
     assert event_data["decoder"] == "nec"
@@ -999,7 +1023,7 @@ def test_decode_signal_event_decodes_nec1_f16_command() -> None:
         nec1_f16_decode_result=command,
     ):
         event_type, event_data = event_platform._decode_signal_event(
-            "lg_tv",
+            receiver_module.resolve_receiver_model("lg_tv"),
             _signal(command.get_raw_timings(), modulation=38_000),
         )
 
@@ -1030,13 +1054,13 @@ def test_decode_signal_event_matches_nec1_f16_library_command() -> None:
             nec1_f16_decode_result=command,
         ),
         patch.object(
-            event_platform,
+            receiver_module,
             "_load_codeset_enum",
             return_value=LGTVCodeJP,
         ),
     ):
         event_type, event_data = event_platform._decode_signal_event(
-            "lg_tv",
+            receiver_module.resolve_receiver_model("lg_tv"),
             _signal(),
         )
 
@@ -1070,7 +1094,7 @@ def test_decode_signal_event_returns_nec_repeat_with_previous_event() -> None:
 
     with _patched_nec_protocol_handlers(nec_decode_result=None):
         event_type, event_data = event_platform._decode_signal_event(
-            "lg_tv",
+            receiver_module.resolve_receiver_model("lg_tv"),
             _signal([8894, -2250, 529, -10000]),
             previous_decoded_event=previous_event,
         )
@@ -1103,7 +1127,7 @@ def test_decode_signal_event_returns_nec_repeat_with_previous_nec1_f16_event() -
 
     with _patched_nec_protocol_handlers(nec_decode_result=None):
         event_type, event_data = event_platform._decode_signal_event(
-            "lg_tv",
+            receiver_module.resolve_receiver_model("lg_tv"),
             _signal([8894, -2250, 529, -10000]),
             previous_decoded_event=previous_event,
         )
@@ -1118,7 +1142,7 @@ def test_decode_signal_event_returns_nec_repeat_without_previous_event() -> None
     """Test standalone NEC repeat frames decode without previous metadata."""
     with _patched_nec_protocol_handlers(nec_decode_result=None):
         event_type, event_data = event_platform._decode_signal_event(
-            "lg_tv",
+            receiver_module.resolve_receiver_model("lg_tv"),
             _signal([8894, -2250, 529, -10000]),
         )
 
@@ -1131,7 +1155,7 @@ def test_decode_signal_event_returns_nec_repeat_without_previous_event() -> None
 def test_with_timing_metadata_includes_registered_diagnostic_data() -> None:
     """Test registered NEC diagnostics are included for unknown full frames."""
     timings = _nec1_f16_timings()
-    handlers = event_platform.PROTOCOL_REGISTRY.handlers_for_family(
+    handlers = receiver_module.PROTOCOL_REGISTRY.handlers_for_family(
         protocol_helpers.PROTOCOL_NEC
     )
 
@@ -1246,16 +1270,16 @@ def test_decode_signal_event_uses_fake_registered_handler() -> None:
     )
 
     with (
-        patch.object(event_platform, "PROTOCOL_REGISTRY", registry),
+        patch.object(receiver_module, "PROTOCOL_REGISTRY", registry),
         patch.object(
-            event_platform,
+            receiver_module,
             "infrared_library_codeset_receiver_decoder_id",
             return_value="fake_family",
         ),
-        patch.object(event_platform, "_load_codeset_enum", return_value=None),
+        patch.object(receiver_module, "_load_codeset_enum", return_value=None),
     ):
         event_type, event_data = event_platform._decode_signal_event(
-            "lg_tv",
+            receiver_module.resolve_receiver_model("lg_tv"),
             _signal(),
         )
 
@@ -1315,28 +1339,28 @@ def test_decode_signal_event_uses_resolved_receiver_without_setup_lookups() -> N
 
     with (
         patch.object(
-            event_platform,
+            receiver_module,
             "resolve_receiver_model",
             side_effect=AssertionError(
                 "receiver model was resolved during signal handling"
             ),
         ),
         patch.object(
-            event_platform,
+            receiver_module,
             "_handlers_for_decoder",
             side_effect=AssertionError(
                 "decoder family was resolved during signal handling"
             ),
         ),
         patch.object(
-            event_platform,
+            receiver_module,
             "_load_codeset_enum",
             side_effect=AssertionError(
                 "codeset enum was loaded during signal handling"
             ),
         ),
         patch.object(
-            event_platform,
+            receiver_module,
             "_build_codeset_match_map",
             side_effect=AssertionError("match map was rebuilt during signal handling"),
         ),
@@ -1358,52 +1382,15 @@ def test_decode_signal_event_uses_resolved_receiver_without_setup_lookups() -> N
     )
 
 
-def test_command_match_key_returns_none_for_unknown_protocol() -> None:
-    """Test command match keys fail closed for unknown explicit protocols."""
-    assert (
-        event_platform._command_match_key(
-            cast(Command, FakeCommand(1, 2)),
-            protocol="missing",
-        )
-        is None
-    )
-
-
-def test_command_match_key_rejects_command_for_known_protocol() -> None:
-    """Test an explicit known protocol rejects unrelated commands."""
-    assert (
-        event_platform._command_match_key(
-            cast(Command, object()),
-            protocol=protocol_helpers.PROTOCOL_NEC,
-        )
-        is None
-    )
-
-
-def test_command_match_key_detects_known_protocol() -> None:
-    """Test command match keys can be detected without an explicit protocol."""
-    assert event_platform._command_match_key(cast(Command, FakeCommand(1, 2))) == (
-        protocol_helpers.PROTOCOL_NEC,
-        1,
-        2,
-        None,
-    )
-
-
-def test_command_match_key_returns_none_without_matching_protocol() -> None:
-    """Test command match keys fail closed when no protocol normalizer matches."""
-    assert event_platform._command_match_key(cast(Command, object())) is None
-
-
 def test_load_codeset_enum_returns_none_for_unknown_codeset() -> None:
     """Test unknown codeset ids fail closed before importing modules."""
-    assert event_platform._load_codeset_enum("missing") is None
+    assert receiver_module._load_codeset_enum("missing") is None
 
 
 def test_load_codeset_enum_returns_none_for_import_error() -> None:
     """Test missing codeset modules fail closed."""
     with patch.object(
-        event_platform,
+        receiver_module,
         "INFRARED_LIBRARY_CODESETS",
         {
             "broken": SimpleNamespace(
@@ -1412,14 +1399,14 @@ def test_load_codeset_enum_returns_none_for_import_error() -> None:
             ),
         },
     ):
-        assert event_platform._load_codeset_enum("broken") is None
+        assert receiver_module._load_codeset_enum("broken") is None
 
 
 def test_load_codeset_enum_returns_none_for_missing_enum_class() -> None:
     """Test missing enum classes fail closed."""
     with (
         patch.object(
-            event_platform,
+            receiver_module,
             "INFRARED_LIBRARY_CODESETS",
             {
                 "broken": SimpleNamespace(
@@ -1428,16 +1415,16 @@ def test_load_codeset_enum_returns_none_for_missing_enum_class() -> None:
                 ),
             },
         ),
-        patch.object(event_platform, "import_module", return_value=SimpleNamespace()),
+        patch.object(receiver_module, "import_module", return_value=SimpleNamespace()),
     ):
-        assert event_platform._load_codeset_enum("broken") is None
+        assert receiver_module._load_codeset_enum("broken") is None
 
 
 def test_load_codeset_enum_returns_none_for_non_enum_class() -> None:
     """Test non-enum classes fail closed."""
     with (
         patch.object(
-            event_platform,
+            receiver_module,
             "INFRARED_LIBRARY_CODESETS",
             {
                 "broken": SimpleNamespace(
@@ -1447,12 +1434,12 @@ def test_load_codeset_enum_returns_none_for_non_enum_class() -> None:
             },
         ),
         patch.object(
-            event_platform,
+            receiver_module,
             "import_module",
             return_value=SimpleNamespace(NotEnum=NotEnum),
         ),
     ):
-        assert event_platform._load_codeset_enum("broken") is None
+        assert receiver_module._load_codeset_enum("broken") is None
 
 
 def test_event_entity_matched_command_updates_runtime_tuner(
@@ -1469,7 +1456,7 @@ def test_event_entity_matched_command_updates_runtime_tuner(
         remote_id="living_room_tv",
         remote_name="Living Room TV",
         receiver_entity_id="infrared.test_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
         runtime=runtime,
     )
 
@@ -1516,7 +1503,7 @@ def test_event_entity_matched_cs4k_command_updates_runtime_tuner(
         remote_id="living_room_tv",
         remote_name="Living Room TV",
         receiver_entity_id="infrared.test_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
         runtime=runtime,
     )
 
@@ -1563,7 +1550,7 @@ def test_event_entity_repeat_does_not_update_runtime_tuner(
         remote_id="living_room_tv",
         remote_name="Living Room TV",
         receiver_entity_id="infrared.test_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
         runtime=runtime,
     )
 
@@ -1610,7 +1597,7 @@ def test_event_entity_unmatched_command_does_not_update_runtime_tuner(
         remote_id="living_room_tv",
         remote_name="Living Room TV",
         receiver_entity_id="infrared.test_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
         runtime=runtime,
     )
 
@@ -1650,7 +1637,7 @@ def test_event_entity_receiver_only_runtime_none_still_triggers_event(
         remote_id="receiver_remote",
         remote_name="Receiver Remote",
         receiver_entity_id="infrared.test_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
         runtime=None,
     )
 
@@ -1701,7 +1688,7 @@ def test_event_entity_decodes_received_command_with_learned_runtime(
         remote_id="living_room_tv",
         remote_name="Living Room TV",
         receiver_entity_id="infrared.test_receiver",
-        codeset_id="lg_tv",
+        receiver_model=receiver_module.resolve_receiver_model("lg_tv"),
         runtime=runtime,
     )
     event_data = {
