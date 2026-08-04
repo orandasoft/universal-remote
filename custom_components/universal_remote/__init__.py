@@ -1,6 +1,5 @@
 """The Universal Remote integration."""
 
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 
@@ -16,7 +15,11 @@ from .helpers import normalize_command_mapping, universal_remote_from_config_ent
 from .infrared_library import NO_INFRARED_LIBRARY_CODESET
 from .profiles import CAPABILITY_JAPANESE_TUNER, TunerCapability
 from .resolved import resolve_remote_profile
-from .runtime import UniversalRemoteData, UniversalRemoteRuntime
+from .runtime import (
+    UniversalRemoteConfigEntry,
+    UniversalRemoteData,
+    UniversalRemoteRuntime,
+)
 
 PLATFORMS = [
     Platform.BUTTON,
@@ -25,8 +28,6 @@ PLATFORMS = [
     Platform.EVENT,
     Platform.SELECT,
 ]
-
-type UniversalRemoteConfigEntry = ConfigEntry
 
 
 async def async_setup_entry(

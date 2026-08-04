@@ -37,7 +37,10 @@ from custom_components.universal_remote.profiles import (
     build_profile_registry,
 )
 from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
-from custom_components.universal_remote.runtime import UniversalRemoteRuntime
+from custom_components.universal_remote.runtime import (
+    UniversalRemoteData,
+    UniversalRemoteRuntime,
+)
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
@@ -229,6 +232,17 @@ async def test_async_setup_entry_uses_registered_profile(
         data={},
         options={},
     )
+    entry.runtime_data = UniversalRemoteData(
+        runtime=UniversalRemoteRuntime(
+            hass=hass,
+            infrared_emitter_id="infrared.test_ir",
+            commands={
+                "LOUDER": RAW_COMMAND,
+                "SOFTER": RAW_COMMAND,
+                "AUX": RAW_COMMAND,
+            },
+        )
+    )
     entry.add_to_hass(hass)
     async_add_entities = Mock()
 
@@ -285,6 +299,7 @@ async def test_async_setup_entry_ignores_receiver_only_entry(
             },
         },
     )
+    entry.runtime_data = UniversalRemoteData(runtime=None)
     entry.add_to_hass(hass)
     async_add_entities = Mock()
 
@@ -599,6 +614,7 @@ async def test_async_setup_entry_skips_tv_remote_without_emitter(
 ) -> None:
     """Test media player platform skips TV remotes without an emitter."""
     entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.runtime_data = UniversalRemoteData(runtime=None)
     entry.add_to_hass(hass)
     async_add_entities = Mock()
 
@@ -626,6 +642,13 @@ async def test_async_setup_entry_directly_skips_generic_remote(
 ) -> None:
     """Test media player platform defensively skips generic remotes."""
     entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.runtime_data = UniversalRemoteData(
+        runtime=UniversalRemoteRuntime(
+            hass=hass,
+            infrared_emitter_id="infrared.test_ir",
+            commands={"POWER_ON": RAW_COMMAND},
+        )
+    )
     entry.add_to_hass(hass)
     async_add_entities = Mock()
 

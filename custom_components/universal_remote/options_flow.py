@@ -63,6 +63,7 @@ from .infrared_library import (
     is_infrared_library_codeset_selected,
     validate_generated_command_payload,
 )
+from .runtime import UniversalRemoteConfigEntry
 from .send import async_send_infrared_command
 
 COMMAND_NAME = "command_name"
@@ -367,7 +368,10 @@ def _learned_protocol_summary(protocol: str, metadata: Mapping[str, Any]) -> str
 class UniversalRemoteOptionsFlow(config_entries.OptionsFlow):
     """Handle options for Universal Remote."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+    def __init__(
+        self,
+        config_entry: UniversalRemoteConfigEntry,
+    ) -> None:
         """Initialize options flow."""
         self._config_entry = config_entry
         self._remote = self._configured_remote()

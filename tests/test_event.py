@@ -340,7 +340,16 @@ async def test_async_setup_entry_adds_event_entity_for_available_receiver(
 
 async def test_async_setup_entry_creates_missing_receiver_issue(hass: Any) -> None:
     """Test setup creates a repair issue when the receiver is unavailable."""
-    entry: Any = SimpleNamespace(data={}, options={}, entry_id="entry-id")
+    receiver_model = event_platform.resolve_receiver_model("lg_tv")
+    entry: Any = SimpleNamespace(
+        data={},
+        options={},
+        entry_id="entry-id",
+        runtime_data=UniversalRemoteData(
+            runtime=None,
+            resolved_receiver=receiver_model,
+        ),
+    )
     remote = {
         CONF_REMOTE_ID: "living_room_tv",
         CONF_REMOTE_NAME: "Living room TV",

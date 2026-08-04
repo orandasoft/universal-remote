@@ -6,7 +6,6 @@ from typing import Any
 
 from homeassistant.components.select import DOMAIN as SELECT_DOMAIN
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -19,7 +18,7 @@ from .helpers import (
     universal_remote_device_info,
     universal_remotes_from_config_entry,
 )
-from .runtime import UniversalRemoteData, UniversalRemoteRuntime
+from .runtime import UniversalRemoteConfigEntry, UniversalRemoteRuntime
 
 PARALLEL_UPDATES = 0
 
@@ -32,7 +31,7 @@ def select_unique_id(entry_id: str, remote_id: str) -> str:
 @callback
 def cleanup_stale_select_entities(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
     expected_unique_ids: set[str],
 ) -> None:
     """Remove stale tuner select entity registry entries."""
@@ -57,17 +56,14 @@ def cleanup_stale_select_entities(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Universal Remote tuner select entities from a config entry."""
     entities: list[UniversalRemoteTunerSelect] = []
     expected_unique_ids: set[str] = set()
 
-    runtime_data = getattr(entry, "runtime_data", None)
-    runtime = (
-        runtime_data.runtime if isinstance(runtime_data, UniversalRemoteData) else None
-    )
+    runtime = entry.runtime_data.runtime
 
     if runtime is not None and runtime.available_tuners:
         for remote in universal_remotes_from_config_entry(entry):

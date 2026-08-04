@@ -5,7 +5,6 @@ from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 
@@ -33,13 +32,14 @@ from .infrared_library import (
 )
 from .learn import LEARN_DECODER_AUTO, LEARN_DECODER_NONE, LEARN_DECODERS
 from .profiles import PROFILE_REGISTRY
+from .runtime import UniversalRemoteConfigEntry
 
 TO_REDACT = {"device_id", "unique_id", "uuid"}
 
 
 async def async_get_config_entry_diagnostics(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     remote_diagnostics = _diagnostic_remotes(hass, entry)
@@ -103,7 +103,7 @@ def _redacted_entry_mapping(mapping: Mapping[str, Any]) -> dict[str, Any]:
 
 def _diagnostic_remotes(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
 ) -> list[dict[str, Any]]:
     """Return sanitized universal remote diagnostics."""
     diagnostics: list[dict[str, Any]] = []

@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -26,7 +25,7 @@ from .helpers import (
     universal_remote_device_info,
     universal_remotes_from_config_entry,
 )
-from .runtime import UniversalRemoteData, UniversalRemoteRuntime
+from .runtime import UniversalRemoteConfigEntry, UniversalRemoteRuntime
 
 PARALLEL_UPDATES = 1
 
@@ -41,7 +40,7 @@ def button_unique_id(entry_id: str, remote_id: str, command_name: str) -> str:
 @callback
 def cleanup_stale_button_entities(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
     expected_unique_ids: set[str],
 ) -> None:
     """Remove stale command button entity registry entries."""
@@ -74,20 +73,16 @@ class UniversalRemoteButtonEntityDescription(ButtonEntityDescription):
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Universal Remote buttons from a config entry."""
     entities: list[UniversalRemoteButton] = []
     expected_unique_ids: set[str] = set()
 
-    runtime_data = getattr(entry, "runtime_data", None)
-    if isinstance(runtime_data, UniversalRemoteData):
-        runtime = runtime_data.runtime
-        resolved_profile = runtime_data.resolved_profile
-    else:
-        runtime = None
-        resolved_profile = None
+    runtime_data = entry.runtime_data
+    runtime = runtime_data.runtime
+    resolved_profile = runtime_data.resolved_profile
 
     for remote in universal_remotes_from_config_entry(entry):
         remote_id = remote.get(CONF_REMOTE_ID)

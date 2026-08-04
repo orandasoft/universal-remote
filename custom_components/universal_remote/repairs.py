@@ -1,11 +1,10 @@
 """Repairs support for the Universal Remote integration."""
 
-from typing import Any
+from typing import Any, cast
 
 import voluptuous as vol
 
 from homeassistant.components import repairs
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import issue_registry as ir
@@ -28,6 +27,7 @@ from .helpers import (
     infrared_receiver_selector,
     universal_remote_from_config_entry_data,
 )
+from .runtime import UniversalRemoteConfigEntry
 
 CONF_DISABLE_EMITTER = "disable_emitter"
 CONF_DISABLE_RECEIVER = "disable_receiver"
@@ -298,7 +298,7 @@ class LinkedInfraredRepairFlow(repairs.RepairsFlow):
 
     async def _async_update_infrared_entity(
         self,
-        entry: ConfigEntry,
+        entry: UniversalRemoteConfigEntry,
         *,
         remote_id: str,
         conf_key: str,
@@ -373,11 +373,17 @@ def _config_entry_and_remote_for_issue(
     issue_id: str,
     *,
     issue_type: str,
-) -> tuple[ConfigEntry | None, dict[str, Any] | None]:
+) -> tuple[
+    UniversalRemoteConfigEntry | None,
+    dict[str, Any] | None,
+]:
     """Return the config entry and remote for a missing infrared repair issue."""
     remote_id = issue_id.removeprefix(f"{issue_type}_")
 
-    for entry in hass.config_entries.async_entries(DOMAIN):
+    for entry in cast(
+        list[UniversalRemoteConfigEntry],
+        hass.config_entries.async_entries(DOMAIN),
+    ):
         remote = universal_remote_from_config_entry_data(
             {**entry.data, **entry.options}
         )

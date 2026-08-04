@@ -3,7 +3,10 @@
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
-from custom_components.universal_remote.runtime import UniversalRemoteRuntime
+from custom_components.universal_remote.runtime import (
+    UniversalRemoteData,
+    UniversalRemoteRuntime,
+)
 from custom_components.universal_remote.button import (
     UniversalRemoteButton,
     UniversalRemoteButtonEntityDescription,
@@ -308,6 +311,7 @@ async def test_async_setup_entry_directly_skips_receiver_only_entry(
             },
         },
     )
+    entry.runtime_data = UniversalRemoteData(runtime=None)
     entry.add_to_hass(hass)
     async_add_entities = Mock()
 

@@ -356,7 +356,9 @@ def universal_remote_from_config_entry_data(
     return remote
 
 
-def universal_remotes_from_config_entry(entry: ConfigEntry) -> list[dict[str, Any]]:
+def universal_remotes_from_config_entry(
+    entry: ConfigEntry[Any],
+) -> list[dict[str, Any]]:
     """Return the single universal remote definition for a config entry."""
     single_remote = universal_remote_from_config_entry_data(
         {

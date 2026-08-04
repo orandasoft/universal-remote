@@ -10,7 +10,6 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -42,7 +41,7 @@ from .profiles import (
     profile_role_commands,
     profile_source_commands,
 )
-from .runtime import UniversalRemoteData, UniversalRemoteRuntime
+from .runtime import UniversalRemoteConfigEntry, UniversalRemoteRuntime
 from .send import async_send_infrared_command
 
 PARALLEL_UPDATES = 1
@@ -56,7 +55,7 @@ def media_player_unique_id(entry_id: str, remote_id: str) -> str:
 @callback
 def cleanup_stale_media_player_entities(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
     expected_unique_ids: set[str],
 ) -> None:
     """Remove stale Universal Remote media player entity registry entries."""
@@ -81,17 +80,14 @@ def cleanup_stale_media_player_entities(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Universal Remote media players from a config entry."""
     entities: list[UniversalRemoteTvMediaPlayer] = []
     expected_unique_ids: set[str] = set()
 
-    runtime_data = getattr(entry, "runtime_data", None)
-    runtime = (
-        runtime_data.runtime if isinstance(runtime_data, UniversalRemoteData) else None
-    )
+    runtime = entry.runtime_data.runtime
 
     for remote in universal_remotes_from_config_entry(entry):
         device_type = str(remote.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))

@@ -13,7 +13,6 @@ from homeassistant.components.infrared import (
     InfraredReceivedSignal,
     InfraredReceiverConsumerEntity,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -42,7 +41,7 @@ from .protocols.base import (
 )
 from .protocols.registry import PROTOCOL_REGISTRY
 from .resolved import ResolvedReceiverModel
-from .runtime import UniversalRemoteData, UniversalRemoteRuntime
+from .runtime import UniversalRemoteConfigEntry, UniversalRemoteRuntime
 from .repairs import (
     async_create_linked_infrared_receiver_missing_issue,
     async_delete_linked_infrared_receiver_missing_issue,
@@ -72,9 +71,6 @@ _DIAGNOSTIC_RESERVED_EVENT_KEYS = frozenset(
 _LOGGER = logging.getLogger(__name__)
 
 
-type UniversalRemoteConfigEntry = ConfigEntry
-
-
 def event_unique_id(remote_id: str) -> str:
     """Return the unique id for a received-command event entity."""
     return f"{remote_id}_received_command"
@@ -83,7 +79,7 @@ def event_unique_id(remote_id: str) -> str:
 @callback
 def cleanup_stale_received_command_event_entities(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
     expected_unique_ids: set[str],
 ) -> None:
     """Remove stale received-command event entity registry entries."""
@@ -115,15 +111,9 @@ async def async_setup_entry(
     expected_unique_ids: set[str] = set()
     configured_receiver_remote_ids: set[str] = set()
 
-    runtime_data = getattr(entry, "runtime_data", None)
-    runtime = (
-        runtime_data.runtime if isinstance(runtime_data, UniversalRemoteData) else None
-    )
-    resolved_receiver = (
-        runtime_data.resolved_receiver
-        if isinstance(runtime_data, UniversalRemoteData)
-        else None
-    )
+    runtime_data = entry.runtime_data
+    runtime = runtime_data.runtime
+    resolved_receiver = runtime_data.resolved_receiver
 
     remote = universal_remote_from_config_entry_data({**entry.data, **entry.options})
     if remote is not None:

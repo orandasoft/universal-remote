@@ -963,10 +963,12 @@ async def test_async_setup_universal_remote_entities_ignores_receiver_only_entry
     assert entities == []
 
 
-def test_runtime_by_remote_id_without_runtime_data(
+def test_runtime_by_remote_id_without_runtime(
     config_entry: MockConfigEntry,
 ) -> None:
-    """Test runtime lookup returns empty without runtime data."""
+    """Test runtime lookup returns empty when the entry has no runtime."""
+    config_entry.runtime_data = UniversalRemoteData(runtime=None)
+
     assert _runtime_by_remote_id_from_config_entry(config_entry) == {}
 
 

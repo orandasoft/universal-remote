@@ -36,7 +36,7 @@ PLATFORMS = [
 
 def _runtime_data(entry: MockConfigEntry) -> UniversalRemoteData:
     """Return runtime data from a mock config entry."""
-    runtime_data = getattr(entry, "runtime_data")
+    runtime_data = entry.runtime_data
     assert isinstance(runtime_data, UniversalRemoteData)
     return runtime_data
 

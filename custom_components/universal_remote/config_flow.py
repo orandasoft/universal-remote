@@ -47,6 +47,7 @@ from .infrared_library import (
     validate_infrared_library_codeset,
 )
 from .options_flow import UniversalRemoteOptionsFlow
+from .runtime import UniversalRemoteConfigEntry
 
 CONF_IMPORT_COMMANDS = "import_commands"
 CONF_CREATE_BUTTON = "create_button"
@@ -75,7 +76,7 @@ class UniversalRemoteConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     @staticmethod
     def async_get_options_flow(
-        config_entry: config_entries.ConfigEntry,
+        config_entry: UniversalRemoteConfigEntry,
     ) -> UniversalRemoteOptionsFlow:
         """Create the options flow."""
         return UniversalRemoteOptionsFlow(config_entry)

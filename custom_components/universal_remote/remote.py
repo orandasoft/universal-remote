@@ -31,7 +31,7 @@ from .helpers import (
     universal_remote_from_config_entry_data,
     universal_remotes_from_config_entry,
 )
-from .runtime import UniversalRemoteData, UniversalRemoteRuntime
+from .runtime import UniversalRemoteConfigEntry, UniversalRemoteRuntime
 from .repairs import (
     async_create_linked_infrared_emitter_missing_issue,
     async_delete_linked_infrared_emitter_missing_issue,
@@ -55,14 +55,10 @@ type RestoredInfraredEntityIssueHandler = Callable[[HomeAssistant, str], None]
 
 
 def _runtime_by_remote_id_from_config_entry(
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
 ) -> dict[str, UniversalRemoteRuntime]:
     """Return runtime objects keyed by remote id for a config entry."""
-    runtime_data = getattr(entry, "runtime_data", None)
-    if not isinstance(runtime_data, UniversalRemoteData):
-        return {}
-
-    runtime = runtime_data.runtime
+    runtime = entry.runtime_data.runtime
     if runtime is None:
         return {}
 
@@ -95,7 +91,9 @@ def remote_unique_id(entry_id: str, remote_id: str) -> str:
     return f"{entry_id}_remote_{remote_id}"
 
 
-def configured_remote_definitions(entry: ConfigEntry) -> list[dict[str, Any]]:
+def configured_remote_definitions(
+    entry: ConfigEntry[Any],
+) -> list[dict[str, Any]]:
     """Return configured universal remote definitions."""
     return universal_remotes_from_config_entry(entry)
 
@@ -146,7 +144,7 @@ def _delete_missing_issue(hass: HomeAssistant, remote_id: str) -> None:
 @callback
 def cleanup_stale_remote_entities(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: ConfigEntry[Any],
     configured_remote_ids: set[str],
 ) -> None:
     """Remove stale remote entity registry entries for removed remotes.
@@ -180,7 +178,7 @@ def cleanup_stale_remote_entities(
 @callback
 def cleanup_stale_universal_remote_devices(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: ConfigEntry[Any],
     configured_remote_ids: set[str],
     *,
     identifier_domain: str = DOMAIN,
@@ -225,7 +223,7 @@ def cleanup_stale_missing_infrared_issues(
 
 async def async_setup_universal_remote_entities(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: ConfigEntry[Any],
     async_add_entities: AddConfigEntryEntitiesCallback,
     *,
     device_info_factory: DeviceInfoFactory,
@@ -325,7 +323,7 @@ async def async_setup_universal_remote_entities(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: UniversalRemoteConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up configured universal remote entities."""

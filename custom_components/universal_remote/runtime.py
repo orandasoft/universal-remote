@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
@@ -24,6 +25,9 @@ class UniversalRemoteData:
     runtime: UniversalRemoteRuntime | None
     resolved_profile: ResolvedRemoteProfile | None = None
     resolved_receiver: ResolvedReceiverModel | None = None
+
+
+type UniversalRemoteConfigEntry = ConfigEntry[UniversalRemoteData]
 
 
 @dataclass(frozen=True, slots=True)

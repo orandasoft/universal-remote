@@ -146,11 +146,11 @@ async def test_async_setup_entry_skips_select_without_tuner_support(
     async_add_entities.assert_called_once_with([])
 
 
-async def test_async_setup_entry_skips_select_without_runtime_data(
+async def test_async_setup_entry_skips_select_without_runtime(
     hass: HomeAssistant,
     infrared_emitter: str,
 ) -> None:
-    """Test setup skips select when runtime data is not present."""
+    """Test setup skips select when the entry has no sending runtime."""
     entry = MockConfigEntry(
         domain=DOMAIN,
         title=REMOTE_NAME,
@@ -162,6 +162,7 @@ async def test_async_setup_entry_skips_select_without_runtime_data(
         options={},
         unique_id=REMOTE_ID,
     )
+    entry.runtime_data = UniversalRemoteData(runtime=None)
     entry.add_to_hass(hass)
     async_add_entities = Mock()
 
