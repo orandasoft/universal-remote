@@ -117,9 +117,13 @@ def _diagnostic_remotes(
         button_count = sum(
             1 for command in command_mapping.values() if command_create_button(command)
         )
-        source_count = len(tv_media_player_source_commands(command_mapping))
         device_type = str(item.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
         profile = PROFILE_REGISTRY.profile_for_device_type(device_type)
+        source_count = (
+            len(tv_media_player_source_commands(command_mapping))
+            if profile is not None and profile.supports_entity(MEDIA_PLAYER_DOMAIN)
+            else 0
+        )
         codeset_id = str(item.get(CONF_REMOTE_CODESET, NO_INFRARED_LIBRARY_CODESET))
         receiver_event_expected = isinstance(infrared_receiver_id, str)
         receiver_decoder = infrared_library_codeset_receiver_decoder_id(codeset_id)

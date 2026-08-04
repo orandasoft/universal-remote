@@ -172,14 +172,19 @@ async def test_diagnostics_supports_receiver_only_entry(
             CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
             CONF_REMOTE_CODESET: "lg_tv",
         },
-        options={CONF_REMOTE_COMMANDS: {"POWER": "38000:1,2"}},
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "HDMI_1": "38000:1,2",
+                "POWER": "38000:1,2",
+            }
+        },
     )
 
     diagnostics = await async_get_config_entry_diagnostics(hass, entry)
 
     assert diagnostics["summary"] == {
         "remote_count": 1,
-        "command_count": 1,
+        "command_count": 2,
         "button_count": 0,
         "media_player_count": 0,
         "missing_infrared_emitter_count": 0,
@@ -203,9 +208,9 @@ async def test_diagnostics_supports_receiver_only_entry(
     assert remote["codeset"] == "lg_tv"
     assert remote["media_player_expected"] is False
     assert remote["button_count"] == 0
-    assert remote["source_count"] == 0
-    assert remote["command_count"] == 1
-    assert remote["commands"] == ["POWER"]
+    assert remote["source_count"] == 1
+    assert remote["command_count"] == 2
+    assert remote["commands"] == ["HDMI_1", "POWER"]
     assert remote["learning"] == {
         "receiver_configured": True,
         "receiver_available": True,
@@ -217,6 +222,37 @@ async def test_diagnostics_supports_receiver_only_entry(
         "available_decoders": ["nec", "nec1_f16"],
         "learn_command_available": True,
     }
+
+
+async def test_diagnostics_ignores_tv_sources_for_generic_profile(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test generic profiles do not report television source semantics."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Generic Remote",
+        data={
+            CONF_REMOTE_ID: "generic_remote",
+            CONF_REMOTE_NAME: "Generic Remote",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "HDMI_1": "38000:1,2",
+                "POWER_ON": "38000:1,2",
+            }
+        },
+    )
+
+    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    remote = diagnostics["universal_remote"]
+
+    assert remote["media_player_expected"] is False
+    assert remote["source_count"] == 0
+    assert remote["command_count"] == 2
+    assert remote["commands"] == ["HDMI_1", "POWER_ON"]
 
 
 async def test_diagnostics_source_count_matches_tv_source_map(
