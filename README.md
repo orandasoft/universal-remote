@@ -30,7 +30,7 @@ This makes it possible to use one infrared transmitter or receiver for multiple 
 
 The linked infrared emitter is responsible for the actual infrared transmission. Universal Remote only manages the logical remote, command names, optional buttons, optional TV media player entity, and optional received-command event entity.
 
-Universal Remote can be configured with an infrared emitter, an infrared receiver, or both. Sending commands requires an infrared emitter. Receiving command events requires an infrared receiver. A supported codeset enables friendly named events such as `power` or `volume_up`; otherwise, decoded NEC-family commands are exposed as `nec` events with decoded address and command data.
+Universal Remote can be configured with an infrared emitter, an infrared receiver, or both. Sending commands requires an infrared emitter. Receiving command events requires an infrared receiver. A supported codeset enables friendly named events such as `power` or `volume_up`. When its decoder family recognizes a command that does not match a named codeset member, the event uses the protocol type, such as `nec` or `nec1_f16`. Without a supported codeset, received signals are reported as `unknown` events with timing metadata.
 
 ---
 
@@ -90,7 +90,7 @@ During setup, select:
 
 At least one infrared target must be selected. Select an infrared emitter when you want Universal Remote to send commands. Select an infrared receiver when you want Universal Remote to expose received command events.
 
-A supported codeset is required for named receiver events. Without one, decoded NEC-family commands are still available as `nec` events with decoded address and command data.
+A supported codeset is required for named receiver events and protocol-level decoded events. Without one, received signals are reported as `unknown` events with timing metadata.
 
 Multiple Universal Remote config entries may use the same infrared emitter or receiver. This allows one physical IR blaster or receiver to be shared by multiple logical devices.
 
@@ -118,7 +118,7 @@ Universal remotes can be configured as a generic remote or as a supported device
 
 The device type controls which device-oriented entities can be created. For example, TV remotes with an infrared emitter can create a TV `media_player` entity.
 
-A codeset identifies a supported infrared command library and may also supply the integration's semantic binding for the remote, including its device profile, receive decoder family, and optional capabilities. A codeset is optional for sending and receiving, but a supported codeset is required for friendly named receiver-event matching. Without one, supported decoded signals can still be exposed through protocol-level events such as `nec`. Codesets are filtered by device type and can be used to import commands during setup or later from the options flow.
+A codeset identifies a supported infrared command library and may also supply the integration's semantic binding for the remote, including its device profile, receive decoder family, and optional capabilities. A codeset is optional for sending and receiving, but a supported codeset is required for friendly named receiver-event matching and protocol-level decoding. Without one, received signals are reported as `unknown` events with timing metadata. Codesets are filtered by device type and can be used to import commands during setup or later from the options flow.
 
 Supported TV codesets include:
 
@@ -215,7 +215,7 @@ data:
 
 Receiving commands requires a configured infrared receiver.
 
-A supported codeset enables friendly named events such as `power` or `volume_up`. Without one, decoded NEC-family commands are still available as `nec` events with decoded address and command data.
+A supported codeset enables friendly named events such as `power` or `volume_up`. When the selected codeset's decoder family recognizes a command that does not match a named codeset member, the event uses the protocol type, such as `nec` or `nec1_f16`, with decoded protocol data. Without a supported codeset, received signals are reported as `unknown` events with timing metadata.
 
 When a supported received signal matches a known codeset command, Universal Remote exposes it through a Home Assistant `event` entity. The event type is the normalized command name in lowercase, for example:
 
@@ -235,7 +235,7 @@ nec
 
 The `nec` event type includes decoded address and command data. This allows automations to react to NEC commands from a physical universal remote even when those commands are not part of the selected codeset.
 
-Signals that cannot be decoded are reported as:
+Signals that cannot be decoded by the selected codeset's decoder family, and signals received without a supported codeset, are reported as:
 
 ```text
 unknown
@@ -356,8 +356,8 @@ Diagnostics are intended to help troubleshoot configuration issues without expos
 - Universal Remote does not transmit infrared commands directly.
 - The linked `infrared` integration is responsible for hardware communication.
 - Sending commands requires a linked infrared emitter.
-- Receiving command events requires a linked infrared receiver. A supported codeset enables named command events such as `power` or `volume_up`; otherwise, decoded NEC-family commands are exposed as `nec` events with decoded address and command data.
-- Friendly named receiver events are currently limited to supported codesets; unmatched NEC-family commands are exposed as `nec` events.
+- Receiving command events requires a linked infrared receiver. A supported codeset enables named events and protocol-level decoding; without one, received signals are reported as `unknown` events with timing metadata.
+- Friendly named receiver events are limited to supported codesets. Commands decoded by the selected codeset's NEC-family decoder but not matched to a named member are exposed as `nec` or `nec1_f16` events.
 - The TV media player is assumed-state and does not reflect real device state.
 - The tuner select entity is created only when the resolved tuner capability has at least one available tuner.
 - Existing commands are not deleted automatically when changing device type or codeset.
