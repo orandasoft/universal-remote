@@ -231,7 +231,7 @@ Universal Remote send entities are available when the linked infrared emitter ex
 
 If the linked infrared emitter is missing or unavailable, the integration creates a repair issue to help the user update the configuration.
 
-If a configured infrared receiver is missing, the integration creates a repair issue for the missing receiver. The received-command event entity is only created when the linked receiver exists.
+If a configured infrared receiver is missing, the integration creates a repair issue for the missing receiver. The received-command event entity remains registered with its existing entity identity, but it cannot receive events until the linked receiver is restored.
 
 ---
 
