@@ -35,6 +35,61 @@ def _runtime(
     )
 
 
+async def test_outbound_send_does_not_consult_receive_or_codeset_definitions(
+    hass: HomeAssistant,
+) -> None:
+    """Test outbound sending uses only the resolved stored payload."""
+    runtime = _runtime(
+        hass,
+        {"POWER": RAW_COMMAND},
+        tuner_capability=None,
+    )
+
+    class FailingProtocolRegistry:
+        """Reject every receive-registry operation during outbound sending."""
+
+        def __getattr__(self, name: str) -> object:
+            raise AssertionError(f"Protocol registry accessed during send: {name}")
+
+    protocol_registry_sentinel = FailingProtocolRegistry()
+
+    with (
+        patch(
+            "custom_components.universal_remote.infrared_library."
+            "_load_infrared_library_enum",
+            side_effect=AssertionError(
+                "Codeset enum loaded during outbound transmission"
+            ),
+        ) as mock_load_enum,
+        patch(
+            "custom_components.universal_remote.event.resolve_receiver_model",
+            side_effect=AssertionError(
+                "Receiver bindings resolved during outbound transmission"
+            ),
+        ) as mock_resolve_receiver,
+        patch(
+            "custom_components.universal_remote.protocols.registry.PROTOCOL_REGISTRY",
+            protocol_registry_sentinel,
+        ),
+        patch(
+            "custom_components.universal_remote.runtime.async_send_infrared_command",
+            AsyncMock(),
+        ) as mock_send,
+    ):
+        await runtime.async_send_command_name("POWER")
+
+    mock_send.assert_awaited_once_with(
+        hass,
+        INFRARED_EMITTER_ID,
+        RAW_COMMAND,
+        parse_kwargs={},
+        translation_domain=DOMAIN,
+        check_available=True,
+    )
+    mock_load_enum.assert_not_called()
+    mock_resolve_receiver.assert_not_called()
+
+
 async def test_tuner_behavior_requires_capability(
     hass: HomeAssistant,
 ) -> None:
