@@ -12,26 +12,18 @@ from .command_ui import tv_media_player_source_commands
 from .const import (
     CONF_INFRARED_EMITTER_ID,
     CONF_INFRARED_RECEIVER_ID,
-    CONF_REMOTE_CODESET,
     CONF_REMOTE_COMMANDS,
-    CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
     DEVICE_TYPE_GENERIC,
 )
-from .receiver import receiver_event_types_for_codeset
 from .helpers import (
     available_infrared_receivers,
     command_create_button,
     universal_remotes_from_config_entry,
 )
-from .infrared_library import (
-    NO_INFRARED_LIBRARY_CODESET,
-    infrared_library_codeset_receiver_decoder_id,
-    infrared_library_codeset_supports_receiver,
-)
+from .infrared_library import NO_INFRARED_LIBRARY_CODESET
 from .learn import LEARN_DECODER_AUTO, LEARN_DECODER_NONE, LEARN_DECODERS
-from .profiles import PROFILE_REGISTRY
 from .runtime import UniversalRemoteConfigEntry
 
 TO_REDACT = {"device_id", "unique_id", "uuid"}
@@ -108,36 +100,79 @@ def _diagnostic_remotes(
     """Return sanitized universal remote diagnostics."""
     diagnostics: list[dict[str, Any]] = []
     receiver_options = available_infrared_receivers(hass)
+
+    runtime_data = entry.runtime_data
+    resolved_profile = runtime_data.resolved_profile
+    resolved_receiver = runtime_data.resolved_receiver
+
+    profile = resolved_profile.profile if resolved_profile is not None else None
+    profile_codeset_id = (
+        resolved_profile.codeset.codeset_id
+        if resolved_profile is not None and resolved_profile.codeset is not None
+        else NO_INFRARED_LIBRARY_CODESET
+    )
+
     for item in universal_remotes_from_config_entry(entry):
         infrared_emitter_id = item.get(CONF_INFRARED_EMITTER_ID)
         infrared_receiver_id = item.get(CONF_INFRARED_RECEIVER_ID)
+        infrared_emitter_entity_id: str | None = (
+            infrared_emitter_id if isinstance(infrared_emitter_id, str) else None
+        )
+        infrared_receiver_entity_id: str | None = (
+            infrared_receiver_id if isinstance(infrared_receiver_id, str) else None
+        )
+        emitter_configured = infrared_emitter_entity_id is not None
+        receiver_configured = infrared_receiver_entity_id is not None
+
         commands = item.get(CONF_REMOTE_COMMANDS, {})
         command_mapping = commands if isinstance(commands, Mapping) else {}
         command_names = sorted(str(name) for name in command_mapping)
         button_count = sum(
             1 for command in command_mapping.values() if command_create_button(command)
         )
-        device_type = str(item.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
-        profile = PROFILE_REGISTRY.profile_for_device_type(device_type)
+
+        device_type = (
+            profile.device_type if profile is not None else DEVICE_TYPE_GENERIC
+        )
+        media_player_supported = profile is not None and profile.supports_entity(
+            MEDIA_PLAYER_DOMAIN
+        )
         source_count = (
             len(tv_media_player_source_commands(command_mapping))
-            if profile is not None and profile.supports_entity(MEDIA_PLAYER_DOMAIN)
+            if media_player_supported
             else 0
         )
-        codeset_id = str(item.get(CONF_REMOTE_CODESET, NO_INFRARED_LIBRARY_CODESET))
-        receiver_event_expected = isinstance(infrared_receiver_id, str)
-        receiver_decoder = infrared_library_codeset_receiver_decoder_id(codeset_id)
-        receiver_codeset_supported = infrared_library_codeset_supports_receiver(
-            codeset_id,
+
+        receiver_event_expected = receiver_configured
+        active_receiver_model = resolved_receiver if receiver_event_expected else None
+        receiver_decoder = (
+            active_receiver_model.decoder_family_id
+            if active_receiver_model is not None
+            else None
         )
+        receiver_codeset_supported = active_receiver_model is not None and bool(
+            active_receiver_model.handlers
+        )
+        receiver_event_type_count = (
+            len(active_receiver_model.event_types)
+            if active_receiver_model is not None
+            else 0
+        )
+
+        codeset_id = (
+            active_receiver_model.codeset_id
+            if active_receiver_model is not None
+            else profile_codeset_id
+        )
+
         infrared_emitter_state = (
-            hass.states.get(infrared_emitter_id)
-            if isinstance(infrared_emitter_id, str)
+            hass.states.get(infrared_emitter_entity_id)
+            if infrared_emitter_entity_id is not None
             else None
         )
         infrared_receiver_state = (
-            hass.states.get(infrared_receiver_id)
-            if isinstance(infrared_receiver_id, str)
+            hass.states.get(infrared_receiver_entity_id)
+            if infrared_receiver_entity_id is not None
             else None
         )
         infrared_emitter_available = (
@@ -148,14 +183,19 @@ def _diagnostic_remotes(
             infrared_receiver_state is not None
             and infrared_receiver_state.state != STATE_UNAVAILABLE
         )
-        receiver_configured = isinstance(infrared_receiver_id, str)
-        emitter_configured = isinstance(infrared_emitter_id, str)
+
         configured_receiver_selectable = (
-            receiver_configured and infrared_receiver_id in receiver_options
+            infrared_receiver_entity_id is not None
+            and infrared_receiver_entity_id in receiver_options
         )
-        alternative_receiver_available = receiver_configured and any(
-            receiver_id != infrared_receiver_id for receiver_id in receiver_options
+        alternative_receiver_available = (
+            infrared_receiver_entity_id is not None
+            and any(
+                receiver_id != infrared_receiver_entity_id
+                for receiver_id in receiver_options
+            )
         )
+
         diagnostics.append(
             {
                 "id": item.get(CONF_REMOTE_ID),
@@ -169,17 +209,11 @@ def _diagnostic_remotes(
                 "receiver_event_expected": receiver_event_expected,
                 "receiver_decoder": receiver_decoder,
                 "receiver_codeset_supported": receiver_codeset_supported,
-                "receiver_event_type_count": (
-                    len(receiver_event_types_for_codeset(codeset_id))
-                    if receiver_event_expected
-                    else 0
-                ),
+                "receiver_event_type_count": receiver_event_type_count,
                 "device_type": device_type,
                 "codeset": codeset_id,
                 "media_player_expected": (
-                    profile is not None
-                    and profile.supports_entity(MEDIA_PLAYER_DOMAIN)
-                    and isinstance(infrared_emitter_id, str)
+                    media_player_supported and emitter_configured
                 ),
                 "button_count": button_count,
                 "source_count": source_count,
@@ -198,8 +232,9 @@ def _diagnostic_remotes(
                         for decoder in LEARN_DECODERS
                         if decoder not in (LEARN_DECODER_AUTO, LEARN_DECODER_NONE)
                     ],
-                    "learn_command_available": receiver_configured
-                    and bool(receiver_options),
+                    "learn_command_available": (
+                        receiver_configured and bool(receiver_options)
+                    ),
                 },
             }
         )

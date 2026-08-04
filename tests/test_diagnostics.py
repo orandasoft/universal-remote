@@ -1,6 +1,7 @@
 """Tests for Universal Remote diagnostics."""
 
 from collections.abc import Generator
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -26,6 +27,13 @@ from custom_components.universal_remote.infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
 )
 from custom_components.universal_remote.profiles import TV_PROFILE
+from custom_components.universal_remote.protocols.nec import NEC_HANDLER
+from custom_components.universal_remote.receiver import resolve_receiver_model
+from custom_components.universal_remote.resolved import (
+    ResolvedReceiverModel,
+    resolve_remote_profile,
+)
+from custom_components.universal_remote.runtime import UniversalRemoteData
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -47,6 +55,49 @@ def mock_available_infrared_receivers() -> Generator[Mock, None, None]:
         yield mock_receivers
 
 
+def _set_default_runtime_data(entry: MockConfigEntry) -> None:
+    """Resolve the runtime models normally created during entry setup."""
+    if getattr(entry, "runtime_data", None) is not None:
+        return
+
+    stored = {
+        **entry.data,
+        **entry.options,
+    }
+    device_type = stored.get(CONF_REMOTE_DEVICE_TYPE)
+    codeset_id = stored.get(CONF_REMOTE_CODESET)
+    receiver_id = stored.get(CONF_INFRARED_RECEIVER_ID)
+
+    resolved_profile = resolve_remote_profile(
+        device_type=device_type if isinstance(device_type, str) else None,
+        codeset_id=codeset_id if isinstance(codeset_id, str) else None,
+    )
+    resolved_receiver = (
+        resolve_receiver_model(
+            codeset_id
+            if isinstance(codeset_id, str) and codeset_id
+            else NO_INFRARED_LIBRARY_CODESET
+        )
+        if isinstance(receiver_id, str) and receiver_id
+        else None
+    )
+
+    entry.runtime_data = UniversalRemoteData(
+        runtime=None,
+        resolved_profile=resolved_profile,
+        resolved_receiver=resolved_receiver,
+    )
+
+
+async def _get_diagnostics(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+) -> dict[str, Any]:
+    """Return diagnostics with setup-time runtime models available."""
+    _set_default_runtime_data(entry)
+    return await async_get_config_entry_diagnostics(hass, entry)
+
+
 async def test_diagnostics_supports_single_entry_remote(
     hass: HomeAssistant,
     infrared_emitter: str,
@@ -64,7 +115,7 @@ async def test_diagnostics_supports_single_entry_remote(
         options={CONF_REMOTE_COMMANDS: {"POWER_ON": "38000:1,2"}},
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["summary"] == {
         "remote_count": 1,
@@ -136,7 +187,7 @@ async def test_diagnostics_reports_receiver_event_metadata(
         options={CONF_REMOTE_COMMANDS: {"POWER": "38000:1,2"}},
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
     remote = diagnostics["universal_remote"]
 
     assert remote["infrared_receiver_id"] == receiver_entity_id
@@ -180,7 +231,7 @@ async def test_diagnostics_supports_receiver_only_entry(
         },
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["summary"] == {
         "remote_count": 1,
@@ -224,6 +275,120 @@ async def test_diagnostics_supports_receiver_only_entry(
     }
 
 
+async def test_diagnostics_uses_resolved_tv_profile_over_stored_generic_type(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test diagnostics reports the setup-time resolved profile."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Resolved TV",
+        data={
+            CONF_REMOTE_ID: "resolved_tv",
+            CONF_REMOTE_NAME: "Resolved TV",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "HDMI_1": "38000:1,2",
+                "POWER_ON": "38000:1,2",
+            }
+        },
+    )
+    entry.runtime_data = UniversalRemoteData(
+        runtime=None,
+        resolved_profile=resolve_remote_profile(DEVICE_TYPE_TV),
+        resolved_receiver=None,
+    )
+
+    diagnostics = await _get_diagnostics(hass, entry)
+    remote = diagnostics["universal_remote"]
+
+    assert isinstance(remote, dict)
+    assert remote["device_type"] == DEVICE_TYPE_TV
+    assert remote["media_player_expected"] is True
+    assert remote["source_count"] == 1
+
+
+async def test_diagnostics_uses_resolved_generic_profile_over_stored_tv_type(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test diagnostics does not reconstruct profile semantics from storage."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Resolved Generic",
+        data={
+            CONF_REMOTE_ID: "resolved_generic",
+            CONF_REMOTE_NAME: "Resolved Generic",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "HDMI_1": "38000:1,2",
+                "POWER_ON": "38000:1,2",
+            }
+        },
+    )
+    entry.runtime_data = UniversalRemoteData(
+        runtime=None,
+        resolved_profile=resolve_remote_profile(DEVICE_TYPE_GENERIC),
+        resolved_receiver=None,
+    )
+
+    diagnostics = await _get_diagnostics(hass, entry)
+    remote = diagnostics["universal_remote"]
+
+    assert isinstance(remote, dict)
+    assert remote["device_type"] == DEVICE_TYPE_GENERIC
+    assert remote["media_player_expected"] is False
+    assert remote["source_count"] == 0
+
+
+async def test_diagnostics_uses_resolved_receiver_model(
+    hass: HomeAssistant,
+) -> None:
+    """Test receiver diagnostics report the setup-time resolved receiver."""
+    receiver_entity_id = "infrared.test_receiver"
+    hass.states.async_set(receiver_entity_id, STATE_ON)
+
+    receiver_model = ResolvedReceiverModel(
+        codeset_id="resolved_receiver_codeset",
+        decoder_family_id="resolved_decoder",
+        handlers=(NEC_HANDLER,),
+        match_maps={},
+        event_types=("resolved_event", "unknown"),
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Resolved Receiver",
+        data={
+            CONF_REMOTE_ID: "resolved_receiver",
+            CONF_REMOTE_NAME: "Resolved Receiver",
+            CONF_INFRARED_RECEIVER_ID: receiver_entity_id,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+            CONF_REMOTE_CODESET: "stored_codeset_must_not_be_used",
+        },
+        options={CONF_REMOTE_COMMANDS: {}},
+    )
+    entry.runtime_data = UniversalRemoteData(
+        runtime=None,
+        resolved_profile=resolve_remote_profile(DEVICE_TYPE_GENERIC),
+        resolved_receiver=receiver_model,
+    )
+
+    diagnostics = await _get_diagnostics(hass, entry)
+    remote = diagnostics["universal_remote"]
+
+    assert isinstance(remote, dict)
+    assert remote["codeset"] == "resolved_receiver_codeset"
+    assert remote["receiver_decoder"] == "resolved_decoder"
+    assert remote["receiver_codeset_supported"] is True
+    assert remote["receiver_event_type_count"] == 2
+
+
 async def test_diagnostics_ignores_tv_sources_for_generic_profile(
     hass: HomeAssistant,
     infrared_emitter: str,
@@ -246,7 +411,7 @@ async def test_diagnostics_ignores_tv_sources_for_generic_profile(
         },
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
     remote = diagnostics["universal_remote"]
 
     assert remote["media_player_expected"] is False
@@ -280,7 +445,7 @@ async def test_diagnostics_source_count_matches_tv_source_map(
         },
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["universal_remote"]["source_count"] == len(TV_PROFILE.sources)
 
@@ -308,7 +473,7 @@ async def test_diagnostics_source_count_uses_normalized_source_lookup(
         },
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["universal_remote"]["source_count"] == 2
 
@@ -339,7 +504,7 @@ async def test_diagnostics_redacts_commands_from_entry_data(
         options={},
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["entry"]["data"][CONF_REMOTE_COMMANDS] == [
         "LEARNED",
@@ -368,7 +533,7 @@ async def test_diagnostics_redacts_malformed_command_storage(
         options={CONF_REMOTE_COMMANDS: raw_payload},
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["entry"]["options"][CONF_REMOTE_COMMANDS] == "<redacted>"
     assert diagnostics["universal_remote"]["command_count"] == 0
@@ -402,7 +567,7 @@ async def test_diagnostics_redacts_command_payloads(
         },
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["entry"]["options"][CONF_REMOTE_COMMANDS] == ["MUTE", "POWER_ON"]
     assert diagnostics["universal_remote"]["commands"] == ["MUTE", "POWER_ON"]
@@ -443,7 +608,7 @@ async def test_diagnostics_redacts_learned_pronto_command_payloads(
         },
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["entry"]["options"][CONF_REMOTE_COMMANDS] == ["LEARNED_POWER"]
     assert diagnostics["universal_remote"]["commands"] == ["LEARNED_POWER"]
@@ -481,7 +646,7 @@ async def test_diagnostics_reports_learning_capabilities(
         options={CONF_REMOTE_COMMANDS: {"POWER": "38000:1,2"}},
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["universal_remote"]["learning"] == {
         "receiver_configured": True,
@@ -526,7 +691,7 @@ async def test_diagnostics_reports_alternative_learning_receiver(
         options={CONF_REMOTE_COMMANDS: {"POWER": "38000:1,2"}},
     )
 
-    diagnostics = await async_get_config_entry_diagnostics(hass, entry)
+    diagnostics = await _get_diagnostics(hass, entry)
 
     assert diagnostics["summary"]["missing_infrared_receiver_count"] == 1
     assert diagnostics["universal_remote"]["learning"] == {
