@@ -56,6 +56,17 @@ def build_protocol_registry(
     for handler in handlers:
         if handler.protocol_id in handler_map:
             raise ProtocolRegistryError(f"Duplicate protocol id: {handler.protocol_id}")
+        if handler.repeat_association_timeout is not None:
+            if handler.decode_repeat is None:
+                raise ProtocolRegistryError(
+                    f"Protocol {handler.protocol_id} defines a repeat association "
+                    "timeout without a repeat decoder"
+                )
+            if handler.repeat_association_timeout <= 0:
+                raise ProtocolRegistryError(
+                    f"Protocol {handler.protocol_id} defines a non-positive repeat "
+                    "association timeout"
+                )
         handler_map[handler.protocol_id] = handler
 
     family_map: dict[str, tuple[str, ...]] = {}

@@ -83,6 +83,7 @@ class ReceiveProtocolHandler:
     learning_metadata: LearningMetadataBuilder | None = None
     repeat_event_type: str | None = None
     decode_repeat: ProtocolRepeatDecoder | None = None
+    repeat_association_timeout: float | None = None
     diagnostic_data: DiagnosticDataBuilder | None = None
 
 

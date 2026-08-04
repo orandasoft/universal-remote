@@ -1,6 +1,7 @@
 """Tests for protocol-neutral contracts and registry validation."""
 
-from typing import cast
+from collections.abc import Mapping
+from typing import Any, cast
 
 import pytest
 from homeassistant.components.infrared import InfraredReceivedSignal
@@ -13,6 +14,7 @@ from custom_components.universal_remote.protocols.base import (
     DecodedInfraredCommand,
     NormalizedInfraredCommand,
     ProtocolDecodeResult,
+    ProtocolRepeatResult,
     ReceiveProtocolHandler,
 )
 from custom_components.universal_remote.protocols.registry import (
@@ -35,6 +37,14 @@ def _normalize(
     _command: Command,
 ) -> NormalizedInfraredCommand | None:
     """Return no normalized command for registry contract tests."""
+    return None
+
+
+def _decode_repeat(
+    _signal: InfraredReceivedSignal,
+    _previous_event: Mapping[str, Any] | None,
+) -> ProtocolRepeatResult | None:
+    """Return no repeat result for registry validation tests."""
     return None
 
 
@@ -76,6 +86,7 @@ def test_normalized_command_supports_non_nec_identity() -> None:
     assert handler.learning_metadata is None
     assert handler.repeat_event_type is None
     assert handler.decode_repeat is None
+    assert handler.repeat_association_timeout is None
     assert handler.diagnostic_data is None
 
 
@@ -93,6 +104,46 @@ def test_legacy_decoded_command_match_key() -> None:
         0x09,
         None,
     )
+
+
+def test_protocol_registry_rejects_repeat_timeout_without_decoder() -> None:
+    """Test repeat association policy requires a repeat decoder."""
+    handler = ReceiveProtocolHandler(
+        protocol_id="repeat",
+        label_key="repeat",
+        learning_confidence=100,
+        decode=_decode,
+        normalize=_normalize,
+        repeat_association_timeout=0.5,
+    )
+
+    with pytest.raises(
+        ProtocolRegistryError,
+        match=(
+            "Protocol repeat defines a repeat association timeout without a repeat "
+            "decoder"
+        ),
+    ):
+        build_protocol_registry((handler,), {})
+
+
+def test_protocol_registry_rejects_non_positive_repeat_timeout() -> None:
+    """Test repeat association windows must be positive."""
+    handler = ReceiveProtocolHandler(
+        protocol_id="repeat",
+        label_key="repeat",
+        learning_confidence=100,
+        decode=_decode,
+        normalize=_normalize,
+        decode_repeat=_decode_repeat,
+        repeat_association_timeout=0,
+    )
+
+    with pytest.raises(
+        ProtocolRegistryError,
+        match="Protocol repeat defines a non-positive repeat association timeout",
+    ):
+        build_protocol_registry((handler,), {})
 
 
 def test_protocol_registry_preserves_family_order() -> None:
@@ -280,7 +331,12 @@ def test_nec_handler_optional_behaviors() -> None:
     )
 
     assert nec_protocol.NEC_HANDLER.repeat_event_type == "nec_repeat"
+    assert (
+        nec_protocol.NEC_HANDLER.repeat_association_timeout
+        == nec_protocol.NEC_REPEAT_ASSOCIATION_TIMEOUT
+    )
     assert nec_protocol.NEC1_F16_HANDLER.repeat_event_type is None
+    assert nec_protocol.NEC1_F16_HANDLER.repeat_association_timeout is None
 
     decode_repeat = nec_protocol.NEC_HANDLER.decode_repeat
     assert decode_repeat is not None

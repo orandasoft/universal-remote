@@ -53,7 +53,6 @@ EVENT_UNKNOWN = "unknown"
 
 MAX_RECEIVED_EVENT_HISTORY = 30
 TIMINGS_PREVIEW_LENGTH = 12
-NEC_REPEAT_ASSOCIATION_TIMEOUT = 0.5
 
 _DIAGNOSTIC_RESERVED_EVENT_KEYS = frozenset(
     {
@@ -210,9 +209,13 @@ class UniversalRemoteReceivedCommandEventEntity(
         """Handle an infrared signal received by the linked receiver."""
         now = monotonic()
         previous_decoded_event = self._last_decoded_event
+        repeat_association_timeout = _repeat_association_timeout(
+            self._receiver_model.handlers
+        )
         if previous_decoded_event is not None and (
             self._last_decoded_event_time is None
-            or now - self._last_decoded_event_time > NEC_REPEAT_ASSOCIATION_TIMEOUT
+            or repeat_association_timeout is None
+            or now - self._last_decoded_event_time > repeat_association_timeout
         ):
             previous_decoded_event = None
             self._last_decoded_event = None
@@ -433,6 +436,19 @@ def _decode_repeat_signal_event(
         )
 
     return None
+
+
+def _repeat_association_timeout(
+    handlers: tuple[ReceiveProtocolHandler, ...],
+) -> float | None:
+    """Return the conservative repeat-association window for handlers."""
+    timeouts = tuple(
+        handler.repeat_association_timeout
+        for handler in handlers
+        if handler.decode_repeat is not None
+        and handler.repeat_association_timeout is not None
+    )
+    return min(timeouts) if timeouts else None
 
 
 def _handlers_for_decoder(

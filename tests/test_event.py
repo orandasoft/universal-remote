@@ -172,6 +172,7 @@ def _patched_nec_protocol_handlers(
             normalize=template.normalize,
             repeat_event_type=template.repeat_event_type,
             decode_repeat=template.decode_repeat,
+            repeat_association_timeout=template.repeat_association_timeout,
             diagnostic_data=template.diagnostic_data,
         )
 
@@ -614,7 +615,7 @@ def test_received_command_event_entity_drops_stale_repeat_association() -> None:
         patch.object(
             event_platform,
             "monotonic",
-            return_value=100.0 + event_platform.NEC_REPEAT_ASSOCIATION_TIMEOUT + 0.001,
+            return_value=100.0 + nec_protocol.NEC_REPEAT_ASSOCIATION_TIMEOUT + 0.001,
         ),
         patch.object(
             event_platform,

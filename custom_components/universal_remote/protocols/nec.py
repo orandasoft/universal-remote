@@ -24,6 +24,7 @@ NEC_BIT_HIGH = 562
 NEC_ONE_LOW = 1687
 NEC_ZERO_LOW = 562
 NEC_REPEAT_TOLERANCE = 0.4
+NEC_REPEAT_ASSOCIATION_TIMEOUT = 0.5
 NEC_FULL_FRAME_TIMING_COUNT = 67
 NEC_DATA_BIT_COUNT = 32
 
@@ -387,6 +388,7 @@ NEC_HANDLER = ReceiveProtocolHandler(
     learning_metadata=_nec_learning_metadata,
     repeat_event_type="nec_repeat",
     decode_repeat=_decode_nec_repeat_result,
+    repeat_association_timeout=NEC_REPEAT_ASSOCIATION_TIMEOUT,
     diagnostic_data=_nec_diagnostic_data,
 )
 
