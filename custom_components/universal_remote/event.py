@@ -248,12 +248,12 @@ class UniversalRemoteReceivedCommandEventEntity(
         ):
             self._runtime.async_note_received_command(command_name)
 
-        self._received_event_history.appendleft(
-            {
-                "event_type": event_type,
-                **event_data,
-            }
-        )
+        history_event = {
+            "event_type": event_type,
+            **event_data,
+        }
+        history_event.pop("timings_preview", None)
+        self._received_event_history.appendleft(history_event)
         self._trigger_event(
             event_type,
             {

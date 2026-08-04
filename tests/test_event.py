@@ -452,6 +452,78 @@ def test_received_command_event_entity_handles_decoded_signal() -> None:
     write_state.assert_called_once_with()
 
 
+def test_received_command_event_history_omits_timing_previews() -> None:
+    """Test timing previews are exposed only for the current received event."""
+    entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
+        remote_id="receiver_only",
+        remote_name="Receiver only",
+        receiver_entity_id="infrared.xiao_receiver",
+        codeset_id=NO_INFRARED_LIBRARY_CODESET,
+    )
+    first_timings = [243, -10000]
+    second_timings = [300, -9000]
+
+    with (
+        patch.object(entity, "_trigger_event") as trigger_event,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
+        entity._handle_signal(_signal(first_timings))
+        entity._handle_signal(_signal(second_timings))
+
+    assert trigger_event.call_count == 2
+    assert write_state.call_count == 2
+
+    first_trigger = trigger_event.call_args_list[0]
+    second_trigger = trigger_event.call_args_list[1]
+
+    first_event_type, first_triggered_data = first_trigger.args
+    second_event_type, second_triggered_data = second_trigger.args
+
+    assert first_event_type == "unknown"
+    assert second_event_type == "unknown"
+
+    # The current event retains its short diagnostic preview.
+    assert first_triggered_data["timings_preview"] == first_timings
+    assert second_triggered_data["timings_preview"] == second_timings
+
+    first_history_event = {
+        "event_type": "unknown",
+        "codeset": NO_INFRARED_LIBRARY_CODESET,
+        "decoder": None,
+        "protocol": "unknown",
+        "decoded": False,
+        "matched": False,
+        "repeat": False,
+        "timings_count": len(first_timings),
+        "modulation": None,
+    }
+    second_history_event = {
+        "event_type": "unknown",
+        "codeset": NO_INFRARED_LIBRARY_CODESET,
+        "decoder": None,
+        "protocol": "unknown",
+        "decoded": False,
+        "matched": False,
+        "repeat": False,
+        "timings_count": len(second_timings),
+        "modulation": None,
+    }
+
+    assert first_triggered_data["recent_events"] == [first_history_event]
+    assert second_triggered_data["recent_events"] == [
+        second_history_event,
+        first_history_event,
+    ]
+    assert list(entity._received_event_history) == [
+        second_history_event,
+        first_history_event,
+    ]
+    assert all(
+        "timings_preview" not in event
+        for event in second_triggered_data["recent_events"]
+    )
+
+
 def test_received_command_event_entity_clears_last_decoded_event_on_unknown() -> None:
     """Test unknown non-repeat frames clear the last decoded command."""
     entity = event_platform.UniversalRemoteReceivedCommandEventEntity(
