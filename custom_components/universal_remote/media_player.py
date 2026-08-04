@@ -19,10 +19,8 @@ from homeassistant.helpers.event import async_track_state_change_event
 from .const import (
     CONF_INFRARED_EMITTER_ID,
     CONF_REMOTE_COMMANDS,
-    CONF_REMOTE_DEVICE_TYPE,
     CONF_REMOTE_ID,
     CONF_REMOTE_NAME,
-    DEVICE_TYPE_GENERIC,
     DOMAIN,
 )
 from .helpers import (
@@ -35,7 +33,6 @@ from .helpers import (
     universal_remotes_from_config_entry,
 )
 from .profiles import (
-    PROFILE_REGISTRY,
     TV_PROFILE,
     DeviceProfile,
     profile_role_commands,
@@ -87,11 +84,12 @@ async def async_setup_entry(
     entities: list[UniversalRemoteTvMediaPlayer] = []
     expected_unique_ids: set[str] = set()
 
-    runtime = entry.runtime_data.runtime
+    runtime_data = entry.runtime_data
+    runtime = runtime_data.runtime
+    resolved_profile = runtime_data.resolved_profile
+    profile = resolved_profile.profile if resolved_profile is not None else None
 
     for remote in universal_remotes_from_config_entry(entry):
-        device_type = str(remote.get(CONF_REMOTE_DEVICE_TYPE, DEVICE_TYPE_GENERIC))
-        profile = PROFILE_REGISTRY.profile_for_device_type(device_type)
         if profile is None or not profile.supports_entity(MEDIA_PLAYER_DOMAIN):
             continue
 

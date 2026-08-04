@@ -10,7 +10,6 @@ from homeassistant.components.media_player import (
     MediaPlayerEntityFeature,
     MediaPlayerState,
 )
-from custom_components.universal_remote import media_player as media_player_module
 from custom_components.universal_remote.const import (
     CONF_COMMAND_CREATE_BUTTON,
     CONF_COMMAND_DATA,
@@ -34,9 +33,9 @@ from custom_components.universal_remote.profiles import (
     CommandRole,
     DeviceProfile,
     SourceRule,
-    build_profile_registry,
 )
 from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
+from custom_components.universal_remote.resolved import ResolvedRemoteProfile
 from custom_components.universal_remote.runtime import (
     UniversalRemoteData,
     UniversalRemoteRuntime,
@@ -206,11 +205,10 @@ async def test_async_setup_entry_skips_generic_remote(
     assert entity_id is None
 
 
-async def test_async_setup_entry_uses_registered_profile(
+async def test_async_setup_entry_uses_resolved_profile(
     hass: HomeAssistant,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test a registered media-player profile drives entity creation."""
+    """Test the resolved profile drives media-player entity creation."""
     profile = DeviceProfile(
         profile_id="custom",
         device_type="custom",
@@ -221,40 +219,33 @@ async def test_async_setup_entry_uses_registered_profile(
         ),
         sources=(SourceRule("Aux", ("AUX",)),),
     )
-    monkeypatch.setattr(
-        media_player_module,
-        "PROFILE_REGISTRY",
-        build_profile_registry((profile,)),
-    )
-
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={},
         options={},
     )
     entry.runtime_data = UniversalRemoteData(
-        runtime=UniversalRemoteRuntime(
-            hass=hass,
-            infrared_emitter_id="infrared.test_ir",
-            commands={
-                "LOUDER": RAW_COMMAND,
-                "SOFTER": RAW_COMMAND,
-                "AUX": RAW_COMMAND,
-            },
-        )
+        runtime=None,
+        resolved_profile=ResolvedRemoteProfile(
+            profile=profile,
+            codeset=None,
+            capabilities=(),
+        ),
+        resolved_receiver=None,
     )
     entry.add_to_hass(hass)
     async_add_entities = Mock()
 
-    monkeypatch.setattr(
-        media_player_module,
+    with patch(
+        "custom_components.universal_remote.media_player."
         "universal_remotes_from_config_entry",
-        lambda _entry: [
+        return_value=[
             {
                 CONF_REMOTE_ID: REMOTE_ID,
                 CONF_REMOTE_NAME: REMOTE_NAME,
                 CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
-                CONF_REMOTE_DEVICE_TYPE: "custom",
+                # Deliberately conflicts with the resolved custom profile.
+                CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
                 CONF_REMOTE_COMMANDS: {
                     "LOUDER": _command_object(RAW_COMMAND),
                     "SOFTER": _command_object(RAW_COMMAND),
@@ -262,13 +253,12 @@ async def test_async_setup_entry_uses_registered_profile(
                 },
             }
         ],
-    )
-
-    await media_player_module.async_setup_entry(
-        hass,
-        entry,
-        async_add_entities,
-    )
+    ):
+        await async_setup_entry(
+            hass,
+            entry,
+            async_add_entities,
+        )
 
     async_add_entities.assert_called_once()
     entities = async_add_entities.call_args.args[0]
