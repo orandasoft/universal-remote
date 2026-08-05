@@ -110,6 +110,59 @@ def test_command_category(command_name: str, expected_category: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("command_name", "expected_label", "expected_icon", "expected_category"),
+    [
+        (
+            "hdmi 1",
+            "HDMI 1",
+            "mdi:video-input-hdmi",
+            COMMAND_CATEGORY_INPUT,
+        ),
+        (
+            "hdmi-1",
+            "HDMI 1",
+            "mdi:video-input-hdmi",
+            COMMAND_CATEGORY_INPUT,
+        ),
+        (
+            "volume up",
+            "Volume Up",
+            "mdi:volume-plus",
+            COMMAND_CATEGORY_VOLUME,
+        ),
+        (
+            "amazon-prime",
+            "Amazon Prime",
+            "mdi:remote",
+            COMMAND_CATEGORY_OTHER,
+        ),
+        (
+            "nav-left",
+            "Nav Left",
+            "mdi:arrow-left",
+            COMMAND_CATEGORY_NAVIGATION,
+        ),
+        (
+            "cs4k num 1",
+            "CS4K Number 1",
+            "mdi:numeric-1",
+            COMMAND_CATEGORY_NUMERIC,
+        ),
+    ],
+)
+def test_command_presentation_uses_authoritative_normalization(
+    command_name: str,
+    expected_label: str,
+    expected_icon: str,
+    expected_category: str,
+) -> None:
+    """Test all command presentation helpers share command normalization."""
+    assert command_label(command_name) == expected_label
+    assert command_icon(command_name) == expected_icon
+    assert command_category(command_name) == expected_category
+
+
+@pytest.mark.parametrize(
     ("command_name", "expected"),
     [
         ("HDMI_1", True),

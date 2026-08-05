@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 
+from ..command_names import normalize_command_name
+
 
 @dataclass(frozen=True, slots=True)
 class CommandRole:
@@ -86,7 +88,7 @@ class DeviceProfile:
 
     def presentation(self, command_name: str) -> CommandPresentation | None:
         """Return a command-specific presentation override."""
-        return self.presentation_overrides.get(command_name.upper())
+        return self.presentation_overrides.get(normalize_command_name(command_name))
 
     def supports_entity(self, domain: str) -> bool:
         """Return whether this profile enables an entity domain."""

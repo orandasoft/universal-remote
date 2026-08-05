@@ -6,6 +6,7 @@ from collections.abc import Mapping
 import re
 from typing import TYPE_CHECKING, Any, Final
 
+from .command_names import normalize_command_name
 from .profiles import (
     TV_PROFILE,
     CommandPresentation,
@@ -185,7 +186,7 @@ def command_icon(
     if presentation is not None and presentation.icon is not None:
         return presentation.icon
 
-    normalized = command_name.upper()
+    normalized = normalize_command_name(command_name)
     if normalized in _COMMAND_ICONS:
         return _COMMAND_ICONS[normalized]
 
@@ -211,7 +212,7 @@ def command_label(
     if presentation is not None and presentation.label is not None:
         return presentation.label
 
-    normalized = command_name.strip().upper()
+    normalized = normalize_command_name(command_name)
 
     if match := _PREFIXED_NUMBER_COMMAND_RE.fullmatch(normalized):
         prefix = " ".join(
@@ -241,7 +242,7 @@ def command_category(
     if presentation is not None and presentation.category is not None:
         return presentation.category
 
-    normalized = command_name.upper()
+    normalized = normalize_command_name(command_name)
 
     if normalized.startswith("POWER") or normalized == "TOGGLE":
         return COMMAND_CATEGORY_POWER

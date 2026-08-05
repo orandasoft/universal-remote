@@ -125,6 +125,28 @@ def test_profile_presentation_overrides_are_immutable() -> None:
         mutable_overrides["OTHER"] = CommandPresentation()
 
 
+@pytest.mark.parametrize(
+    "command_name",
+    ("special command", "special-command", " SPECIAL_COMMAND "),
+)
+def test_profile_presentation_uses_authoritative_normalization(
+    command_name: str,
+) -> None:
+    """Test profile overrides use shared command-name normalization."""
+    presentation = CommandPresentation(
+        label="Special command",
+        icon="mdi:star",
+        category="other",
+    )
+    profile = DeviceProfile(
+        profile_id="presentation",
+        device_type="presentation",
+        presentation_overrides={"SPECIAL_COMMAND": presentation},
+    )
+
+    assert profile.presentation(command_name) is presentation
+
+
 def test_profile_command_resolution_preserves_profile_order() -> None:
     """Test role and source resolution follows profile declaration order."""
     profile = DeviceProfile(
