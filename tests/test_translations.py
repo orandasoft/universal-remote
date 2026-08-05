@@ -88,9 +88,7 @@ def test_fixed_entity_names_use_translation_keys() -> None:
     event_entity = UniversalRemoteReceivedCommandEventEntity.__new__(
         UniversalRemoteReceivedCommandEventEntity
     )
-    tuner_entity = UniversalRemoteTunerSelect.__new__(
-        UniversalRemoteTunerSelect
-    )
+    tuner_entity = UniversalRemoteTunerSelect.__new__(UniversalRemoteTunerSelect)
 
     assert event_entity.translation_key == "received_command"
     assert strings["entity"]["event"]["received_command"]["name"] == (

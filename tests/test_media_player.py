@@ -357,8 +357,7 @@ async def test_media_player_commands_send_infrared_command(
 
     with (
         patch(
-            "custom_components.universal_remote.runtime."
-            "async_send_infrared_command",
+            "custom_components.universal_remote.runtime.async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
         patch.object(entity, "async_write_ha_state") as write_state,
@@ -381,8 +380,7 @@ async def test_media_player_role_actions_send_infrared_command(
 
     with (
         patch(
-            "custom_components.universal_remote.runtime."
-            "async_send_infrared_command",
+            "custom_components.universal_remote.runtime.async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
         patch.object(entity, "async_write_ha_state") as write_state,
@@ -414,8 +412,7 @@ async def test_media_player_mute_tracks_desired_assumed_state(
 
     with (
         patch(
-            "custom_components.universal_remote.runtime."
-            "async_send_infrared_command",
+            "custom_components.universal_remote.runtime.async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
         patch.object(entity, "async_write_ha_state") as write_state,
@@ -450,8 +447,7 @@ async def test_media_player_mute_state_changes_only_after_successful_send(
 
     with (
         patch(
-            "custom_components.universal_remote.runtime."
-            "async_send_infrared_command",
+            "custom_components.universal_remote.runtime.async_send_infrared_command",
             AsyncMock(side_effect=RuntimeError("send failed")),
         ),
         patch.object(entity, "async_write_ha_state") as write_state,
@@ -472,8 +468,7 @@ async def test_media_player_turn_on_and_off_update_assumed_state(
 
     with (
         patch(
-            "custom_components.universal_remote.runtime."
-            "async_send_infrared_command",
+            "custom_components.universal_remote.runtime.async_send_infrared_command",
             AsyncMock(),
         ),
         patch.object(entity, "async_write_ha_state") as write_state,
@@ -569,8 +564,7 @@ async def test_media_player_cs4k_source_is_supported(
 
     with (
         patch(
-            "custom_components.universal_remote.runtime."
-            "async_send_infrared_command",
+            "custom_components.universal_remote.runtime.async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
         patch.object(entity, "async_write_ha_state") as write_state,

@@ -12,9 +12,6 @@
   "integration_type": "device",
   "iot_class": "assumed_state",
   "issue_tracker": "https://github.com/orandasoft/universal-remote/issues",
-  "loggers": [
-    "custom_components.universal_remote"
-  ],
   "requirements": [
     "infrared-protocols==8.2.0"
   ],

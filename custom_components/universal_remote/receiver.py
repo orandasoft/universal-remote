@@ -118,8 +118,7 @@ def _library_member_to_command(member: Enum) -> Command | None:
         call_signature = signature(to_command)
     except (TypeError, ValueError):
         _LOGGER.debug(
-            "Infrared library command %s does not expose an inspectable "
-            "to_command",
+            "Infrared library command %s does not expose an inspectable to_command",
             member.name,
         )
         return None
