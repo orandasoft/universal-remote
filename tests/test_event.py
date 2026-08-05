@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock, patch
 
+import pytest
 from homeassistant.components.infrared import InfraredReceivedSignal
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -91,6 +92,28 @@ class BadToCommandCode(Enum):
         """Return a fake command object."""
         address, command = self.value
         return cast(Command, FakeCommand(address + required, command))
+
+
+class CollidingCode(Enum):
+    """Fake library codes whose commands normalize to one identity."""
+
+    POWER = (1, 2, "power")
+    MUTE = (1, 2, "mute")
+
+    def to_command(self) -> Command:
+        """Return a fake command object."""
+        address, command, _name = self.value
+        return cast(Command, FakeCommand(address, command))
+
+
+class InternalTypeErrorCode(Enum):
+    """Fake library code whose command generation fails internally."""
+
+    POWER = (1, 2)
+
+    def to_command(self) -> Command:
+        """Raise an internal command-generation error."""
+        raise TypeError("command generation failed")
 
 
 class NotEnum:
@@ -769,6 +792,79 @@ def test_event_types_for_codeset() -> None:
             "unknown",
             "volume_up",
         ]
+
+
+@pytest.mark.parametrize(
+    "enum_cls",
+    [BrokenCode, BadToCommandCode],
+)
+def test_event_types_omit_unusable_library_commands(
+    enum_cls: type[Enum],
+) -> None:
+    """Test event types include only commands that can actually match."""
+    with patch.object(receiver_module, "_load_codeset_enum", return_value=enum_cls):
+        assert receiver_module.receiver_event_types_for_codeset("lg_tv") == [
+            "nec",
+            "nec1_f16",
+            "nec_repeat",
+            "unknown",
+        ]
+
+
+def test_receiver_model_logs_ambiguous_command_identity() -> None:
+    """Test normalized identity collisions are visible and deterministic."""
+    with (
+        patch.object(
+            receiver_module,
+            "_load_codeset_enum",
+            return_value=CollidingCode,
+        ),
+        patch.object(receiver_module._LOGGER, "warning") as warning,
+    ):
+        model = receiver_module.resolve_receiver_model("lg_tv")
+
+    assert list(model.match_map_for_protocol("nec").values()) == ["POWER"]
+    assert "power" in model.event_types
+    assert "mute" not in model.event_types
+    warning.assert_called_once_with(
+        "Infrared library codeset %s commands %s and %s share the same "
+        "%s identity; retaining %s",
+        "CollidingCode",
+        "POWER",
+        "MUTE",
+        "nec",
+        "POWER",
+    )
+
+
+def test_library_member_to_command_logs_internal_type_error() -> None:
+    """Test internal to_command errors are logged instead of misclassified."""
+    with patch.object(receiver_module._LOGGER, "warning") as warning:
+        assert (
+            receiver_module._library_member_to_command(InternalTypeErrorCode.POWER)
+            is None
+        )
+
+    warning.assert_called_once()
+    message, command_name, error = warning.call_args.args
+    assert message == "Infrared library command %s failed during to_command: %s"
+    assert command_name == "POWER"
+    assert isinstance(error, TypeError)
+    assert str(error) == "command generation failed"
+
+
+def test_library_member_to_command_ignores_uninspectable_signature() -> None:
+    """Test uninspectable command factories are ignored safely."""
+    with (
+        patch.object(receiver_module, "signature", side_effect=ValueError),
+        patch.object(receiver_module._LOGGER, "debug") as debug,
+    ):
+        assert receiver_module._library_member_to_command(FakeCode.POWER) is None
+
+    debug.assert_called_once_with(
+        "Infrared library command %s does not expose an inspectable to_command",
+        "POWER",
+    )
 
 
 def test_event_types_for_unknown_codeset() -> None:

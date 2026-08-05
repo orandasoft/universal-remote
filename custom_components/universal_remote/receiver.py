@@ -2,6 +2,7 @@
 
 from enum import Enum
 from importlib import import_module
+from inspect import signature
 import logging
 from typing import cast
 
@@ -47,11 +48,15 @@ def resolve_receiver_model(codeset_id: str) -> ResolvedReceiverModel:
 
         enum_cls = _load_codeset_enum(codeset_id)
         if enum_cls is not None:
-            event_types.update(command_event_type(member.name) for member in enum_cls)
             match_maps = {
                 handler.protocol_id: _build_codeset_match_map(enum_cls, handler)
                 for handler in handlers
             }
+            event_types.update(
+                command_event_type(command_name)
+                for match_map in match_maps.values()
+                for command_name in match_map.values()
+            )
 
     return ResolvedReceiverModel(
         codeset_id=codeset_id,
@@ -84,7 +89,21 @@ def _build_codeset_match_map(
         if normalized_command is None:
             continue
 
-        match_map.setdefault(normalized_command.match_key, member.name)
+        existing_command_name = match_map.get(normalized_command.match_key)
+        if existing_command_name is None:
+            match_map[normalized_command.match_key] = member.name
+            continue
+
+        if existing_command_name != member.name:
+            _LOGGER.warning(
+                "Infrared library codeset %s commands %s and %s share the same "
+                "%s identity; retaining %s",
+                enum_cls.__name__,
+                existing_command_name,
+                member.name,
+                handler.protocol_id,
+                existing_command_name,
+            )
 
     return match_map
 
@@ -96,16 +115,39 @@ def _library_member_to_command(member: Enum) -> Command | None:
         return None
 
     try:
-        return cast(Command, to_command())
+        call_signature = signature(to_command)
+    except (TypeError, ValueError):
+        _LOGGER.debug(
+            "Infrared library command %s does not expose an inspectable "
+            "to_command",
+            member.name,
+        )
+        return None
+
+    call_kwargs: dict[str, int] = {}
+    try:
+        call_signature.bind()
     except TypeError:
         try:
-            return cast(Command, to_command(repeat_count=0))
+            call_signature.bind(repeat_count=0)
         except TypeError:
             _LOGGER.debug(
                 "Infrared library command %s does not expose a usable to_command",
                 member.name,
             )
             return None
+
+        call_kwargs["repeat_count"] = 0
+
+    try:
+        return cast(Command, to_command(**call_kwargs))
+    except TypeError as err:
+        _LOGGER.warning(
+            "Infrared library command %s failed during to_command: %s",
+            member.name,
+            err,
+        )
+        return None
 
 
 def _load_codeset_enum(codeset_id: str) -> type[Enum] | None:
