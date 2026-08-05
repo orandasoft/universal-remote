@@ -10,10 +10,10 @@ from .const import (
     CONF_REMOTE_COMMANDS,
     CONF_REMOTE_DEVICE_TYPE,
 )
-from .receiver import resolve_receiver_model
 from .helpers import normalize_command_mapping, universal_remote_from_config_entry_data
 from .infrared_library import NO_INFRARED_LIBRARY_CODESET
 from .profiles import CAPABILITY_JAPANESE_TUNER, TunerCapability
+from .receiver import resolve_receiver_model
 from .resolved import resolve_remote_profile
 from .runtime import (
     UniversalRemoteConfigEntry,
@@ -35,7 +35,7 @@ async def async_setup_entry(
     entry: UniversalRemoteConfigEntry,
 ) -> bool:
     """Set up Universal Remote from a config entry."""
-    entry.runtime_data = _runtime_data_from_config_entry(hass, entry)
+    entry.runtime_data = await _async_runtime_data_from_config_entry(hass, entry)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -57,7 +57,7 @@ async def _async_update_listener(
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-def _runtime_data_from_config_entry(
+async def _async_runtime_data_from_config_entry(
     hass: HomeAssistant,
     entry: UniversalRemoteConfigEntry,
 ) -> UniversalRemoteData:
@@ -82,10 +82,14 @@ def _runtime_data_from_config_entry(
 
         infrared_receiver_id = remote.get(CONF_INFRARED_RECEIVER_ID)
         if isinstance(infrared_receiver_id, str) and infrared_receiver_id:
-            resolved_receiver = resolve_receiver_model(
+            receiver_codeset_id = (
                 codeset_id
                 if isinstance(codeset_id, str) and codeset_id
                 else NO_INFRARED_LIBRARY_CODESET
+            )
+            resolved_receiver = await hass.async_add_executor_job(
+                resolve_receiver_model,
+                receiver_codeset_id,
             )
 
         tuner_capability = None

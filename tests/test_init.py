@@ -1,6 +1,6 @@
 """Tests for Universal Remote integration setup."""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from custom_components.universal_remote import _async_update_listener
 from custom_components.universal_remote.const import (
@@ -14,6 +14,8 @@ from custom_components.universal_remote.const import (
     DEVICE_TYPE_TV,
     DOMAIN,
 )
+from custom_components.universal_remote.receiver import resolve_receiver_model
+from custom_components.universal_remote.resolved import ResolvedReceiverModel
 from custom_components.universal_remote.runtime import (
     UniversalRemoteData,
     UniversalRemoteRuntime,
@@ -71,6 +73,66 @@ async def test_setup_and_unload_entry(
 
     mock_forward.assert_called_once_with(config_entry, PLATFORMS)
     mock_unload.assert_called_once_with(config_entry, PLATFORMS)
+
+
+async def test_setup_resolves_receiver_model_in_executor(
+    hass: HomeAssistant,
+) -> None:
+    """Test setup resolves receiver bindings outside the event loop."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Receiver Remote",
+        data={
+            CONF_REMOTE_ID: "receiver_remote",
+            CONF_REMOTE_NAME: "Receiver Remote",
+            CONF_INFRARED_RECEIVER_ID: "infrared.test_receiver",
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_TV,
+            CONF_REMOTE_CODESET: "lg_tv",
+        },
+        options={},
+        unique_id="receiver_remote",
+    )
+    entry.add_to_hass(hass)
+
+    resolved_receiver = ResolvedReceiverModel(
+        codeset_id="lg_tv",
+        decoder_family_id="nec",
+        handlers=(),
+        match_maps={},
+        event_types=("unknown",),
+    )
+    original_executor_job = hass.async_add_executor_job
+
+    async def async_add_executor_job(target, *args):
+        """Resolve the receiver model while preserving other executor jobs."""
+        if target is resolve_receiver_model:
+            return resolved_receiver
+        return await original_executor_job(target, *args)
+
+    executor_job = AsyncMock(side_effect=async_add_executor_job)
+
+    with (
+        patch.object(
+            hass,
+            "async_add_executor_job",
+            executor_job,
+        ),
+        patch.object(
+            hass.config_entries,
+            "async_forward_entry_setups",
+            return_value=True,
+        ),
+    ):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+
+    receiver_resolution_calls = [
+        call
+        for call in executor_job.await_args_list
+        if call.args == (resolve_receiver_model, "lg_tv")
+    ]
+    assert len(receiver_resolution_calls) == 1
+    assert _runtime_data(entry).resolved_receiver is resolved_receiver
 
 
 async def test_setup_creates_runtime_for_empty_command_map(
