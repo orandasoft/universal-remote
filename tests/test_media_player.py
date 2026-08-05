@@ -353,10 +353,14 @@ async def test_media_player_role_actions_send_infrared_command(
     """Test media-player role actions send their mapped commands."""
     entity = _media_player_entity(hass, infrared_emitter)
 
-    with patch(
-        "custom_components.universal_remote.media_player.async_send_infrared_command",
-        AsyncMock(),
-    ) as mock_send:
+    with (
+        patch(
+            "custom_components.universal_remote.media_player."
+            "async_send_infrared_command",
+            AsyncMock(),
+        ) as mock_send,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
         await entity.async_volume_down()
         await entity.async_mute_volume(True)
         await entity.async_media_next_track()
@@ -370,6 +374,67 @@ async def test_media_player_role_actions_send_infrared_command(
         call_args.args == (hass, infrared_emitter, RAW_COMMAND)
         for call_args in mock_send.await_args_list
     )
+    write_state.assert_called_once()
+
+
+async def test_media_player_mute_tracks_desired_assumed_state(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test mute sends only when the requested assumed state changes."""
+    entity = _media_player_entity(hass, infrared_emitter)
+
+    assert entity.is_volume_muted is False
+
+    with (
+        patch(
+            "custom_components.universal_remote.media_player."
+            "async_send_infrared_command",
+            AsyncMock(),
+        ) as mock_send,
+        patch.object(entity, "async_write_ha_state") as write_state,
+    ):
+        await entity.async_mute_volume(True)
+        assert entity.is_volume_muted is True
+        assert mock_send.await_count == 1
+        assert write_state.call_count == 1
+
+        await entity.async_mute_volume(True)
+        assert entity.is_volume_muted is True
+        assert mock_send.await_count == 1
+        assert write_state.call_count == 1
+
+        await entity.async_mute_volume(False)
+
+    assert entity.is_volume_muted is False
+    assert mock_send.await_count == 2
+    assert all(
+        call_args.args == (hass, infrared_emitter, RAW_COMMAND)
+        for call_args in mock_send.await_args_list
+    )
+    assert write_state.call_count == 2
+
+
+async def test_media_player_mute_state_changes_only_after_successful_send(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test a failed mute send does not change the assumed state."""
+    entity = _media_player_entity(hass, infrared_emitter)
+
+    with (
+        patch(
+            "custom_components.universal_remote.media_player."
+            "async_send_infrared_command",
+            AsyncMock(side_effect=RuntimeError("send failed")),
+        ),
+        patch.object(entity, "async_write_ha_state") as write_state,
+        pytest.raises(RuntimeError, match="send failed"),
+    ):
+        await entity.async_mute_volume(True)
+
+    assert entity.is_volume_muted is False
+    write_state.assert_not_called()
 
 
 async def test_media_player_turn_on_and_off_update_assumed_state(

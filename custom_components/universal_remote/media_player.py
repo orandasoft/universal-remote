@@ -136,6 +136,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
     _attr_name = None
     _attr_should_poll = False
     _attr_state = MediaPlayerState.ON
+    _attr_is_volume_muted = False
 
     def __init__(
         self,
@@ -244,8 +245,13 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         await self._send_role("volume_down")
 
     async def async_mute_volume(self, mute: bool) -> None:
-        """Send mute command."""
+        """Set the assumed mute state."""
+        if self._attr_is_volume_muted == mute:
+            return
+
         await self._send_role("mute")
+        self._attr_is_volume_muted = mute
+        self.async_write_ha_state()
 
     async def async_media_next_track(self) -> None:
         """Send channel up command."""
