@@ -96,7 +96,7 @@ class UniversalRemoteTunerSelect(SelectEntity):
     """Select entity exposing assumed tuner state."""
 
     _attr_has_entity_name = True
-    _attr_name = "Tuner"
+    _attr_translation_key = "tuner"
     _attr_should_poll = False
 
     def __init__(

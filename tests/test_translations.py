@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from custom_components.universal_remote.event import (
+    UniversalRemoteReceivedCommandEventEntity,
+)
 from custom_components.universal_remote.options_flow import (
     LEARN_REVIEW_ACTION_CONTINUE_SAVE,
     LEARN_REVIEW_ACTION_DISCARD,
@@ -12,6 +15,7 @@ from custom_components.universal_remote.options_flow import (
     LEARN_REVIEW_ACTION_TEST_CAPTURED,
     LEARN_REVIEW_ACTION_TEST_NORMALIZED,
 )
+from custom_components.universal_remote.select import UniversalRemoteTunerSelect
 
 _INTEGRATION_DIR = Path(__file__).parents[1] / "custom_components" / "universal_remote"
 
@@ -75,3 +79,23 @@ def test_learn_review_menu_translations_are_complete() -> None:
     assert set(step["menu_option_descriptions"]) == expected_actions
     assert all(step["menu_options"][action] for action in expected_actions)
     assert all(step["menu_option_descriptions"][action] for action in expected_actions)
+
+
+def test_fixed_entity_names_use_translation_keys() -> None:
+    """Test fixed entity names are provided through entity translations."""
+    strings = _translation("strings.json")
+
+    event_entity = UniversalRemoteReceivedCommandEventEntity.__new__(
+        UniversalRemoteReceivedCommandEventEntity
+    )
+    tuner_entity = UniversalRemoteTunerSelect.__new__(
+        UniversalRemoteTunerSelect
+    )
+
+    assert event_entity.translation_key == "received_command"
+    assert strings["entity"]["event"]["received_command"]["name"] == (
+        "Received command"
+    )
+
+    assert tuner_entity.translation_key == "tuner"
+    assert strings["entity"]["select"]["tuner"]["name"] == "Tuner"

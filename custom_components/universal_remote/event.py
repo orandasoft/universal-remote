@@ -149,7 +149,7 @@ class UniversalRemoteReceivedCommandEventEntity(
     """Event entity for commands received by an infrared receiver."""
 
     _attr_has_entity_name = True
-    _attr_name = "Received command"
+    _attr_translation_key = "received_command"
 
     def __init__(
         self,
