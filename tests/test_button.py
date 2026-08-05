@@ -2,6 +2,8 @@
 
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+import pytest
+
 from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
 from custom_components.universal_remote.runtime import (
     UniversalRemoteData,
@@ -134,11 +136,16 @@ async def test_button_availability_tracks_infrared_state(
     infrared_emitter: str,
 ) -> None:
     """Test command button availability follows the linked infrared entity."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"POWER_ON": RAW_COMMAND},
+    )
     entity = UniversalRemoteButton(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
         infrared_emitter_id=infrared_emitter,
-        runtime=None,
+        runtime=runtime,
         unique_id="entry_button_living_room_tv_power_on",
         description=UniversalRemoteButtonEntityDescription(
             key="power_on",
@@ -235,13 +242,21 @@ async def test_async_setup_entry_skips_button_command_without_payload(
     )
 
 
-def test_button_available_without_hass_returns_true(infrared_emitter: str) -> None:
+def test_button_available_without_hass_returns_true(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
     """Test a button is available before Home Assistant is attached."""
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"POWER_ON": RAW_COMMAND},
+    )
     entity = UniversalRemoteButton(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
         infrared_emitter_id=infrared_emitter,
-        runtime=None,
+        runtime=runtime,
         unique_id="entry_button_living_room_tv_power_on",
         description=UniversalRemoteButtonEntityDescription(
             key="power_on",
@@ -398,24 +413,38 @@ async def test_button_num_overlays_after_runtime_tuner_selected(
     ]
 
 
-async def test_button_press_without_runtime_does_nothing(
+async def test_async_setup_entry_rejects_emitter_remote_without_runtime(
     hass: HomeAssistant,
     infrared_emitter: str,
 ) -> None:
-    """Test defensive no-op when a button has no runtime."""
-    entity = UniversalRemoteButton(
-        remote_id=REMOTE_ID,
-        remote_name=REMOTE_NAME,
-        infrared_emitter_id=infrared_emitter,
-        runtime=None,
-        unique_id=button_unique_id("entry", REMOTE_ID, "POWER"),
-        description=UniversalRemoteButtonEntityDescription(
-            key="power",
-            name="Power",
-            command_name="POWER",
-            command_data=RAW_COMMAND,
-        ),
+    """Test emitter-backed button setup requires a resolved runtime."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        options={},
     )
-    entity.hass = hass
+    entry.runtime_data = UniversalRemoteData(runtime=None)
+    entry.add_to_hass(hass)
+    async_add_entities = Mock()
 
-    await entity.async_press()
+    with (
+        patch(
+            "custom_components.universal_remote.button."
+            "universal_remotes_from_config_entry",
+            return_value=[
+                {
+                    CONF_REMOTE_ID: REMOTE_ID,
+                    CONF_REMOTE_NAME: REMOTE_NAME,
+                    CONF_INFRARED_EMITTER_ID: infrared_emitter,
+                    CONF_REMOTE_COMMANDS: {
+                        "POWER": _command_object(
+                            RAW_COMMAND,
+                            create_button=True,
+                        ),
+                    },
+                }
+            ],
+        ),
+        pytest.raises(AssertionError),
+    ):
+        await async_setup_entry(hass, entry, async_add_entities)

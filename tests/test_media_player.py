@@ -29,7 +29,9 @@ from custom_components.universal_remote.media_player import (
     cleanup_stale_media_player_entities,
     media_player_unique_id,
 )
+from custom_components.universal_remote.helpers import normalize_command_mapping
 from custom_components.universal_remote.profiles import (
+    TV_PROFILE,
     CommandRole,
     DeviceProfile,
     SourceRule,
@@ -102,42 +104,57 @@ def _media_player_entity(
     commands: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> UniversalRemoteTvMediaPlayer:
     """Create a media player entity for behavior tests."""
+    configured_commands = commands or {
+        "POWER_ON": _command_object(RAW_COMMAND),
+        "POWER_OFF": _command_object(RAW_COMMAND),
+        "VOLUME_UP": _command_object(RAW_COMMAND),
+        "VOLUME_DOWN": _command_object(RAW_COMMAND),
+        "MUTE": _command_object(RAW_COMMAND),
+        "CHANNEL_UP": _command_object(RAW_COMMAND),
+        "CHANNEL_DOWN": _command_object(RAW_COMMAND),
+        "PLAY": _command_object(RAW_COMMAND),
+        "PAUSE": _command_object(RAW_COMMAND),
+        "STOP": _command_object(RAW_COMMAND),
+        "HDMI_1": _command_object(RAW_COMMAND),
+        "INPUT": _command_object(RAW_COMMAND),
+        "NETFLIX": _command_object(RAW_COMMAND),
+    }
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands=normalize_command_mapping(configured_commands),
+    )
     entity = UniversalRemoteTvMediaPlayer(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
         infrared_emitter_id=infrared_emitter,
-        commands=commands
-        or {
-            "POWER_ON": _command_object(RAW_COMMAND),
-            "POWER_OFF": _command_object(RAW_COMMAND),
-            "VOLUME_UP": _command_object(RAW_COMMAND),
-            "VOLUME_DOWN": _command_object(RAW_COMMAND),
-            "MUTE": _command_object(RAW_COMMAND),
-            "CHANNEL_UP": _command_object(RAW_COMMAND),
-            "CHANNEL_DOWN": _command_object(RAW_COMMAND),
-            "PLAY": _command_object(RAW_COMMAND),
-            "PAUSE": _command_object(RAW_COMMAND),
-            "STOP": _command_object(RAW_COMMAND),
-            "HDMI_1": _command_object(RAW_COMMAND),
-            "INPUT": _command_object(RAW_COMMAND),
-            "NETFLIX": _command_object(RAW_COMMAND),
-        },
+        commands=configured_commands,
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
+        runtime=runtime,
     )
     entity.hass = hass
     return entity
 
 
 def _media_player_entity_without_hass(
+    hass: HomeAssistant,
     infrared_emitter: str,
 ) -> UniversalRemoteTvMediaPlayer:
     """Create a media player entity that has not been added to Home Assistant."""
+    commands = {"POWER_ON": _command_object(RAW_COMMAND)}
     return UniversalRemoteTvMediaPlayer(
         remote_id=REMOTE_ID,
         remote_name=REMOTE_NAME,
         infrared_emitter_id=infrared_emitter,
-        commands={"POWER_ON": _command_object(RAW_COMMAND)},
+        commands=commands,
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
+        runtime=UniversalRemoteRuntime(
+            hass=hass,
+            infrared_emitter_id=infrared_emitter,
+            commands=normalize_command_mapping(commands),
+        ),
     )
 
 
@@ -224,8 +241,17 @@ async def test_async_setup_entry_uses_resolved_profile(
         data={},
         options={},
     )
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id="infrared.test_ir",
+        commands={
+            "LOUDER": RAW_COMMAND,
+            "SOFTER": RAW_COMMAND,
+            "AUX": RAW_COMMAND,
+        },
+    )
     entry.runtime_data = UniversalRemoteData(
-        runtime=None,
+        runtime=runtime,
         resolved_profile=ResolvedRemoteProfile(
             profile=profile,
             codeset=None,
@@ -331,7 +357,7 @@ async def test_media_player_commands_send_infrared_command(
 
     with (
         patch(
-            "custom_components.universal_remote.media_player."
+            "custom_components.universal_remote.runtime."
             "async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
@@ -355,7 +381,7 @@ async def test_media_player_role_actions_send_infrared_command(
 
     with (
         patch(
-            "custom_components.universal_remote.media_player."
+            "custom_components.universal_remote.runtime."
             "async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
@@ -388,7 +414,7 @@ async def test_media_player_mute_tracks_desired_assumed_state(
 
     with (
         patch(
-            "custom_components.universal_remote.media_player."
+            "custom_components.universal_remote.runtime."
             "async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
@@ -424,7 +450,7 @@ async def test_media_player_mute_state_changes_only_after_successful_send(
 
     with (
         patch(
-            "custom_components.universal_remote.media_player."
+            "custom_components.universal_remote.runtime."
             "async_send_infrared_command",
             AsyncMock(side_effect=RuntimeError("send failed")),
         ),
@@ -446,7 +472,7 @@ async def test_media_player_turn_on_and_off_update_assumed_state(
 
     with (
         patch(
-            "custom_components.universal_remote.media_player."
+            "custom_components.universal_remote.runtime."
             "async_send_infrared_command",
             AsyncMock(),
         ),
@@ -543,7 +569,7 @@ async def test_media_player_cs4k_source_is_supported(
 
     with (
         patch(
-            "custom_components.universal_remote.media_player."
+            "custom_components.universal_remote.runtime."
             "async_send_infrared_command",
             AsyncMock(),
         ) as mock_send,
@@ -576,6 +602,7 @@ async def test_media_player_tuner_listener_normalizes_legacy_command_key(
         infrared_emitter_id=infrared_emitter,
         commands=commands,
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
         runtime=runtime,
     )
     entity.hass = hass
@@ -621,17 +648,25 @@ async def test_media_player_missing_command_raises(
     assert err.value.translation_placeholders == {"command": "MISSING"}
 
 
-async def test_media_player_missing_command_payload_raises(
+async def test_media_player_does_not_fallback_when_runtime_command_missing(
     hass: HomeAssistant,
     infrared_emitter: str,
 ) -> None:
-    """Test sending a command without command data raises HomeAssistantError."""
-    entity = _media_player_entity(
-        hass,
-        infrared_emitter,
+    """Test stored command data is not sent outside the resolved runtime."""
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
         commands={"POWER_ON": _command_object(RAW_COMMAND)},
+        unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
+        runtime=UniversalRemoteRuntime(
+            hass=hass,
+            infrared_emitter_id=infrared_emitter,
+            commands={},
+        ),
     )
-    entity._commands["POWER_ON"] = {CONF_COMMAND_CREATE_BUTTON: False}
+    entity.hass = hass
 
     with pytest.raises(HomeAssistantError) as err:
         await entity.async_turn_on()
@@ -657,9 +692,12 @@ async def test_media_player_availability_tracks_infrared_state(
     write_state.assert_called_once()
 
 
-def test_media_player_available_before_added_to_hass(infrared_emitter: str) -> None:
+def test_media_player_available_before_added_to_hass(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
     """Test media player is available before it is added to Home Assistant."""
-    entity = _media_player_entity_without_hass(infrared_emitter)
+    entity = _media_player_entity_without_hass(hass, infrared_emitter)
 
     assert entity.available
 
@@ -690,6 +728,48 @@ async def test_async_setup_entry_skips_tv_remote_without_emitter(
         await async_setup_entry(hass, entry, async_add_entities)
 
     async_add_entities.assert_called_once_with([])
+
+
+async def test_async_setup_entry_rejects_emitter_remote_without_runtime(
+    hass: HomeAssistant,
+) -> None:
+    """Test emitter-backed media-player setup requires a resolved runtime."""
+    profile = DeviceProfile(
+        profile_id="custom_tv",
+        device_type="custom_tv",
+        entity_domains=frozenset({"media_player"}),
+        roles=(CommandRole("turn_on", ("POWER_ON",)),),
+    )
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={})
+    entry.runtime_data = UniversalRemoteData(
+        runtime=None,
+        resolved_profile=ResolvedRemoteProfile(
+            profile=profile,
+            codeset=None,
+            capabilities=(),
+        ),
+    )
+    entry.add_to_hass(hass)
+    async_add_entities = Mock()
+
+    with (
+        patch(
+            "custom_components.universal_remote.media_player."
+            "universal_remotes_from_config_entry",
+            return_value=[
+                {
+                    CONF_REMOTE_ID: REMOTE_ID,
+                    CONF_REMOTE_NAME: REMOTE_NAME,
+                    CONF_INFRARED_EMITTER_ID: "infrared.test_ir",
+                    CONF_REMOTE_COMMANDS: {
+                        "POWER_ON": _command_object(RAW_COMMAND),
+                    },
+                }
+            ],
+        ),
+        pytest.raises(AssertionError),
+    ):
+        await async_setup_entry(hass, entry, async_add_entities)
 
 
 async def test_async_setup_entry_directly_skips_generic_remote(
@@ -743,6 +823,7 @@ async def test_media_player_source_uses_runtime_command_name(
         infrared_emitter_id=infrared_emitter,
         commands={"HDMI_1": _command_object(RAW_COMMAND)},
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
         runtime=runtime,
     )
     entity.hass = hass
@@ -778,6 +859,7 @@ async def test_media_player_role_uses_runtime_command_name(
         infrared_emitter_id=infrared_emitter,
         commands={"VOLUME_UP": _command_object(RAW_COMMAND)},
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
         runtime=runtime,
     )
     entity.hass = hass
@@ -812,6 +894,7 @@ async def test_media_player_runtime_listener_updates_source_for_available_source
             "CS4K_NUM_1": _command_object(RAW_COMMAND),
         },
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
         runtime=runtime,
     )
     entity.hass = hass
@@ -841,6 +924,7 @@ async def test_media_player_runtime_listener_ignores_non_source_tuner(
         infrared_emitter_id=infrared_emitter,
         commands={"HDMI_1": _command_object(RAW_COMMAND)},
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
         runtime=runtime,
     )
     entity.hass = hass
@@ -873,6 +957,7 @@ async def test_media_player_runtime_listener_ignores_current_source(
             "CS4K_NUM_1": _command_object(RAW_COMMAND),
         },
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
         runtime=runtime,
     )
     entity.hass = hass
@@ -905,6 +990,7 @@ async def test_media_player_runtime_listener_ignores_none_selected_tuner(
             "CS4K_NUM_1": _command_object(RAW_COMMAND),
         },
         unique_id="entry_media_player_living_room_tv",
+        profile=TV_PROFILE,
         runtime=runtime,
     )
     entity.hass = hass

@@ -97,6 +97,8 @@ async def async_setup_entry(
             or not infrared_emitter_id
         ):
             continue
+
+        assert runtime is not None
         commands = normalize_command_objects(remote.get(CONF_REMOTE_COMMANDS, {}))
 
         for command_name, command in commands.items():
@@ -149,7 +151,7 @@ class UniversalRemoteButton(ButtonEntity):
         remote_id: str,
         remote_name: str,
         infrared_emitter_id: str,
-        runtime: UniversalRemoteRuntime | None,
+        runtime: UniversalRemoteRuntime,
         unique_id: str,
         description: UniversalRemoteButtonEntityDescription,
     ) -> None:
@@ -187,9 +189,6 @@ class UniversalRemoteButton(ButtonEntity):
 
     async def async_press(self) -> None:
         """Send the configured command."""
-        if self._runtime is None:
-            return
-
         await self._runtime.async_send_command_name(
             self.entity_description.command_name
         )

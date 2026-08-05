@@ -24,8 +24,6 @@ from .const import (
     DOMAIN,
 )
 from .helpers import (
-    command_payload,
-    find_configured_command,
     linked_entity_is_available,
     normalize_command_name,
     normalize_command_objects,
@@ -33,13 +31,11 @@ from .helpers import (
     universal_remotes_from_config_entry,
 )
 from .profiles import (
-    TV_PROFILE,
     DeviceProfile,
     profile_role_commands,
     profile_source_commands,
 )
 from .runtime import UniversalRemoteConfigEntry, UniversalRemoteRuntime
-from .send import async_send_infrared_command
 
 PARALLEL_UPDATES = 1
 
@@ -107,6 +103,8 @@ async def async_setup_entry(
         ):
             continue
 
+        assert runtime is not None
+
         unique_id = media_player_unique_id(entry.entry_id, remote_id)
         expected_unique_ids.add(unique_id)
         entities.append(
@@ -146,8 +144,8 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
         infrared_emitter_id: str,
         commands: Mapping[str, Mapping[str, Any]],
         unique_id: str,
-        profile: DeviceProfile = TV_PROFILE,
-        runtime: UniversalRemoteRuntime | None = None,
+        profile: DeviceProfile,
+        runtime: UniversalRemoteRuntime,
     ) -> None:
         """Initialize the Universal Remote TV media player."""
         self._remote_id = remote_id
@@ -187,33 +185,32 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
             )
         )
 
-        if self._runtime is not None:
-            runtime = self._runtime
+        runtime = self._runtime
 
-            @callback
-            def _handle_tuner_state_change() -> None:
-                """Handle runtime tuner state changes."""
-                selected_tuner = runtime.selected_tuner
-                if selected_tuner is None:
-                    return
+        @callback
+        def _handle_tuner_state_change() -> None:
+            """Handle runtime tuner state changes."""
+            selected_tuner = runtime.selected_tuner
+            if selected_tuner is None:
+                return
 
-                source = next(
-                    (
-                        source
-                        for source, command_name in self._source_commands.items()
-                        if normalize_command_name(command_name) == selected_tuner
-                    ),
-                    None,
-                )
-                if source is None or self._attr_source == source:
-                    return
-
-                self._attr_source = source
-                self.async_write_ha_state()
-
-            self.async_on_remove(
-                runtime.async_add_tuner_listener(_handle_tuner_state_change)
+            source = next(
+                (
+                    source
+                    for source, command_name in self._source_commands.items()
+                    if normalize_command_name(command_name) == selected_tuner
+                ),
+                None,
             )
+            if source is None or self._attr_source == source:
+                return
+
+            self._attr_source = source
+            self.async_write_ha_state()
+
+        self.async_on_remove(
+            runtime.async_add_tuner_listener(_handle_tuner_state_change)
+        )
 
     @property
     def available(self) -> bool:
@@ -298,31 +295,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
 
     async def _send_command_name(self, command_name: str) -> None:
         """Send a configured command by name."""
-        configured_command = find_configured_command(self._commands, command_name)
-        if configured_command is None:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="remote_command_missing",
-                translation_placeholders={"command": command_name},
-            )
-
-        command_data = command_payload(configured_command[1])
-        if command_data is None:
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="remote_command_missing",
-                translation_placeholders={"command": command_name},
-            )
-
-        if self._runtime is not None:
-            await self._runtime.async_send_command_name(command_name)
-            return
-
-        await async_send_infrared_command(
-            self.hass,
-            self._infrared_emitter_id,
-            command_data,
-        )
+        await self._runtime.async_send_command_name(command_name)
 
 
 def _supported_features(
