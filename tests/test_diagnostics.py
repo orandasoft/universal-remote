@@ -26,14 +26,20 @@ from custom_components.universal_remote.diagnostics import (
 from custom_components.universal_remote.infrared_library import (
     NO_INFRARED_LIBRARY_CODESET,
 )
-from custom_components.universal_remote.profiles import TV_PROFILE
+from custom_components.universal_remote.profiles import (
+    TV_PROFILE,
+    DeviceProfile,
+    SourceRule,
+)
 from custom_components.universal_remote.protocols.nec import NEC_HANDLER
 from custom_components.universal_remote.receiver import resolve_receiver_model
 from custom_components.universal_remote.resolved import (
     ResolvedReceiverModel,
+    ResolvedRemoteProfile,
     resolve_remote_profile,
 )
 from custom_components.universal_remote.runtime import UniversalRemoteData
+from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.const import STATE_ON, STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -418,6 +424,56 @@ async def test_diagnostics_ignores_tv_sources_for_generic_profile(
     assert remote["source_count"] == 0
     assert remote["command_count"] == 2
     assert remote["commands"] == ["HDMI_1", "POWER_ON"]
+
+
+async def test_diagnostics_source_count_uses_resolved_profile_sources(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test diagnostics uses the resolved profile's own source rules."""
+    custom_profile = DeviceProfile(
+        profile_id="custom_media",
+        device_type="custom_media",
+        entity_domains=frozenset({MEDIA_PLAYER_DOMAIN}),
+        sources=(
+            SourceRule(
+                label="Radio",
+                candidates=("RADIO",),
+            ),
+        ),
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Custom Media Remote",
+        data={
+            CONF_REMOTE_ID: "custom_media",
+            CONF_REMOTE_NAME: "Custom Media Remote",
+            CONF_INFRARED_EMITTER_ID: infrared_emitter,
+            CONF_REMOTE_DEVICE_TYPE: DEVICE_TYPE_GENERIC,
+        },
+        options={
+            CONF_REMOTE_COMMANDS: {
+                "RADIO": "38000:1,2",
+                "HDMI_1": "38000:1,2",
+            }
+        },
+    )
+    entry.runtime_data = UniversalRemoteData(
+        runtime=None,
+        resolved_profile=ResolvedRemoteProfile(
+            profile=custom_profile,
+            codeset=None,
+            capabilities=(),
+        ),
+        resolved_receiver=None,
+    )
+
+    diagnostics = await _get_diagnostics(hass, entry)
+    remote = diagnostics["universal_remote"]
+
+    assert remote["device_type"] == "custom_media"
+    assert remote["media_player_expected"] is True
+    assert remote["source_count"] == 1
 
 
 async def test_diagnostics_source_count_matches_tv_source_map(

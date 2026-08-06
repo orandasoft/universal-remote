@@ -8,7 +8,6 @@ from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant
 
-from .command_ui import tv_media_player_source_commands
 from .const import (
     CONF_INFRARED_EMITTER_ID,
     CONF_INFRARED_RECEIVER_ID,
@@ -24,6 +23,7 @@ from .helpers import (
 )
 from .infrared_library import NO_INFRARED_LIBRARY_CODESET
 from .learn import LEARN_DECODER_AUTO, LEARN_DECODER_NONE, LEARN_DECODERS
+from .profiles import profile_source_commands
 from .runtime import UniversalRemoteConfigEntry
 
 TO_REDACT = {"device_id", "unique_id", "uuid"}
@@ -134,14 +134,13 @@ def _diagnostic_remotes(
         device_type = (
             profile.device_type if profile is not None else DEVICE_TYPE_GENERIC
         )
-        media_player_supported = profile is not None and profile.supports_entity(
-            MEDIA_PLAYER_DOMAIN
-        )
-        source_count = (
-            len(tv_media_player_source_commands(command_mapping))
-            if media_player_supported
-            else 0
-        )
+        media_player_supported = False
+        source_count = 0
+
+        if profile is not None:
+            media_player_supported = profile.supports_entity(MEDIA_PLAYER_DOMAIN)
+            if media_player_supported:
+                source_count = len(profile_source_commands(profile, command_mapping))
 
         receiver_event_expected = receiver_configured
         active_receiver_model = resolved_receiver if receiver_event_expected else None
