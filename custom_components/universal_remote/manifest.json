@@ -13,7 +13,7 @@
   "iot_class": "assumed_state",
   "issue_tracker": "https://github.com/orandasoft/universal-remote/issues",
   "requirements": [
-    "infrared-protocols==8.2.0"
+    "infrared-protocols==9.0.0"
   ],
   "version": "0.6.1"
 }
