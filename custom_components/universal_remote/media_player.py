@@ -160,6 +160,13 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
             profile,
             self._commands,
         )
+        self._tuner_sources: dict[str, str] = {}
+        for source, command_name in self._source_commands.items():
+            tuner_id = runtime.tuner_id_for_command_name(command_name)
+            if tuner_id is None:
+                tuner_id = normalize_command_name(command_name)
+            self._tuner_sources.setdefault(tuner_id, source)
+
         self._attr_unique_id = unique_id
         self._attr_device_info = universal_remote_device_info(remote_id, remote_name)
         self._attr_source_list = list(self._source_commands) or None
@@ -194,14 +201,7 @@ class UniversalRemoteTvMediaPlayer(MediaPlayerEntity):
             if selected_tuner is None:
                 return
 
-            source = next(
-                (
-                    source
-                    for source, command_name in self._source_commands.items()
-                    if normalize_command_name(command_name) == selected_tuner
-                ),
-                None,
-            )
+            source = self._tuner_sources.get(selected_tuner)
             if source is None or self._attr_source == source:
                 return
 

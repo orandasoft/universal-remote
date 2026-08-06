@@ -31,12 +31,14 @@ from custom_components.universal_remote.media_player import (
 )
 from custom_components.universal_remote.helpers import normalize_command_mapping
 from custom_components.universal_remote.profiles import (
+    JAPANESE_TUNER_CAPABILITY,
     TV_PROFILE,
     CommandRole,
     DeviceProfile,
     SourceRule,
+    TunerCapability,
+    TunerRule,
 )
-from custom_components.universal_remote.profiles import JAPANESE_TUNER_CAPABILITY
 from custom_components.universal_remote.resolved import ResolvedRemoteProfile
 from custom_components.universal_remote.runtime import (
     UniversalRemoteData,
@@ -898,6 +900,51 @@ async def test_media_player_runtime_listener_updates_source_for_available_source
         runtime.async_note_received_command("CS4K_NUM_1")
 
     assert entity.source == "CS4K"
+    write_state.assert_called_once()
+
+
+async def test_media_player_runtime_listener_maps_selector_alias_to_tuner_id(
+    hass: HomeAssistant,
+    infrared_emitter: str,
+) -> None:
+    """Test a source selector alias maps to its stable tuner ID."""
+    profile = DeviceProfile(
+        profile_id="radio",
+        device_type="radio",
+        entity_domains=frozenset({"media_player"}),
+        sources=(SourceRule("Radio", ("RADIO",)),),
+    )
+    tuner_capability = TunerCapability(
+        capability_id="radio_tuner",
+        tuners=(TunerRule("FM", ("RADIO",)),),
+        numbers=(1,),
+    )
+    runtime = UniversalRemoteRuntime(
+        hass=hass,
+        infrared_emitter_id=infrared_emitter,
+        commands={"RADIO": RAW_COMMAND, "FM_NUM_1": RAW_COMMAND},
+        tuner_capability=tuner_capability,
+    )
+    entity = UniversalRemoteTvMediaPlayer(
+        remote_id=REMOTE_ID,
+        remote_name=REMOTE_NAME,
+        infrared_emitter_id=infrared_emitter,
+        commands={
+            "RADIO": _command_object(RAW_COMMAND),
+            "FM_NUM_1": _command_object(RAW_COMMAND),
+        },
+        unique_id="entry_media_player_living_room_radio",
+        profile=profile,
+        runtime=runtime,
+    )
+    entity.hass = hass
+
+    with patch.object(entity, "async_write_ha_state") as write_state:
+        await entity.async_added_to_hass()
+        runtime.async_note_received_command("FM_NUM_1")
+
+    assert runtime.selected_tuner == "FM"
+    assert entity.source == "Radio"
     write_state.assert_called_once()
 
 

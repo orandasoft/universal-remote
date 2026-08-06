@@ -85,6 +85,13 @@ class UniversalRemoteRuntime:
         """Return tuner selectors with tuner-specific keypad support."""
         return self._available_tuners
 
+    def tuner_id_for_command_name(self, command_name: str) -> str | None:
+        """Return the stable tuner ID implied by a command name."""
+        capability = self._tuner_capability
+        return (
+            capability.implied_tuner(command_name) if capability is not None else None
+        )
+
     async def async_select_tuner(
         self,
         tuner_id: str,
